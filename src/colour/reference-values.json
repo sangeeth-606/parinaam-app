@@ -1,0 +1,35 @@
+{
+  "card_id": "PARINAAM-CARD-V1",
+  "version": "1.0",
+  "print_batch": "PB-2026-09",
+  "illuminant": "D65",
+  "observer": "2_degree",
+  "patches": [
+    { "id": "G1", "name": "White Reference Anchor", "l": 96.0, "a": -0.2, "b": 1.2, "type": "grey" },
+    { "id": "G2", "name": "Light Grey", "l": 81.0, "a": -0.1, "b": 0.5, "type": "grey" },
+    { "id": "G3", "name": "Mid-Light Grey", "l": 66.0, "a": 0.0, "b": 0.2, "type": "grey" },
+    { "id": "G4", "name": "Neutral Grey", "l": 52.0, "a": 0.1, "b": 0.0, "type": "grey" },
+    { "id": "G5", "name": "Dark Grey", "l": 36.0, "a": 0.0, "b": -0.1, "type": "grey" },
+    { "id": "G6", "name": "Black Anchor", "l": 20.0, "a": 0.2, "b": -0.3, "type": "grey" },
+
+    { "id": "C1", "name": "Dark Skin", "l": 37.986, "a": 13.555, "b": 14.059, "type": "chromatic" },
+    { "id": "C2", "name": "Light Skin", "l": 65.711, "a": 18.130, "b": 17.810, "type": "chromatic" },
+    { "id": "C3", "name": "Blue Sky", "l": 49.927, "a": -4.880, "b": -21.925, "type": "chromatic" },
+    { "id": "C4", "name": "Foliage", "l": 43.139, "a": -13.095, "b": 21.905, "type": "chromatic" },
+    { "id": "C5", "name": "Blue Flower", "l": 55.112, "a": 8.844, "b": -25.399, "type": "chromatic" },
+    { "id": "C6", "name": "Bluish Green", "l": 70.719, "a": -33.397, "b": -0.199, "type": "chromatic" },
+    { "id": "C7", "name": "Orange", "l": 62.661, "a": 36.067, "b": 57.096, "type": "chromatic" },
+    { "id": "C8", "name": "Purplish Blue", "l": 40.020, "a": 10.410, "b": -45.964, "type": "chromatic" },
+    { "id": "C9", "name": "Moderate Red", "l": 51.124, "a": 48.239, "b": 16.248, "type": "chromatic" },
+    { "id": "C10", "name": "Purple", "l": 30.325, "a": 22.976, "b": -21.587, "type": "chromatic" },
+    { "id": "C11", "name": "Yellow Green", "l": 72.532, "a": -23.709, "b": 57.255, "type": "chromatic" },
+    { "id": "C12", "name": "Orange Yellow", "l": 71.941, "a": 19.360, "b": 67.857, "type": "chromatic" },
+    { "id": "C13", "name": "Blue", "l": 28.778, "a": 14.179, "b": -50.297, "type": "chromatic" },
+    { "id": "C14", "name": "Green", "l": 55.261, "a": -38.342, "b": 31.370, "type": "chromatic" },
+
+    { "id": "R1", "name": "Marquis Analogue Purple", "l": 18.5, "a": 34.2, "b": -12.0, "type": "reagent_analogue" },
+    { "id": "R2", "name": "Scott Analogue Blue", "l": 32.0, "a": -8.0, "b": -36.5, "type": "reagent_analogue" },
+    { "id": "R3", "name": "Duquenois Analogue Violet", "l": 24.0, "a": 28.0, "b": -18.5, "type": "reagent_analogue" },
+    { "id": "R4", "name": "Mecke Analogue Olive", "l": 38.0, "a": -12.0, "b": 18.0, "type": "reagent_analogue" }
+  ]
+}

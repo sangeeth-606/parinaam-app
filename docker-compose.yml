@@ -1,0 +1,21 @@
+services:
+  # Parinaam — engine/test sandbox + local backend API.
+  # Supervision web UI lives in a separate repository (docs/v2-plan/00-overview.md,
+  # decision D3); the shared HTTP API contract it builds against is docs/v2-plan/04.
+  parinaam:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: parinaam-engine
+    ports:
+      - "8571:8571" # backend API — `docker compose run --rm parinaam npm run server`
+    environment:
+      - NODE_ENV=development
+      - EXPO_OFFLINE=1
+      - CI=1
+      - PARINAAM_API_PORT=8571
+    volumes:
+      - .:/app
+      - /app/node_modules
+    command: npm test
+    restart: unless-stopped
