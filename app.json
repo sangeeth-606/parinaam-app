@@ -6,6 +6,10 @@
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
+    "platforms": [
+      "android",
+      "ios"
+    ],
     "android": {
       "package": "in.gov.ncb.parinaam",
       "permissions": [
