@@ -2,10 +2,12 @@
  * Parinaam API — HTTP front door (v2 phase D).
  * node:http only. CORS is wide-open for GET reads by design: the separate web-repo
  * dashboard (and the officer app) must consume the same API. Tighten with an allow-list
- * at the Supabase pass (tracked in docs/v2-plan/08 follow-ups).
+ * before this API ever leaves the LAN.
  *
- * Run:  npm run server            (port: PARINAAM_API_PORT, default 8787)
- * Tests boot createApiServer(':memory:') on an ephemeral port.
+ * Run:  npm run server            (port: PARINAAM_API_PORT, default 8571)
+ * Engine: PARINAAM_DB=postgres + DATABASE_URL → PostgreSQL (docker compose service
+ * `db`); otherwise the embedded node:sqlite file (default), or ':memory:' in tests,
+ * which boot `await createApiServer(':memory:')` on an ephemeral port.
  */
 
 import http from 'node:http';
@@ -41,11 +43,11 @@ function matchRoute(method: string, pathname: string): RouteMatch | null {
   return null;
 }
 
-export function createApiServer(dbPath = defaultDbPath()): {
+export async function createApiServer(target?: string): Promise<{
   server: http.Server;
   db: ServerDb;
-} {
-  const db = new ServerDb(dbPath);
+}> {
+  const db = await ServerDb.open(target ?? defaultDbPath());
 
   const server = http.createServer((req, res) => {
     const send = (status: number, json: unknown): void => {
@@ -131,7 +133,7 @@ export function createApiServer(dbPath = defaultDbPath()): {
         const ip = (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0] ?? req.socket.remoteAddress ?? 'unknown';
         const ctx: Ctx = {
           db,
-          officer: authenticate(db, authHeader),
+          officer: await authenticate(db, authHeader),
           body,
           query: url.searchParams,
           params: m.params,
@@ -142,7 +144,7 @@ export function createApiServer(dbPath = defaultDbPath()): {
           const out = await m.handler(ctx);
           send((out as { status: number }).status ?? 500, (out as { json: unknown }).json);
         } catch (err) {
-          db.audit('server', 'internal-error', null, err instanceof Error ? err.message : String(err));
+          void db.audit('server', 'internal-error', null, err instanceof Error ? err.message : String(err));
           send(500, { error: 'internal', detail: err instanceof Error ? err.message : 'unknown' });
         }
       })();
@@ -157,26 +159,45 @@ const executedDirect =
   typeof process !== 'undefined' && process.argv[1] !== undefined && process.argv[1].endsWith('main.ts');
 if (executedDirect) {
   const port = Number(process.env.PARINAAM_API_PORT ?? 8571);
-  const { server, db } = createApiServer();
-  server.on('error', (err: NodeJS.ErrnoException) => {
-    if (err.code === 'EADDRINUSE') {
-      process.stderr.write(`Parinaam API cannot bind :${port} — port in use. Set PARINAAM_API_PORT to another port.\n`);
+  void (async () => {
+    let created: { server: http.Server; db: ServerDb };
+    try {
+      created = await createApiServer();
+    } catch (err) {
+      process.stderr.write(`Parinaam API could not open its database: ${err instanceof Error ? err.message : String(err)}\n`);
       process.exit(1);
     }
-    throw err;
-  });
-  server.listen(port, () => {
-    const addr = server.address() as AddressInfo;
-    process.stdout.write(`Parinaam API v2 listening on :${addr.port} (db: ${defaultDbPath()})\n`);
-    process.stdout.write('Seeded officer: admin / <PARINAAM_API_ADMIN_PASSWORD ?? adminpass> · role SENIOR\n');
-  });
-  const shutdown = (): void => {
-    server.close();
-    db.close();
-    process.exit(0);
-  };
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+    const { server, db } = created;
+    server.on('error', (err: NodeJS.ErrnoException) => {
+      if (err.code === 'EADDRINUSE') {
+        process.stderr.write(`Parinaam API cannot bind :${port} — port in use. Set PARINAAM_API_PORT to another port.\n`);
+        process.exit(1);
+      }
+      throw err;
+    });
+    if (process.env.PARINAAM_SEED === '1') {
+      try {
+        const { seedDemoData } = await import('./seed.ts');
+        await seedDemoData(db);
+        process.stdout.write('Auto-seeded demo accounts and cases (PARINAAM_SEED=1)\n');
+      } catch (e) {
+        process.stderr.write(`Auto-seeding skipped/failed: ${e instanceof Error ? e.message : String(e)}\n`);
+      }
+    }
+    server.listen(port, () => {
+      const addr = server.address() as AddressInfo;
+      const where = db.engine === 'postgres' ? (process.env.DATABASE_URL ?? 'postgres') : defaultDbPath();
+      process.stdout.write(`Parinaam API v2 listening on :${addr.port} (engine: ${db.engine}, db: ${where})\n`);
+      process.stdout.write('Seeded officer: admin / <PARINAAM_API_ADMIN_PASSWORD ?? adminpass> · role SENIOR\n');
+    });
+    const shutdown = (): void => {
+      server.close();
+      void db.close();
+      process.exit(0);
+    };
+    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
+  })();
 }
 
 export { login };

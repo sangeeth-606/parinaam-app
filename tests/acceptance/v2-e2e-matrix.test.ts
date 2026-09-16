@@ -22,7 +22,7 @@ const { useSyncStore } = await import('../../src/state/sync-store.ts');
 const { rememberServerCredentials } = await import('../../src/sync/server-credentials.ts');
 const { createApiServer } = await import('../../server/src/main.ts');
 
-const { server, db: apiDb } = createApiServer(':memory:');
+const { server, db: apiDb } = await createApiServer(':memory:');
 let base = '';
 let adminToken = '';
 

@@ -5,7 +5,7 @@
  * Honest framing: a LOCAL DEVICE CREDENTIAL GATE. It is not statutory identity,
  * not a digital signature, and the copy never implies it is (AGENTS rules 6/10
  * culture). OTP / biometric re-entry / device binding land on this same seam in
- * the Supabase pass (docs/v2-plan/00 D2).
+ * the deferred OTP pass.
  */
 
 import React, { useEffect, useRef, useState, type ComponentRef } from 'react';

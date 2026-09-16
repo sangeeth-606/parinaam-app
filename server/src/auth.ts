@@ -5,14 +5,14 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import type { ServerDb } from './db.ts';
+import type { ServerDb, OfficerRole } from './db.ts';
 import { verifyPassword } from './db.ts';
 
 export interface AuthedOfficer {
   id: number;
   username: string;
   displayName: string;
-  role: 'JUNIOR' | 'SENIOR';
+  role: OfficerRole;
   token: string;
 }
 
@@ -32,46 +32,44 @@ export function rateLimited(key: string): boolean {
   return b.count > MAX_ATTEMPTS;
 }
 
-export function login(db: ServerDb, username: string, password: string, ip: string): AuthedOfficer | null {
+export async function login(db: ServerDb, username: string, password: string, ip: string): Promise<AuthedOfficer | null> {
   if (rateLimited(`login:${ip}`)) return null;
-  const row = db.handle
-    .prepare('SELECT id, username, pass_salt, pass_hash, display_name, role FROM officers WHERE username = ?')
-    .get(username) as
-    | { id: number; username: string; pass_salt: string; pass_hash: string; display_name: string; role: 'JUNIOR' | 'SENIOR' }
-    | undefined;
+  const row = await db.store.get<{ id: number | string; username: string; pass_salt: string; pass_hash: string; display_name: string; role: OfficerRole }>(
+    'SELECT id, username, pass_salt, pass_hash, display_name, role FROM officers WHERE username = ?',
+    username
+  );
   if (!row || !verifyPassword(password, row.pass_salt, row.pass_hash)) {
-    db.audit('auth', 'login-failed', row?.username ?? username, `from ${ip}`);
+    await db.audit('auth', 'login-failed', username, `from ${ip}`);
     return null;
   }
   const token = randomBytes(32).toString('hex');
   const now = new Date();
   const expires = new Date(now.getTime() + SESSION_TTL_HOURS * 3600_000);
-  db.handle
-    .prepare('INSERT INTO sessions (token, officer_id, created_at, expires_at) VALUES (?,?,?,?)')
-    .run(token, row.id, now.toISOString(), expires.toISOString());
-  db.audit('auth', 'login', row.username, `from ${ip}`);
-  return { id: row.id, username: row.username, displayName: row.display_name, role: row.role, token };
+  await db.store.run(
+    'INSERT INTO sessions (token, officer_id, created_at, expires_at) VALUES (?,?,?,?)',
+    token, Number(row.id), now.toISOString(), expires.toISOString()
+  );
+  await db.audit('auth', 'login', row.username, `from ${ip}`);
+  return { id: Number(row.id), username: row.username, displayName: row.display_name, role: row.role, token };
 }
 
-export function authenticate(db: ServerDb, headerValue: string | undefined): AuthedOfficer | null {
+export async function authenticate(db: ServerDb, headerValue: string | undefined): Promise<AuthedOfficer | null> {
   const token = headerValue?.startsWith('Bearer ') ? headerValue.slice(7) : null;
   if (!token) return null;
-  const row = db.handle
-    .prepare(
-      `SELECT s.token AS token, o.id AS id, o.username AS username, o.display_name AS displayName, o.role AS role, s.expires_at AS expires_at
-       FROM sessions s JOIN officers o ON o.id = s.officer_id WHERE s.token = ?`
-    )
-    .get(token) as
-    | { token: string; id: number; username: string; displayName: string; role: 'JUNIOR' | 'SENIOR'; expires_at: string }
-    | undefined;
+  // "displayName" MUST stay double-quoted: PostgreSQL folds unquoted mixed-case aliases.
+  const row = await db.store.get<{ token: string; id: number | string; username: string; displayName: string; role: OfficerRole; expires_at: string }>(
+    `SELECT s.token AS token, o.id AS id, o.username AS username, o.display_name AS "displayName", o.role AS role, s.expires_at AS expires_at
+     FROM sessions s JOIN officers o ON o.id = s.officer_id WHERE s.token = ?`,
+    token
+  );
   if (!row) return null;
   if (Date.parse(row.expires_at) < Date.now()) {
-    db.handle.prepare('DELETE FROM sessions WHERE token = ?').run(token);
+    await db.store.run('DELETE FROM sessions WHERE token = ?', token);
     return null;
   }
-  return { id: row.id, username: row.username, displayName: row.displayName, role: row.role, token: row.token };
+  return { id: Number(row.id), username: row.username, displayName: row.displayName, role: row.role, token: row.token };
 }
 
-export function logout(db: ServerDb, token: string): void {
-  db.handle.prepare('DELETE FROM sessions WHERE token = ?').run(token);
+export async function logout(db: ServerDb, token: string): Promise<void> {
+  await db.store.run('DELETE FROM sessions WHERE token = ?', token);
 }

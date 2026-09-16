@@ -4,7 +4,7 @@
  * PROTOTYPE SHORTCUT, stated plainly: the same admin/adminpass that unlocks the device
  * gate is cached (in expo-secure-store, this-device-only) so BACKGROUND SYNC can hold an
  * API session across app restarts. Real deployments replace this with a device-bound
- * token / OTP at the Supabase pass (docs/v2-plan/08 follow-ups).
+ * token / OTP in a later hardening pass. Transport is the self-hosted API in server/ — no cloud service is involved.
  */
 
 import { getPref, setPref } from '../auth/session-token.ts';

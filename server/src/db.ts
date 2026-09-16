@@ -1,7 +1,20 @@
 /**
- * Parinaam API — database layer (v2 phase D).
- * node:sqlite file store, zero external deps. The SAME JSON contract (§ docs/v2-plan/04)
- * is what a future Supabase deployment must expose; this module is the seam to swap.
+ * Parinaam API — database layer (v2 phase D, Postgres-complete 2026-09).
+ *
+ * Storage is behind a minimal async SQL store (`SqlStore`) with two interchangeable
+ * engines speaking the SAME queries:
+ *   • node:sqlite — embedded file / :memory:  (default; hermetic tests, quick local runs)
+ *   • PostgreSQL  — `PARINAAM_DB=postgres` + DATABASE_URL (docker compose service `db`)
+ * The HTTP JSON contract on top is engine-independent; nothing else may know which
+ * store is underneath. No cloud database is used or planned.
+ *
+ * Query-portability rules (both engines must accept every statement):
+ *   • positional `?` placeholders (the PG store rewrites them to $n)
+ *   • TEXT timestamps (ISO strings), not engine date types
+ *   • ON CONFLICT DO UPDATE/NOTHING (never INSERT OR IGNORE)
+ *   • field_test.seq via (SELECT COALESCE(MAX(seq),0)+1 …) — never implicit rowid
+ *   • mixed-case aliases must be double-quoted (PG lowercases unquoted ones)
+ *   • CAST(COUNT(*) AS INTEGER) so bigint rows never surface as strings
  */
 
 import { DatabaseSync } from 'node:sqlite';
@@ -12,21 +25,33 @@ import { dirname, join } from 'node:path';
 export const CASE_STATUSES = ['REPORTED', 'UNDER_REVIEW', 'REVIEWED', 'ESCALATED'] as const;
 export type CaseStatus = (typeof CASE_STATUSES)[number];
 
+export const OFFICER_ROLES = ['JUNIOR', 'SENIOR', 'ADMIN', 'SUPERVISOR', 'JUDICIARY'] as const;
+export type OfficerRole = (typeof OFFICER_ROLES)[number];
+
 export interface OfficerRow {
   id: number;
   username: string;
   display_name: string;
-  role: 'JUNIOR' | 'SENIOR';
+  role: OfficerRole;
 }
 
-const SCHEMA = `
+/** The minimal async SQL surface every engine adapter must satisfy. */
+export interface SqlStore {
+  readonly engine: 'node:sqlite' | 'postgres';
+  get<T = Record<string, unknown>>(sql: string, ...params: unknown[]): Promise<T | undefined>;
+  all<T = Record<string, unknown>>(sql: string, ...params: unknown[]): Promise<T[]>;
+  run(sql: string, ...params: unknown[]): Promise<void>;
+  close(): Promise<void>;
+}
+
+const SCHEMA_SQLITE = `
 CREATE TABLE IF NOT EXISTS officers (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   username     TEXT NOT NULL UNIQUE,
   pass_salt    TEXT NOT NULL,
   pass_hash    TEXT NOT NULL,
   display_name TEXT NOT NULL,
-  role         TEXT NOT NULL CHECK (role IN ('JUNIOR','SENIOR')),
+  role         TEXT NOT NULL CHECK (role IN ('JUNIOR','SENIOR','ADMIN','SUPERVISOR','JUDICIARY')),
   created_at   TEXT NOT NULL
 );
 
@@ -38,6 +63,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 
 CREATE TABLE IF NOT EXISTS field_test (
+  seq                INTEGER NOT NULL,
   record_uuid        TEXT PRIMARY KEY,
   case_ref           TEXT NOT NULL,
   package_no         TEXT NOT NULL,
@@ -64,10 +90,11 @@ CREATE TABLE IF NOT EXISTS idempotency (
 );
 
 CREATE TABLE IF NOT EXISTS cases (
-  case_ref    TEXT PRIMARY KEY,
-  case_status TEXT NOT NULL,
-  first_seen  TEXT NOT NULL,
-  last_seen   TEXT NOT NULL
+  case_ref      TEXT PRIMARY KEY,
+  case_status   TEXT NOT NULL,
+  first_seen    TEXT NOT NULL,
+  last_seen     TEXT NOT NULL,
+  panchnama_ref TEXT
 );
 
 CREATE TABLE IF NOT EXISTS case_status_history (
@@ -90,6 +117,65 @@ CREATE TABLE IF NOT EXISTS server_audit (
 );
 `;
 
+class SqliteStore implements SqlStore {
+  readonly engine = 'node:sqlite' as const;
+  private handle: DatabaseSync;
+
+  constructor(path: string) {
+    if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
+    this.handle = new DatabaseSync(path);
+    this.handle.exec('PRAGMA journal_mode = WAL;');
+    this.handle.exec(SCHEMA_SQLITE);
+    try {
+      this.handle.exec('ALTER TABLE cases ADD COLUMN panchnama_ref TEXT;');
+    } catch {
+      /* already exists */
+    }
+    try {
+      this.handle.exec('ALTER TABLE field_test ADD COLUMN seq INTEGER;');
+    } catch {
+      /* already exists */
+    }
+    try {
+      const row = this.handle.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='officers'").get() as { sql: string } | undefined;
+      if (row && !row.sql.includes('SUPERVISOR')) {
+        this.handle.exec(`
+          PRAGMA foreign_keys = OFF;
+          DROP TABLE IF EXISTS officers_new;
+          CREATE TABLE officers_new (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            username     TEXT NOT NULL UNIQUE,
+            pass_salt    TEXT NOT NULL,
+            pass_hash    TEXT NOT NULL,
+            display_name TEXT NOT NULL,
+            role         TEXT NOT NULL CHECK (role IN ('JUNIOR','SENIOR','ADMIN','SUPERVISOR','JUDICIARY')),
+            created_at   TEXT NOT NULL
+          );
+          INSERT INTO officers_new SELECT * FROM officers;
+          DROP TABLE officers;
+          ALTER TABLE officers_new RENAME TO officers;
+          PRAGMA foreign_keys = ON;
+        `);
+      }
+    } catch {
+      /* migration error / fresh table */
+    }
+  }
+
+  async get<T>(sql: string, ...params: unknown[]): Promise<T | undefined> {
+    return this.handle.prepare(sql).get(...(params as never[])) as T | undefined;
+  }
+  async all<T>(sql: string, ...params: unknown[]): Promise<T[]> {
+    return this.handle.prepare(sql).all(...(params as never[])) as T[];
+  }
+  async run(sql: string, ...params: unknown[]): Promise<void> {
+    this.handle.prepare(sql).run(...(params as never[]));
+  }
+  async close(): Promise<void> {
+    this.handle.close();
+  }
+}
+
 export function hashPassword(password: string, saltHex: string): string {
   return scryptSync(password, Buffer.from(saltHex, 'hex'), 32).toString('hex');
 }
@@ -100,41 +186,68 @@ export function verifyPassword(password: string, saltHex: string, expectedHex: s
   return got.length === want.length && timingSafeEqual(got, want);
 }
 
-export class ServerDb {
-  readonly handle: DatabaseSync;
+/** Random hex salt — shared by the admin seed, officer inserts and the seed script. */
+export function newSalt(): string {
+  return randomBytes(16).toString('hex');
+}
 
-  constructor(path: string) {
-    if (path !== ':memory:') {
-      mkdirSync(dirname(path), { recursive: true });
+export class ServerDb {
+  readonly store: SqlStore;
+
+  private constructor(store: SqlStore) {
+    this.store = store;
+  }
+
+  /**
+   * Open + migrate + ensure the admin credential exists.
+   * target: ':memory:' or a sqlite file path; for Postgres pass 'postgres'
+   * (or set PARINAAM_DB=postgres) and the URL from DATABASE_URL is used.
+   */
+  static async open(target?: string): Promise<ServerDb> {
+    const wantPostgres =
+      target === 'postgres' || process.env.PARINAAM_DB === 'postgres' ||
+      (target !== undefined && target.startsWith('postgres://'));
+    let store: SqlStore;
+    if (wantPostgres) {
+      const { PgStore } = await import('./pg-store.ts');
+      store = await PgStore.connect(target !== undefined && target.startsWith('postgres://') ? target : process.env.DATABASE_URL);
+    } else {
+      store = new SqliteStore(target ?? defaultDbPath());
     }
-    this.handle = new DatabaseSync(path);
-    this.handle.exec('PRAGMA journal_mode = WAL;');
-    this.handle.exec(SCHEMA);
-    this.seedOfficer();
+    const db = new ServerDb(store);
+    await db.seedOfficer();
+    return db;
+  }
+
+  get engine(): 'node:sqlite' | 'postgres' {
+    return this.store.engine;
   }
 
   /** Seeded demo credential (v2 directive): username admin / password adminpass. */
-  private seedOfficer(): void {
-    const existing = this.handle.prepare('SELECT id FROM officers LIMIT 1').get();
+  private async seedOfficer(): Promise<void> {
+    const existing = await this.store.get<{ id: number }>('SELECT id FROM officers LIMIT 1');
     if (existing) return;
-    const salt = randomBytes(16).toString('hex');
-    const hash = hashPassword(process.env.PARINAAM_API_ADMIN_PASSWORD ?? 'adminpass', salt);
-    this.handle
-      .prepare(
-        `INSERT INTO officers (username, pass_salt, pass_hash, display_name, role, created_at)
-         VALUES (?,?,?,?,?,?)`
-      )
-      .run('admin', salt, hash, 'Station House Officer (demo)', 'SENIOR', new Date().toISOString());
+    await this.insertOfficer('admin', process.env.PARINAAM_API_ADMIN_PASSWORD ?? 'adminpass', 'Station House Officer (demo)', 'SENIOR');
   }
 
-  audit(actor: string, action: string, subject: string | null, detail?: string): void {
-    this.handle
-      .prepare('INSERT INTO server_audit (actor, action, subject, at, detail) VALUES (?,?,?,?,?)')
-      .run(actor, action, subject, new Date().toISOString(), detail ?? null);
+  async insertOfficer(username: string, password: string, displayName: string, role: OfficerRole): Promise<void> {
+    const salt = newSalt();
+    await this.store.run(
+      `INSERT INTO officers (username, pass_salt, pass_hash, display_name, role, created_at)
+       VALUES (?,?,?,?,?,?) ON CONFLICT (username) DO NOTHING`,
+      username, salt, hashPassword(password, salt), displayName, role, new Date().toISOString()
+    );
   }
 
-  close(): void {
-    this.handle.close();
+  async audit(actor: string, action: string, subject: string | null, detail?: string): Promise<void> {
+    await this.store.run(
+      'INSERT INTO server_audit (actor, action, subject, at, detail) VALUES (?,?,?,?,?)',
+      actor, action, subject, new Date().toISOString(), detail ?? null
+    );
+  }
+
+  async close(): Promise<void> {
+    await this.store.close();
   }
 }
 

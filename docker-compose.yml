@@ -1,21 +1,64 @@
 services:
-  # Parinaam — engine/test sandbox + local backend API.
-  # Supervision web UI lives in a separate repository (docs/v2-plan/00-overview.md,
-  # decision D3); the shared HTTP API contract it builds against is docs/v2-plan/04.
+  # Parinaam — PostgreSQL database service (conflict-free port 55433:5432)
+  db:
+    image: postgres:15-alpine
+    container_name: parinaam-db
+    environment:
+      POSTGRES_DB: parinaam
+      POSTGRES_USER: parinaam
+      POSTGRES_PASSWORD: parinaam
+    ports:
+      - "55433:5432"
+    volumes:
+      - parinaam_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U parinaam -d parinaam"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    restart: unless-stopped
+
+  # Parinaam REST API Server (runs on port 8571 against PostgreSQL)
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: parinaam-server
+    ports:
+      - "8571:8571"
+    environment:
+      - NODE_ENV=development
+      - PARINAAM_DB=postgres
+      - DATABASE_URL=postgres://parinaam:parinaam@db:5432/parinaam
+      - PARINAAM_API_PORT=8571
+      - PARINAAM_SEED=1
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    command: npm run server
+    restart: unless-stopped
+
+  # Parinaam — engine / test runner sandbox
   parinaam:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: parinaam-engine
     ports:
-      - "8571:8571" # backend API — `docker compose run --rm parinaam npm run server`
+      - "8572:8571"
     environment:
       - NODE_ENV=development
       - EXPO_OFFLINE=1
       - CI=1
-      - PARINAAM_API_PORT=8571
+      - PARINAAM_API_PORT=8572
     volumes:
       - .:/app
       - /app/node_modules
     command: npm test
-    restart: unless-stopped
+    restart: "no"
+
+volumes:
+  parinaam_pgdata:
+

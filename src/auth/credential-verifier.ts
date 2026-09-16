@@ -4,7 +4,7 @@
  * A LOCAL DEVICE-CREDENTIAL GATE: it proves somebody holding this device knows the
  * officer credential. It is NOT statutory identity, NOT a hardware signature, and makes
  * no such claim anywhere in the UI (AGENTS rule 6/10 culture). OTP/biometric/device
- * binding attach in front of this seam later (v2 brief §3; deferred to the Supabase pass).
+ * binding attach in front of this seam later (v2 brief §3; deferred biometric pass).
  *
  * No plaintext storage: the shipped verifier is salt + SHA-256(salt:username:password).
  * Comparison is constant-time.

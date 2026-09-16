@@ -31,7 +31,7 @@
 - **Storage:** `expo-sqlite` with SQLCipher (AES-256 encrypted at rest, key held in `expo-secure-store`), append-only database triggers (`ABORT` on `UPDATE` or `DELETE`), FTS5 search index.
 - **Evidentiary Integrity:** Hardware-backed ECDSA key attestation (`@pagopa/io-react-native-crypto`), RFC 8785 Canonical JSON Serialization (JCS), SHA-256 hash chaining, standalone POSIX `verify.sh` verification.
 - **Document Export:** `expo-print` generating Bharatiya Sakshya Adhiniyam (BSA) 2023 s. 63(4) dual certificates (Part A & Part B), NDPS Form-4 (Inventory), Form-5 (Magistrate Application), and Form-6 (Test Memo).
-- **Backend:** in-repo REST API (`server/`, `node:http` + `node:sqlite`, **zero npm dependencies**) — consumed by this officer app and the separate web dashboard repo. Its operations guide lives at [`server/README.md`](server/README.md). Supabase may become the storage layer behind the same contract once provisioned.
+- **Backend:** Self-hosted REST API (`server/`, `node:http` + dual-engine storage: embedded `node:sqlite` for hermetic testing and PostgreSQL for production / Docker Compose). Fully self-contained with NO external cloud or online platforms. Detailed contract and developer guide live at [`server/README.md`](server/README.md).
 
 ---
 
@@ -39,6 +39,7 @@
 
 ### Prerequisites
 - Node.js 22+ (the server + tests use `node:sqlite` / `--experimental-strip-types`) and npm
+- Docker & Docker Compose (optional, for running PostgreSQL backend)
 - Android Studio with Android SDK API 28+ installed (for the device build)
 - Target Android physical device (Snapdragon 6xx/7xx class, Android 13+)
 
@@ -76,10 +77,10 @@ parinaam-app/
 │   ├── crypto/  db/  evidentiary/      #   hash chain, SQLite ledger, seals & certificates
 │   ├── sync/                           #   outbox transport ⇄ server
 │   └── services/  navigation/  types/  #   export flows, stacks, shared types
-├── server/                             # In-repo REST API: node:http + node:sqlite,
-│   │                                   #   ZERO npm deps; operations guide server/README.md
-│   └── src/ (auth·verify·routes·bus·db·main)
-├── tests/                              # node:test suites (170) — crypto, db, sync, server,
+├── server/                             # Self-hosted REST API: node:http + PostgreSQL / SQLite,
+│   │                                   #   contract & operations guide in server/README.md
+│   └── src/ (auth·verify·routes·bus·db·pg-store·seed·main)
+├── tests/                              # node:test suites (171 tests) — crypto, db, sync, server,
 │                                       #   auth, state, acceptance matrix incl. live API
 └── scripts/                            # metro stubs, native patching, verify.sh (chain demo)
 ```
@@ -87,16 +88,23 @@ parinaam-app/
 ### Running the stack (officer app + backend)
 
 ```bash
-npm install                      # JS deps (server/ itself uses ZERO deps — node builtins)
-npm run server                   # REST API on http://localhost:8571 (PARINAAM_API_PORT to
-                                 #   change; DB: server/data/parinaam-server.db — gitignored,
-                                 #   auto-seeded with the demo officer admin/adminpass)
+# Backend via Docker Compose (PostgreSQL on 55433 + API on 8571 with auto-seeded demo data)
+docker compose up -d db server
+
+# Or run API directly on host:
+npm run seed:server              # Seed demo accounts and realistic cases
+npm run server                   # REST API on http://localhost:8571 (engine: node:sqlite)
+# PARINAAM_DB=postgres npm run server  # REST API against PostgreSQL
+
+# Running the mobile officer app:
 npx expo start --android         # officer app on device/emulator; point Settings → SYNC →
                                  #   SERVER URL at the API (10.0.2.2:8571 from the Android
                                  #   emulator reaching a host server; login admin/adminpass)
 npx expo start                   # press `w` to run the same app in the browser (web build;
                                  #   camera capture is simulator-backed there)
-npm test                         # 170 node:test cases (ledger, triggers, sync, server, e2e matrix)
+
+# Verification & Test Suites:
+npm test                         # 171 hermetic node:test cases (ledger, triggers, sync, server, e2e matrix)
 npm run lint                     # eslint incl. the forbidden-claims guard (see §6)
 npm run typecheck                # strict TS: app + server projects
 ```

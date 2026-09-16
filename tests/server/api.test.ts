@@ -69,7 +69,7 @@ function wireRecord(r: SealedLike): Record<string, unknown> {
   };
 }
 
-const { server, db } = createApiServer(':memory:');
+const { server, db } = await createApiServer(':memory:');
 let base = '';
 let token = '';
 
@@ -190,11 +190,7 @@ describe('Parinaam API — v2 phase D', () => {
     assert.equal(ok.status, 200);
     assert.equal(ok.json.from, 'REPORTED');
 
-    const { hashPassword } = await import('../../server/src/db.ts');
-    const juniorSalt = 'c0ffee00c0ffee00c0ffee00c0ffee00';
-    db.handle
-      .prepare('INSERT INTO officers (username, pass_salt, pass_hash, display_name, role, created_at) VALUES (?,?,?,?,?,?)')
-      .run('jun', juniorSalt, hashPassword('juniorpw', juniorSalt), 'Junior Officer', 'JUNIOR', new Date().toISOString());
+    await db.insertOfficer('jun', 'juniorpw', 'Junior Officer', 'JUNIOR');
     const juniorToken = token;
     const jr = await api('POST', '/api/v1/auth/login', { body: { username: 'jun', password: 'juniorpw' } });
     assert.equal(jr.status, 200);
