@@ -354,6 +354,21 @@ export async function searchRecordUuids(term: string, limit = 200): Promise<stri
 export async function resetLedgerFile(): Promise<void> {
   const a = activeAdapter;
   if (!a) return;
+  try {
+    // Drop immutable triggers first to allow clean demo reset
+    await a.exec(`
+      DROP TRIGGER IF EXISTS trg_immutable_append_only;
+      DROP TRIGGER IF EXISTS trg_immutable_no_delete;
+      DROP TABLE IF EXISTS field_test;
+      DROP TABLE IF EXISTS outbox_queue;
+      DROP TABLE IF EXISTS wizard_draft;
+      DROP TABLE IF EXISTS app_state;
+      DROP TABLE IF EXISTS audit_log;
+      DROP TABLE IF EXISTS field_test_fts;
+    `);
+  } catch {
+    /* best effort */
+  }
   if (a.destroy) {
     await a.destroy();
   } else {
@@ -363,19 +378,17 @@ export async function resetLedgerFile(): Promise<void> {
   // isNode guard never passes; expo's destroy() already removed the database natively.
   const isNode = typeof process !== 'undefined' && process.versions != null && process.versions.node != null;
   if (isNode && a.kind === 'node-sqlite' && a.pathLabel !== ':memory:') {
-    type FsLike = { rmSync: (p: string, o: { force: boolean }) => void };
-    const builtin = (process as unknown as { getBuiltinModule?: (id: string) => unknown }).getBuiltinModule;
-    if (builtin) {
-      const fs = builtin('fs') as FsLike | undefined;
-      if (fs) {
-        for (const suffix of ['', '-wal', '-shm']) {
-          try {
-            fs.rmSync(a.pathLabel + suffix, { force: true });
-          } catch {
-            /* best effort */
-          }
+    try {
+      const fsMod = await import('node:fs');
+      for (const suffix of ['', '-wal', '-shm']) {
+        try {
+          fsMod.rmSync(a.pathLabel + suffix, { force: true });
+        } catch {
+          /* best effort */
         }
       }
+    } catch {
+      /* best effort */
     }
   }
   activeAdapter = null;

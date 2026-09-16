@@ -213,7 +213,10 @@ export const NewTestSetupScreen: React.FC = () => {
             helper={`Suggested next free for this case: ${suggestedPkg}`}
           />
           {setup.packageNo.trim().toUpperCase() === suggestedPkg && setup.packageNo.trim() !== '' ? (
-            <Text style={styles.suggestNote}>✓ Using next free package number for this case.</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+              <Icon name="check" size={12} color={T.successText} strokeWidth={3} />
+              <Text style={styles.suggestNote}>Using next free package number for this case.</Text>
+            </View>
           ) : null}
           <LightField
             label="Lot number"
@@ -249,12 +252,12 @@ export const NewTestSetupScreen: React.FC = () => {
                   accessibilityLabel={`Reagent ${REAGENT_LABEL[r]}`}
                 >
                   <Icon name="flask" size={15} color={selected ? '#FFFFFF' : T.textSecondary} strokeWidth={2.2} />
-                  <Text style={[styles.reagentLabel, selected && styles.reagentLabelSelected]}>
+                  <Text style={[styles.reagentLabel, selected && styles.reagentLabelSelected]} numberOfLines={1}>
                     {REAGENT_LABEL[r]}
                   </Text>
                   {selected ? (
                     <View style={styles.reagentCheck}>
-                      <Icon name="check" size={10} color="#FFFFFF" strokeWidth={3} />
+                      <Icon name="check" size={10} color={T.accent} strokeWidth={3} />
                     </View>
                   ) : null}
                 </TouchableOpacity>
@@ -296,8 +299,8 @@ export const NewTestSetupScreen: React.FC = () => {
               accessibilityLabel="Simulated OCR label scan"
             >
               <Icon name="camera" size={14} color={setup.entryMethod === 'ocr' ? '#FFFFFF' : T.textSecondary} strokeWidth={2.4} />
-              <Text style={[styles.entryBtnText, setup.entryMethod === 'ocr' && styles.entryBtnTextActive]}>
-                SCAN LABEL (SIMULATED)
+              <Text style={[styles.entryBtnText, setup.entryMethod === 'ocr' && styles.entryBtnTextActive]} numberOfLines={1}>
+                SCAN LABEL (SIM)
               </Text>
             </TouchableOpacity>
           </View>
@@ -432,8 +435,11 @@ const styles = StyleSheet.create({
   /* Reagent grid */
   reagentGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   reagentTile: {
+    flex: 1,
+    minWidth: '46%',
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'flex-start',
     gap: 6,
     minHeight: 48,
     paddingHorizontal: 12,
@@ -443,7 +449,7 @@ const styles = StyleSheet.create({
     backgroundColor: T.cardSubtle,
   },
   reagentTileSelected: { backgroundColor: T.accent, borderColor: T.accent },
-  reagentLabel: { fontSize: 13, fontWeight: '600', color: T.textPrimary },
+  reagentLabel: { fontSize: 12.5, fontWeight: '600', color: T.textPrimary, flex: 1 },
   reagentLabelSelected: { color: '#FFFFFF', fontWeight: '700' },
   reagentCheck: {
     width: 16,

@@ -170,7 +170,7 @@ Agency   : ${custodian.agency}
 
   private renderPartBText(
     record: TestRecordEntity,
-    device: DeviceMetadata,
+    _device: DeviceMetadata,
     expert: ExpertDetails,
     timestampIst: string
   ): string {
@@ -254,7 +254,7 @@ Date     : ${timestampIst}
 
   private renderPartBHtml(
     record: TestRecordEntity,
-    device: DeviceMetadata,
+    _device: DeviceMetadata,
     expert: ExpertDetails,
     timestampIst: string
   ): string {

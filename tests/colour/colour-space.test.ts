@@ -46,6 +46,16 @@ describe('Phase 2: Colour Space Transformations (sRGB, XYZ, CIELAB)', () => {
     assert.ok(Math.abs(originalLab.b - recoveredLab.b) < 1e-6);
   });
 
+  it('roundtrips linearRGB -> CIELAB -> linearRGB accurately', () => {
+    const original = { r: 0.4, g: 0.5, b: 0.6 };
+    const lab = linearRgbToLab(original);
+    const recovered = labToLinearRgb(lab);
+
+    assert.ok(Math.abs(original.r - recovered.r) < 1e-4);
+    assert.ok(Math.abs(original.g - recovered.g) < 1e-4);
+    assert.ok(Math.abs(original.b - recovered.b) < 1e-4);
+  });
+
   it('calculates equichromatic chroma distance ΔE_ab correctly', () => {
     const c1 = { l: 50.0, a: 10.0, b: 20.0 };
     const c2 = { l: 80.0, a: 13.0, b: 24.0 };

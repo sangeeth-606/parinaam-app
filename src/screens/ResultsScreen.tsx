@@ -393,7 +393,9 @@ export const ResultsScreen: React.FC = () => {
           </Text>
 
           <View style={styles.labBlock}>
-            <LightSwatch lab={{ l: burst.meanObservation[0], a: burst.meanObservation[1], b: burst.meanObservation[2] }} />
+            <View style={styles.swatchBox}>
+              <LightSwatch lab={{ l: burst.meanObservation[0], a: burst.meanObservation[1], b: burst.meanObservation[2] }} size={50} />
+            </View>
             <View style={styles.labStats}>
               <ReadingRow label="L* (lightness)" value={burst.meanObservation[0].toFixed(2)} />
               <ReadingRow label="a* (green ↔ red)" value={signed(burst.meanObservation[1])} />
@@ -548,34 +550,33 @@ export const ResultsScreen: React.FC = () => {
             <View style={styles.actionRow}>
               <TouchableOpacity
                 style={[styles.secondaryBtn, styles.flex]}
-                onPress={() => navigation.navigate('Bunching')}
-                accessibilityRole="button"
-                accessibilityLabel="Group identical packages for shared remainder handling under Rule 10(2)"
-              >
-                <Icon name="package" size={17} color={T.accent} strokeWidth={2.5} />
-                <Text style={styles.secondaryBtnText}>GROUP PACKAGES</Text>
-              </TouchableOpacity>
-            </View>
-            <View style={styles.actionRow}>
-              <TouchableOpacity
-                style={[styles.secondaryBtn, styles.flex]}
                 onPress={nextPackage}
                 accessibilityRole="button"
                 accessibilityLabel="Start capture for the next package"
               >
                 <Icon name="camera" size={17} color={T.accent} strokeWidth={2.5} />
-                <Text style={styles.secondaryBtnText}>NEXT PACKAGE</Text>
+                <Text style={styles.secondaryBtnText} numberOfLines={1}>NEXT PACKAGE</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.secondaryBtn, styles.flex]}
-                onPress={() => navigation.navigate('Home')}
+                onPress={() => navigation.navigate('Bunching')}
                 accessibilityRole="button"
-                accessibilityLabel="Return to duty screen"
+                accessibilityLabel="Group identical packages for shared remainder handling under Rule 10(2)"
               >
-                <Icon name="duty" size={17} color={T.accent} strokeWidth={2.5} />
-                <Text style={styles.secondaryBtnText}>BACK TO DUTY</Text>
+                <Icon name="package" size={17} color={T.accent} strokeWidth={2.5} />
+                <Text style={styles.secondaryBtnText} numberOfLines={1}>GROUP PACKAGES</Text>
               </TouchableOpacity>
             </View>
+
+            <TouchableOpacity
+              style={styles.returnDutyBtn}
+              onPress={() => navigation.navigate('Home')}
+              accessibilityRole="button"
+              accessibilityLabel="Return to duty screen"
+            >
+              <Icon name="duty" size={17} color={T.accent} strokeWidth={2.5} />
+              <Text style={styles.returnDutyText}>RETURN TO DUTY</Text>
+            </TouchableOpacity>
           </>
         ) : (
           <View style={styles.card}>
@@ -980,21 +981,23 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
     borderBottomWidth: 1,
     borderBottomColor: T.border,
-    minHeight: 36,
-    gap: 12,
+    minHeight: 34,
+    gap: 8,
   },
   readingLabel: {
-    fontSize: 13,
+    fontSize: 12.5,
     color: T.textSecondary,
     fontWeight: '500',
-    flexShrink: 1,
+    flex: 1,
+    paddingRight: 4,
   },
   readingValue: {
-    fontSize: 13,
+    fontSize: 12.5,
     fontWeight: '700',
     color: T.textPrimary,
     fontFamily: evidenceMono,
     textAlign: 'right',
+    flexShrink: 0,
   },
 
   /* Outcome / conformal tags */
@@ -1039,11 +1042,17 @@ const styles = StyleSheet.create({
   /* Lab block */
   labBlock: {
     flexDirection: 'row',
-    gap: 16,
     alignItems: 'center',
-    marginTop: 4,
+    gap: 12,
+    marginTop: 8,
   },
-  labStats: { flex: 1 },
+  swatchBox: {
+    width: 96,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  labStats: { flex: 1, minWidth: 0 },
 
   /* Grade badge */
   gradeBadge: {
@@ -1182,6 +1191,25 @@ const styles = StyleSheet.create({
   actionRow: {
     flexDirection: 'row',
     gap: 10,
+  },
+  returnDutyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    minHeight: 48,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: T.borderStrong,
+    backgroundColor: T.cardSubtle,
+    marginTop: 2,
+  },
+  returnDutyText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: T.textSecondary,
+    letterSpacing: 0.4,
   },
 
   /* Confirm modal */

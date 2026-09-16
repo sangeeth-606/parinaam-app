@@ -42,6 +42,7 @@ describe('Phase 4: NDPS Statutory Forms (Forms 4, 5, 6) (Milestone M4.8)', () =>
     prev_hash: '0'.repeat(64),
     chain_hash: 'c'.repeat(64),
     device_attestation: 'd'.repeat(128),
+    device_clock_iso: '2026-09-13T04:30:00.000Z',
     created_at: '2026-09-13T04:30:00.000Z',
     tz_offset_min: 330,
     gps_mocked: 0,

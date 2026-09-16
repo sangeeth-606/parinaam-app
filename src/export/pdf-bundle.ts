@@ -199,7 +199,7 @@ export class CourtPdfBundleGenerator {
     <h2>1. Executive Case Summary</h2>
     <table>
       <tr><th>Case Reference</th><td><strong>${seizure.caseCrimeNo}</strong> (Panchnama: ${seizure.panchnamaRef})</td></tr>
-      <tr><th>Seizing Agency</th><td>${seizure.seizingAgency} (${seizure.station})</td></tr>
+      <tr><th>Seizing Agency</th><td>${seizure.seizingAgency} (${seizure.placeOfSeizure})</td></tr>
       <tr><th>Seizing Officer</th><td>${custodian.officerName} (${custodian.designation}, Badge: ${custodian.badgeNumber})</td></tr>
       <tr><th>Date & Place of Seizure</th><td>${seizure.dateOfSeizure}, ${seizure.placeOfSeizure}</td></tr>
       <tr><th>Statutory Seizure Rule</th><td>Rule 10(2) of NDPS Rules 2022 (G.S.R. 899(E))</td></tr>

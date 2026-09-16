@@ -24,7 +24,7 @@ import type { RootStackParamList } from '../navigation/AppNavigator';
 import { Icon } from '../components/ui/Icon';
 import { StateBanner, OutcomeTag } from '../components/ui/evidentiary/EvidenceBits';
 import { LightTabBar } from '../components/ui/evidentiary/LightTabBar';
-import { STATUTORY_DEADLINES, calculateRemainingHours } from '../components/statutory-timers';
+import { FadeEntrance } from '../components/ui/FadeEntrance';
 import { useLedgerStore } from '../state/ledger-store';
 import { useSyncStore } from '../state/sync-store';
 import { useSessionStore } from '../state/session-store';
@@ -143,245 +143,247 @@ export const HomeScreen: React.FC = () => {
                     : 'SERVER NOT PROBED'}
             </Text>
           </View>
-          <View style={[styles.stripPill, reachability === 'up' ? styles.pillOk : reachability === 'down' ? styles.pillWarn : styles.pillNeutral]}>
-            <Icon name={reachability === 'down' ? 'wifiOff' : 'globe'} size={12} color={reachability === 'up' ? T.successText : reachability === 'down' ? T.marginalText : T.textSecondary} strokeWidth={2.5} />
-            <Text style={[styles.stripPillText, { color: reachability === 'up' ? T.successText : reachability === 'down' ? T.marginalText : T.textSecondary }]}>
-              {reachability === 'up' ? 'SERVER REACHABLE' : reachability === 'down' ? 'OFFLINE — QUEUE HOLDS' : 'SERVER NOT PROBED'}
-            </Text>
-          </View>
         </View>
       </View>
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
-        {/* ============ G-D5 #1 — ACTIVE CASE (the one act done once per seizure) ============ */}
-        {activeCase ? (
-          <View style={styles.activeCaseCard}>
-            <View style={styles.activeCaseHead}>
-              <View style={styles.flex}>
-                <Text style={styles.cardEyebrow}>ACTIVE CASE</Text>
-                <Text style={styles.activeCaseRef}>{activeCase.caseRef}</Text>
-                <Text style={styles.activeCaseSub}>
-                  {activeCase.panchnamaRef ? `PANCHNAMA ${activeCase.panchnamaRef} · ` : ''}opened {relativeIst(activeCase.openedAt)}
-                </Text>
-              </View>
-              <TouchableOpacity
-                style={styles.changeCaseBtn}
-                onPress={() => void clearCase()}
-                accessibilityRole="button"
-                accessibilityLabel="Close this case and select another"
-              >
-                <Text style={styles.changeCaseText}>SWITCH</Text>
-              </TouchableOpacity>
-            </View>
-            <View style={styles.pkgTrackRow}>
-              <Text style={styles.pkgTrackLabel}>PACKAGES TESTED</Text>
-              <View style={styles.pkgChips}>
-                {testedPkgs.map((p) => (
-                  <View key={p} style={styles.pkgChipDone}>
-                    <Text style={styles.pkgChipDoneText}>{p}</Text>
-                  </View>
-                ))}
-                <View style={styles.pkgChipNext}>
-                  <Text style={styles.pkgChipNextText}>{nextPkg} · NEXT</Text>
-                </View>
-              </View>
-            </View>
-          </View>
-        ) : (
-          <TouchableOpacity
-            style={styles.emptyCaseCard}
-            onPress={() => navigation.navigate('NewTestSetup')}
-            accessibilityRole="button"
-            accessibilityLabel="Select or open a case to begin the duty"
-          >
-            <Icon name="document" size={20} color={T.accent} strokeWidth={2.2} />
-            <View style={styles.flex}>
-              <Text style={styles.emptyCaseTitle}>NO ACTIVE CASE — SELECT OR OPEN ONE</Text>
-              <Text style={styles.emptyCaseSub}>
-                Everything downstream pre-fills from the case you open here — you type the
-                linkage identifiers once, not on every package.
-              </Text>
-            </View>
-            <Icon name="chevronRight" size={18} color={T.accent} strokeWidth={2.5} />
-          </TouchableOpacity>
-        )}
-
-        {/* ============ G-D5 #2 — the one giant context-aware action ============ */}
-        <TouchableOpacity
-          style={styles.primaryBtn}
-          onPress={() => {
-            if (hasDraft) {
-              // G-D5 #3 priority: an unfinished lap resumes — never reset by the CTA.
-              navigation.navigate(setup.caseRef ? 'Capture' : 'NewTestSetup');
-              return;
-            }
-            if (activeCase) {
-              // Next lap: pre-fill identity + kit + bumped package, land on Capture.
-              const pre = useSessionStore.getState().setup;
-              useSessionStore.getState().resetLap();
-              useSessionStore.getState().patchSetup({
-                caseRef: activeCase.caseRef,
-                panchnamaRef: activeCase.panchnamaRef,
-                packageNo: nextPkg,
-                ...(pre.reagent ? { reagent: pre.reagent } : {}),
-              });
-              navigation.navigate('Capture');
-            } else {
-              navigation.navigate('NewTestSetup');
-            }
-          }}
-          accessibilityRole="button"
-          accessibilityLabel={hasDraft ? 'Continue the unfinished test' : activeCase ? `Test the next package ${nextPkg} for ${activeCase.caseRef}` : 'Open a case to start a field test'}
-        >
-          <Icon name="camera" size={22} color="#FFFFFF" strokeWidth={2.2} />
-          <Text style={styles.primaryBtnText}>
-            {hasDraft ? 'CONTINUE CURRENT TEST' : activeCase ? `FIELD TEST — ${nextPkg}` : 'OPEN CASE TO START TESTING'}
-          </Text>
-        </TouchableOpacity>
-
-        {/* G-D5 #3 — Resumable draft */}
-        {hasDraft ? (
-          <TouchableOpacity
-            style={styles.draftCard}
-            onPress={() => navigation.navigate('Capture')}
-            accessibilityRole="button"
-            accessibilityLabel="Resume the unfinished test capture"
-          >
-            <View style={styles.draftIcon}>
-              <Icon name="refresh" size={18} color="#FFFFFF" strokeWidth={2.5} />
-            </View>
-            <View style={styles.draftText}>
-              <Text style={styles.draftTitle}>Unfinished test in progress</Text>
-              <Text style={styles.draftSub}>
-                {setup.caseRef ? `${setup.caseRef} · ${setup.packageNo} — ` : ''}Resume the capture wizard where you left it.
-              </Text>
-            </View>
-            <Icon name="chevronRight" size={18} color={T.accent} strokeWidth={2.5} />
-          </TouchableOpacity>
-        ) : null}
-
-        {/* Rule 10(2) seizure clock — honest statutory labelling */}
-        {last ? (
-          <View style={styles.card}>
-            <Text style={styles.cardEyebrow}>SEIZURE CLOCK — RULE 10(2) NDPS RULES 2022</Text>
-            <Text style={styles.cardHeading}>{last.case_ref}</Text>
-            <Text style={styles.cardSubtext}>
-              From the most recent recorded test event · {relativeIst(last.created_at)}
-            </Text>
-            {STATUTORY_DEADLINES.map((item) => {
-              const { remainingHours, isExpired } = calculateRemainingHours(last.created_at, item.deadlineHours);
-              const admin = item.isAdministrativeGuidance;
-              return (
-                <View key={item.id} style={[styles.timerRow, admin ? styles.timerAdmin : styles.timerStatutory]}>
-                  <View style={styles.timerLeft}>
-                    <Text style={styles.timerTitle} numberOfLines={1}>{item.title}</Text>
-                    <Text style={styles.timerCite}>
-                      {admin ? 'ADMIN GUIDANCE' : 'STATUTORY'} ·{' '}
-                      {item.deadlineHours >= 24 ? `${item.deadlineHours / 24} DAYS` : `${item.deadlineHours} H`}
-                    </Text>
-                  </View>
-                  <Text style={[styles.timerValue, isExpired ? styles.timerValueExpired : styles.timerValueOk]}>
-                    {isExpired ? 'ELAPSED' : `${remainingHours.toFixed(1)} h`}
+        <FadeEntrance style={styles.entranceWrap}>
+          {/* ============ G-D5 #1 — ACTIVE CASE (the one act done once per seizure) ============ */}
+          {activeCase ? (
+            <View style={styles.activeCaseCard}>
+              <View style={styles.activeCaseHead}>
+                <View style={styles.flex}>
+                  <Text style={styles.cardEyebrow}>ACTIVE CASE</Text>
+                  <Text style={styles.activeCaseRef}>{activeCase.caseRef}</Text>
+                  <Text style={styles.activeCaseSub}>
+                    {activeCase.panchnamaRef ? `PANCHNAMA ${activeCase.panchnamaRef} · ` : ''}opened {relativeIst(activeCase.openedAt)}
                   </Text>
                 </View>
-              );
-            })}
-          </View>
-        ) : null}
-
-        {/* Latest readings */}
-        <View style={styles.card}>
-          <View style={styles.cardHeaderRow}>
-            <View style={styles.flex}>
-              <Text style={styles.cardEyebrow}>LATEST READINGS</Text>
-              <Text style={styles.cardHeading}>Case Log</Text>
-            </View>
-            <TouchableOpacity
-              style={styles.viewAllBtn}
-              onPress={() => navigation.navigate('CaseLog')}
-              accessibilityRole="button"
-              accessibilityLabel="View all records"
-            >
-              <Text style={styles.viewAllText}>VIEW ALL</Text>
-              <Icon name="chevronRight" size={14} color={T.accent} strokeWidth={2.5} />
-            </TouchableOpacity>
-          </View>
-
-          {!seeded ? (
-            <View style={styles.loadingBox}>
-              <Icon name="chain" size={18} color={T.textMuted} strokeWidth={2} />
-              <Text style={styles.loadingText}>Hydrating encrypted ledger…</Text>
-            </View>
-          ) : recent.length === 0 ? (
-            <View style={styles.emptyBox}>
-              <Icon name="flask" size={20} color={T.textSecondary} strokeWidth={2.2} />
-              <Text style={styles.emptyText}>
-                No test events recorded. Start the first presumptive field test — readings appear
-                here with their chain digests.
-              </Text>
+                <TouchableOpacity
+                  style={styles.changeCaseBtn}
+                  onPress={() => void clearCase()}
+                  accessibilityRole="button"
+                  accessibilityLabel="Close this case and select another"
+                >
+                  <Text style={styles.changeCaseText}>SWITCH</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.pkgTrackRow}>
+                <Text style={styles.pkgTrackLabel}>PACKAGES TESTED</Text>
+                <View style={styles.pkgChips}>
+                  {testedPkgs.map((p) => (
+                    <View key={p} style={styles.pkgChipDone}>
+                      <Text style={styles.pkgChipDoneText}>{p}</Text>
+                    </View>
+                  ))}
+                  <View style={styles.pkgChipNext}>
+                    <Text style={styles.pkgChipNextText}>{nextPkg} · NEXT</Text>
+                  </View>
+                </View>
+              </View>
             </View>
           ) : (
-            recent.map((r, i) => (
-              <TouchableOpacity
-                key={r.record_uuid}
-                style={[styles.recentRow, i < recent.length - 1 && styles.recentRowSep]}
-                onPress={() => navigation.navigate('RecordDetail', { uuid: r.record_uuid })}
-                accessibilityRole="button"
-                accessibilityLabel={`Open record ${r.case_ref} package ${r.package_no}, ${OFFICER_READING_SHORT[r.outcome]}`}
-              >
-                <View style={styles.recentText}>
-                  <Text style={styles.recentTitle}>{r.case_ref} · {r.package_no}</Text>
-                  <Text style={styles.recentSub}>{REAGENT_LABEL[r.reagent]} kit · {formatTimeIst(r.created_at)}</Text>
-                </View>
-                <OutcomeTag kind={r.outcome} />
-              </TouchableOpacity>
-            ))
-          )}
-        </View>
-
-        {/* Secondary evidentiary actions */}
-        <View style={styles.actionRow}>
-          <TouchableOpacity
-            style={styles.secondaryBtnWide}
-            onPress={() => navigation.navigate('Bunching')}
-            accessibilityRole="button"
-            accessibilityLabel="Open Rule 10(2) package bunching"
-          >
-            <Icon name="package" size={19} color={T.accent} strokeWidth={2.4} />
-            <Text style={styles.secondaryBtnText}>PACKAGE BUNCHING</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.secondaryBtnWide}
-            onPress={() => navigation.navigate('Integrity')}
-            accessibilityRole="button"
-            accessibilityLabel="Open ledger integrity cockpit"
-          >
-            <Icon name="shield" size={19} color={T.accent} strokeWidth={2.4} />
-            <Text style={styles.secondaryBtnText}>INTEGRITY</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Demo plumbing stays reachable, but off the operational path (G-D9). */}
-        {demoCorrupted ? (
-          <StateBanner
-            tone="danger"
-            icon="alert"
-            eyebrow="SESSION STATE"
-            title="Tamper demonstration is live in this session"
-            citation="The chain check currently fails on the corrupted record."
-          >
             <TouchableOpacity
-              style={[styles.secondaryBtn, styles.mtTop]}
-              onPress={() => void useLedgerStore.getState().resetDemo()}
+              style={styles.emptyCaseCard}
+              onPress={() => navigation.navigate('NewTestSetup')}
               accessibilityRole="button"
-              accessibilityLabel="Restore the demo chain"
+              accessibilityLabel="Select or open a case to begin the duty"
             >
-              <Icon name="refresh" size={17} color={T.accent} strokeWidth={2.5} />
-              <Text style={styles.secondaryBtnText}>RESTORE DEMO CHAIN</Text>
+              <Icon name="document" size={20} color={T.accent} strokeWidth={2.2} />
+              <View style={styles.flex}>
+                <Text style={styles.emptyCaseTitle}>NO ACTIVE CASE — SELECT OR OPEN ONE</Text>
+                <Text style={styles.emptyCaseSub}>
+                  Everything downstream pre-fills from the case you open here — you type the
+                  linkage identifiers once, not on every package.
+                </Text>
+              </View>
+              <Icon name="chevronRight" size={18} color={T.accent} strokeWidth={2.5} />
             </TouchableOpacity>
-          </StateBanner>
-        ) : null}
+          )}
 
+          {/* ============ G-D5 #2 — Context-aware Primary Action ============ */}
+          <TouchableOpacity
+            style={styles.primaryBtn}
+            onPress={() => {
+              if (hasDraft) {
+                navigation.navigate(setup.caseRef ? 'Capture' : 'NewTestSetup');
+                return;
+              }
+              if (activeCase) {
+                const pre = useSessionStore.getState().setup;
+                useSessionStore.getState().resetLap();
+                useSessionStore.getState().patchSetup({
+                  caseRef: activeCase.caseRef,
+                  panchnamaRef: activeCase.panchnamaRef,
+                  packageNo: nextPkg,
+                  ...(pre.reagent ? { reagent: pre.reagent } : {}),
+                });
+                navigation.navigate('Capture');
+              } else {
+                navigation.navigate('NewTestSetup');
+              }
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={hasDraft ? 'Continue the unfinished test' : activeCase ? `Test the next package ${nextPkg} for ${activeCase.caseRef}` : 'Open a case to start a field test'}
+          >
+            <Icon name="camera" size={22} color="#FFFFFF" strokeWidth={2.2} />
+            <Text style={styles.primaryBtnText}>
+              {hasDraft ? 'CONTINUE CURRENT TEST' : activeCase ? `FIELD TEST — ${nextPkg}` : 'OPEN CASE TO START TESTING'}
+            </Text>
+          </TouchableOpacity>
+
+          {/* Resumable draft indicator */}
+          {hasDraft ? (
+            <TouchableOpacity
+              style={styles.draftCard}
+              onPress={() => navigation.navigate('Capture')}
+              accessibilityRole="button"
+              accessibilityLabel="Resume the unfinished test capture"
+            >
+              <View style={styles.draftIcon}>
+                <Icon name="refresh" size={18} color="#FFFFFF" strokeWidth={2.5} />
+              </View>
+              <View style={styles.draftText}>
+                <Text style={styles.draftTitle}>Unfinished test in progress</Text>
+                <Text style={styles.draftSub}>
+                  {setup.caseRef ? `${setup.caseRef} · ${setup.packageNo} — ` : ''}Resume the capture wizard where you left it.
+                </Text>
+              </View>
+              <Icon name="chevronRight" size={18} color={T.accent} strokeWidth={2.5} />
+            </TouchableOpacity>
+          ) : null}
+
+          {/* Latest readings — rich forensic cards */}
+          <View style={styles.card}>
+            <View style={styles.cardHeaderRow}>
+              <View style={styles.flex}>
+                <Text style={styles.cardEyebrow}>LATEST READINGS</Text>
+                <Text style={styles.cardHeading}>Forensic Case Log</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.viewAllBtn}
+                onPress={() => navigation.navigate('CaseLog')}
+                accessibilityRole="button"
+                accessibilityLabel="View all records in ledger"
+              >
+                <Text style={styles.viewAllText}>VIEW ALL</Text>
+                <Icon name="chevronRight" size={14} color={T.accent} strokeWidth={2.5} />
+              </TouchableOpacity>
+            </View>
+
+            {!seeded ? (
+              <View style={styles.loadingBox}>
+                <Icon name="chain" size={18} color={T.textMuted} strokeWidth={2} />
+                <Text style={styles.loadingText}>Hydrating encrypted ledger…</Text>
+              </View>
+            ) : recent.length === 0 ? (
+              <View style={styles.emptyBox}>
+                <Icon name="flask" size={22} color={T.textSecondary} strokeWidth={2.2} />
+                <Text style={styles.emptyTitle}>No test events recorded</Text>
+                <Text style={styles.emptyText}>
+                  Start the first presumptive field test — readings appear here with their ΔE₀₀ kinetics and chain digests.
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.recentCardsList}>
+                {recent.map((r, i) => (
+                  <TouchableOpacity
+                    key={r.record_uuid}
+                    style={[styles.recentCard, i < recent.length - 1 && styles.recentCardSep]}
+                    onPress={() => navigation.navigate('RecordDetail', { uuid: r.record_uuid })}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Open record ${r.case_ref} package ${r.package_no}, ${OFFICER_READING_SHORT[r.outcome]}`}
+                  >
+                    {/* Top row: Package & Case + Outcome */}
+                    <View style={styles.recentCardTop}>
+                      <View style={styles.recentPkgBadge}>
+                        <Text style={styles.recentPkgBadgeText}>{r.package_no}</Text>
+                      </View>
+                      <View style={styles.recentIdentity}>
+                        <Text style={styles.recentCaseRef} numberOfLines={1}>{r.case_ref}</Text>
+                        <Text style={styles.recentSubInfo} numberOfLines={1}>
+                          {REAGENT_LABEL[r.reagent]} kit{r.lot_no ? ` · Lot ${r.lot_no}` : ''}
+                        </Text>
+                      </View>
+                      <View style={styles.recentTopRight}>
+                        <OutcomeTag kind={r.outcome} />
+                        <Text style={styles.recentTopTime}>
+                          {formatTimeIst(r.created_at)} · {relativeIst(r.created_at)}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {/* Forensic metrics strip */}
+                    <View style={styles.recentMetricsRow}>
+                      <View style={styles.recentMetricChip}>
+                        <Text style={styles.recentMetricLabel}>ΔE₀₀</Text>
+                        <Text style={styles.recentMetricVal}>{r.deltaE.toFixed(2)}</Text>
+                      </View>
+                      <View style={styles.recentMetricChip}>
+                        <Text style={styles.recentMetricLabel}>CONF</Text>
+                        <Text style={styles.recentMetricVal}>{Math.round(r.confidence * 100)}%</Text>
+                      </View>
+                      <View style={styles.recentMetricChip}>
+                        <Text style={styles.recentMetricLabel}>CALIB</Text>
+                        <Text style={styles.recentMetricVal}>{r.residual?.grade ?? 'GOOD'}</Text>
+                      </View>
+                      <View style={styles.recentMetricChip}>
+                        <Text style={styles.recentMetricLabel}>SEQ</Text>
+                        <Text style={styles.recentMetricVal}>#{r.seq}</Text>
+                      </View>
+                      <View style={styles.recentCardChevron}>
+                        <Icon name="chevronRight" size={16} color={T.textMuted} strokeWidth={2.4} />
+                      </View>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+          </View>
+
+          {/* Secondary evidentiary actions — package bunching & integrity */}
+          <View style={styles.actionRow}>
+            <TouchableOpacity
+              style={styles.secondaryBtnWide}
+              onPress={() => navigation.navigate('Bunching')}
+              accessibilityRole="button"
+              accessibilityLabel="Open Rule 10(2) package bunching"
+            >
+              <Icon name="package" size={19} color={T.accent} strokeWidth={2.4} />
+              <Text style={styles.secondaryBtnText} numberOfLines={1}>PACKAGE BUNCHING</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.secondaryBtnWide}
+              onPress={() => navigation.navigate('Integrity')}
+              accessibilityRole="button"
+              accessibilityLabel="Open ledger integrity cockpit"
+            >
+              <Icon name="shield" size={19} color={T.accent} strokeWidth={2.4} />
+              <Text style={styles.secondaryBtnText} numberOfLines={1}>INTEGRITY</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Demo tamper banner */}
+          {demoCorrupted ? (
+            <StateBanner
+              tone="danger"
+              icon="alert"
+              eyebrow="SESSION STATE"
+              title="Tamper demonstration is live in this session"
+              citation="The chain check currently fails on the corrupted record."
+            >
+              <TouchableOpacity
+                style={[styles.secondaryBtn, styles.mtTop]}
+                onPress={() => void useLedgerStore.getState().resetDemo()}
+                accessibilityRole="button"
+                accessibilityLabel="Restore the demo chain"
+              >
+                <Icon name="refresh" size={17} color={T.accent} strokeWidth={2.5} />
+                <Text style={styles.secondaryBtnText}>RESTORE DEMO CHAIN</Text>
+              </TouchableOpacity>
+            </StateBanner>
+          ) : null}
+        </FadeEntrance>
       </ScrollView>
 
       <LightTabBar
@@ -514,47 +516,9 @@ const styles = StyleSheet.create({
   },
   primaryBtnText: { fontSize: 15, fontWeight: '700', color: '#FFFFFF', letterSpacing: 0.5 },
 
-  /* Statutory timers (light) */
-  timerLeft: { flex: 1, gap: 1, paddingRight: 8 },
-  timerValue: { fontFamily: evidenceMono, fontSize: 14, fontWeight: '800' },
-  timerRow: {
-    borderWidth: 1,
-    borderRadius: 6,
-    padding: 12,
-    marginBottom: 10,
-    backgroundColor: T.cardSubtle,
-  },
-  timerStatutory: { borderColor: T.accent },
-  timerAdmin: { borderColor: T.marginalBorder, backgroundColor: T.marginalSurface },
-  timerHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 },
-  timerTitleWrap: { flex: 1 },
-  timerTitle: { fontSize: 13, fontWeight: '700', color: T.textPrimary },
-  timerCite: { fontSize: 11, color: T.textSecondary, fontFamily: evidenceMono, marginTop: 2, lineHeight: 16 },
-  timerBadge: {
-    borderWidth: 1,
-    borderRadius: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 3,
-    backgroundColor: '#FFFFFF',
-  },
-  timerBadgeStatutory: { borderColor: T.accent },
-  timerBadgeAdmin: { borderColor: T.marginalBorder },
-  timerBadgeText: { fontSize: 9, fontWeight: '700', letterSpacing: 0.5 },
-  timerFoot: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 8,
-    paddingTop: 6,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(15,23,42,0.12)',
-  },
-  timerLimit: { fontSize: 10, fontWeight: '600', color: T.textMuted, letterSpacing: 0.4 },
-  timerValueOk: { color: T.successText },
-  timerValueExpired: { color: T.marginalText },
-  timerNote: { fontSize: 11, color: T.marginalText, lineHeight: 16, marginTop: 6, fontStyle: 'italic' },
+  entranceWrap: { gap: 14 },
 
-  /* Recent readings */
+  /* Recent readings — enriched forensic cards */
   viewAllBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -571,45 +535,139 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   loadingText: { fontSize: 12, fontWeight: '600', color: T.textSecondary },
-  emptyBox: { alignItems: 'center', gap: 8, paddingVertical: 16, paddingHorizontal: 8 },
+  emptyBox: { alignItems: 'center', gap: 8, paddingVertical: 20, paddingHorizontal: 12 },
+  emptyTitle: { fontSize: 14, fontWeight: '700', color: T.textPrimary },
   emptyText: { fontSize: 12, color: T.textSecondary, lineHeight: 18, textAlign: 'center' },
-  recentRow: {
+  recentCardsList: { gap: 8, marginTop: 4 },
+  recentCard: {
+    backgroundColor: T.cardSubtle,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: T.border,
+    padding: 12,
+    gap: 10,
+  },
+  recentCardSep: {
+    marginBottom: 2,
+  },
+  recentCardTop: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    paddingVertical: 12,
-    minHeight: 60,
   },
-  recentRowSep: { borderBottomWidth: 1, borderBottomColor: T.border },
-  recentText: { flex: 1 },
-  recentTitle: { fontSize: 13, fontWeight: '700', color: T.textPrimary, fontFamily: evidenceMono },
-  recentSub: { fontSize: 11, color: T.textSecondary, marginTop: 2 },
+  recentPkgBadge: {
+    backgroundColor: T.accentSurface,
+    borderColor: T.borderStrong,
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    minWidth: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recentPkgBadgeText: {
+    fontFamily: evidenceMono,
+    fontSize: 12,
+    fontWeight: '800',
+    color: T.accent,
+  },
+  recentIdentity: {
+    flex: 1,
+  },
+  recentCaseRef: {
+    fontFamily: evidenceMono,
+    fontSize: 13,
+    fontWeight: '700',
+    color: T.textPrimary,
+  },
+  recentSubInfo: {
+    fontSize: 11,
+    color: T.textSecondary,
+    marginTop: 2,
+  },
+  recentTopRight: {
+    alignItems: 'flex-end',
+    gap: 2,
+    marginLeft: 6,
+  },
+  recentTopTime: {
+    fontSize: 10,
+    color: T.textMuted,
+    fontFamily: evidenceMono,
+  },
+  recentMetricsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: T.border,
+  },
+  recentMetricChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: T.card,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: T.border,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  recentMetricLabel: {
+    fontFamily: evidenceMono,
+    fontSize: 9,
+    fontWeight: '700',
+    color: T.textMuted,
+  },
+  recentMetricVal: {
+    fontFamily: evidenceMono,
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: T.textPrimary,
+  },
+  recentCardChevron: {
+    marginLeft: 'auto',
+    paddingLeft: 4,
+  },
 
-  actionRow: { flexDirection: 'row', gap: 10 },
+  actionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 4,
+  },
   secondaryBtnWide: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    minHeight: 52,
+    gap: 6,
+    minHeight: 48,
     borderRadius: 8,
-    borderWidth: 2,
+    borderWidth: 1.5,
     borderColor: T.accent,
-    backgroundColor: T.card,
+    backgroundColor: T.cardSubtle,
+    paddingHorizontal: 6,
   },
   secondaryBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    minHeight: 52,
+    minHeight: 48,
     borderRadius: 8,
     borderWidth: 2,
     borderColor: T.accent,
     backgroundColor: T.card,
   },
-  secondaryBtnText: { fontSize: 13, fontWeight: '700', color: T.accent, letterSpacing: 0.3 },
+  secondaryBtnText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: T.accent,
+    letterSpacing: 0.2,
+  },
 });
 
 export default HomeScreen;

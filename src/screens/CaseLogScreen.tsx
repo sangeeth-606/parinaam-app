@@ -26,6 +26,8 @@ import type { RootStackParamList } from '../navigation/AppNavigator';
 import { Icon } from '../components/ui/Icon';
 import { OutcomeTag } from '../components/ui/evidentiary/EvidenceBits';
 import { LightTabBar } from '../components/ui/evidentiary/LightTabBar';
+import { StatutoryClockModal } from '../components/StatutoryClockModal';
+import { FadeEntrance } from '../components/ui/FadeEntrance';
 import { useLedgerStore, type LedgerRecord } from '../state/ledger-store';
 import { searchRecordUuids } from '../db/ledger-repository';
 import { useSyncStore } from '../state/sync-store';
@@ -61,6 +63,8 @@ export const CaseLogScreen: React.FC = () => {
   const [bucket, setBucket] = useState<Bucket>('all');
   const [query, setQuery] = useState('');
   const [dbMatches, setDbMatches] = useState<Set<string> | null>(null);
+  const [clockModalVisible, setClockModalVisible] = useState(false);
+  const [selectedClockCase, setSelectedClockCase] = useState<string | undefined>(undefined);
 
   // V2-C: the ledger FILE answers search (FTS5 when the build has it, LIKE otherwise);
   // the in-memory filter below still narrows buckets. Null = no DB result yet (or empty
@@ -167,9 +171,18 @@ export const CaseLogScreen: React.FC = () => {
             <Text style={styles.headerSub}>Append-only evidentiary ledger · searchable register</Text>
           </View>
           <View style={styles.headerBtns}>
-            <View style={styles.statutoryTag}>
-              <Text style={styles.statutoryTagText}>LIVE LEDGER</Text>
-            </View>
+            <TouchableOpacity
+              style={styles.clockHeaderBtn}
+              onPress={() => {
+                setSelectedClockCase(drillCase || caseSummaries[0]?.caseRef);
+                setClockModalVisible(true);
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Open Rule 10(2) Seizure Clock Timers"
+            >
+              <Icon name="clock" size={15} color={T.accent} strokeWidth={2.4} />
+              <Text style={styles.clockHeaderBtnText}>SEIZURE CLOCK</Text>
+            </TouchableOpacity>
             <TouchableOpacity
               style={styles.iconBtn}
               onPress={() => navigation.navigate('Settings')}
@@ -297,135 +310,159 @@ export const CaseLogScreen: React.FC = () => {
         {/* Statutory notice — outcomes render on this screen */}
       </View>
 
-      {!seeded ? (
-        <View style={styles.listPad}>
-          <View style={styles.loadingBox}>
-            <Icon name="chain" size={22} color={T.textMuted} strokeWidth={2} />
-            <Text style={styles.loadingText}>Hydrating encrypted ledger…</Text>
-          </View>
-        </View>
-      ) : view === 'cases' && !drillCase ? (
-        <FlatList
-          data={caseSummaries}
-          keyExtractor={(c) => c.caseRef}
-          contentContainerStyle={styles.listPad}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={() => void pullRefresh()} tintColor={T.accent} colors={[T.accent]} />
-          }
-          ListEmptyComponent={
-            <View style={styles.emptyBox}>
-              <View style={styles.emptyIconCircle}>
-                <Icon name="flask" size={22} color={T.textSecondary} strokeWidth={2.2} />
-              </View>
-              <Text style={styles.emptyTitle}>No sealed readings yet</Text>
-              <Text style={styles.emptyBody}>Run your first field test — readings group here by case.</Text>
-              <TouchableOpacity style={styles.emptyBtn} onPress={() => navigation.navigate('NewTestSetup')} accessibilityRole="button" accessibilityLabel="Run your first field test">
-                <Text style={styles.emptyBtnText}>RUN FIRST FIELD TEST</Text>
-              </TouchableOpacity>
+      <FadeEntrance style={styles.flex}>
+        {!seeded ? (
+          <View style={styles.listPad}>
+            <View style={styles.loadingBox}>
+              <Icon name="chain" size={22} color={T.textMuted} strokeWidth={2} />
+              <Text style={styles.loadingText}>Hydrating encrypted ledger…</Text>
             </View>
-          }
-          renderItem={({ item: c }) => (
-            <TouchableOpacity
-              style={styles.caseCard}
-              onPress={() => {
-                setDrillCase(c.caseRef);
-                setView('records');
-              }}
-              accessibilityRole="button"
-              accessibilityLabel={`Open case ${c.caseRef}: ${c.records} readings across ${c.packages.length} packages`}
-            >
-              <View style={styles.caseCardTop}>
-                <Text style={styles.caseRef}>{c.caseRef}</Text>
-                {caseStatus[c.caseRef] ? (
-                  <View style={styles.serverChip}>
-                    <Icon name="globe" size={11} color={T.textSecondary} strokeWidth={2.5} />
-                    <Text style={styles.serverChipText}>{caseStatus[c.caseRef].status}</Text>
-                  </View>
-                ) : null}
-              </View>
-              <Text style={styles.caseMeta}>
-                {c.packages.length} PACKAGE{c.packages.length === 1 ? '' : 'S'} TESTED · {c.records} READING{c.records === 1 ? '' : 'S'} · {relativeIst(c.lastAt)}
-              </Text>
-              <View style={styles.mixRow}>
-                {c.pos > 0 ? (
-                  <View style={styles.mixChipOk}>
-                    <Text style={styles.mixChipTextOk}>REAGENT +VE {c.pos}</Text>
-                  </View>
-                ) : null}
-                {c.neg > 0 ? (
-                  <View style={styles.mixChipNeutral}>
-                    <Text style={styles.mixChipText}>REAGENT −VE {c.neg}</Text>
-                  </View>
-                ) : null}
-                {c.inc > 0 ? (
-                  <View style={styles.mixChipMarginal}>
-                    <Text style={styles.mixChipTextMarginal}>INCONCLUSIVE {c.inc}</Text>
-                  </View>
-                ) : null}
-                {c.queued > 0 ? (
-                  <View style={styles.mixChipQueued}>
-                    <Text style={styles.mixChipText}>QUEUED {c.queued}</Text>
-                  </View>
-                ) : null}
-                <View style={styles.mixChevron}>
-                  <Icon name="chevronRight" size={16} color={T.textMuted} strokeWidth={2.5} />
+          </View>
+        ) : view === 'cases' && !drillCase ? (
+          <FlatList
+            data={caseSummaries}
+            keyExtractor={(c) => c.caseRef}
+            contentContainerStyle={styles.listPad}
+            refreshControl={
+              <RefreshControl refreshing={refreshing} onRefresh={() => void pullRefresh()} tintColor={T.accent} colors={[T.accent]} />
+            }
+            ListEmptyComponent={
+              <View style={styles.emptyBox}>
+                <View style={styles.emptyIconCircle}>
+                  <Icon name="flask" size={22} color={T.textSecondary} strokeWidth={2.2} />
                 </View>
+                <Text style={styles.emptyTitle}>No sealed readings yet</Text>
+                <Text style={styles.emptyBody}>Run your first field test — readings group here by case.</Text>
+                <TouchableOpacity style={styles.emptyBtn} onPress={() => navigation.navigate('NewTestSetup')} accessibilityRole="button" accessibilityLabel="Run your first field test">
+                  <Text style={styles.emptyBtnText}>RUN FIRST FIELD TEST</Text>
+                </TouchableOpacity>
               </View>
-            </TouchableOpacity>
-          )}
-          ItemSeparatorComponent={() => <View style={styles.sep} />}
-        />
-      ) : (
-        <FlatList
-          data={listRecords}
-          keyExtractor={(r) => r.record_uuid}
-          contentContainerStyle={styles.listPad}
-          showsVerticalScrollIndicator={true}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={() => void pullRefresh()}
-              tintColor={T.accent}
-              colors={[T.accent]}
-              progressViewOffset={8}
-            />
-          }
-          ListEmptyComponent={
-            <View style={styles.emptyBox}>
-              <View style={styles.emptyIconCircle}>
-                <Icon name="search" size={22} color={T.textSecondary} strokeWidth={2.2} />
-              </View>
-              <Text style={styles.emptyTitle}>
-                {query || bucket !== 'all' ? 'No matching records' : 'No test records yet'}
-              </Text>
-              <Text style={styles.emptyBody}>
-                {query || bucket !== 'all'
-                  ? 'Widen the filter or clear the search to see more readings.'
-                  : 'Sealed readings from the field wizard land here, chained and searchable.'}
-              </Text>
+            }
+            renderItem={({ item: c }) => (
               <TouchableOpacity
-                style={styles.emptyBtn}
+                style={styles.caseCard}
                 onPress={() => {
-                  if (query || bucket !== 'all') {
-                    setQuery('');
-                    setBucket('all');
-                  } else {
-                    navigation.navigate('NewTestSetup');
-                  }
+                  setDrillCase(c.caseRef);
+                  setView('records');
                 }}
                 accessibilityRole="button"
-                accessibilityLabel={query || bucket !== 'all' ? 'Clear all filters' : 'Start a new field test'}
+                accessibilityLabel={`Open case ${c.caseRef}: ${c.records} readings across ${c.packages.length} packages`}
               >
-                <Text style={styles.emptyBtnText}>
-                  {query || bucket !== 'all' ? 'CLEAR ALL FILTERS' : 'START A FIELD TEST'}
+                <View style={styles.caseCardTop}>
+                  <Text style={styles.caseRef}>{c.caseRef}</Text>
+                  <View style={styles.caseCardTopRight}>
+                    <TouchableOpacity
+                      style={styles.caseClockTrigger}
+                      onPress={(e) => {
+                        e.stopPropagation?.();
+                        setSelectedClockCase(c.caseRef);
+                        setClockModalVisible(true);
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel={`View seizure clock for case ${c.caseRef}`}
+                    >
+                      <Icon name="clock" size={13} color={T.accent} strokeWidth={2.4} />
+                      <Text style={styles.caseClockTriggerText}>TIMERS</Text>
+                    </TouchableOpacity>
+                    {caseStatus[c.caseRef] ? (
+                      <View style={styles.serverChip}>
+                        <Icon name="globe" size={11} color={T.textSecondary} strokeWidth={2.5} />
+                        <Text style={styles.serverChipText}>{caseStatus[c.caseRef].status}</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                </View>
+                <Text style={styles.caseMeta}>
+                  {c.packages.length} PACKAGE{c.packages.length === 1 ? '' : 'S'} TESTED · {c.records} READING{c.records === 1 ? '' : 'S'} · {relativeIst(c.lastAt)}
                 </Text>
+                <View style={styles.mixRow}>
+                  {c.pos > 0 ? (
+                    <View style={styles.mixChipOk}>
+                      <Text style={styles.mixChipTextOk}>REAGENT +VE {c.pos}</Text>
+                    </View>
+                  ) : null}
+                  {c.neg > 0 ? (
+                    <View style={styles.mixChipNeutral}>
+                      <Text style={styles.mixChipText}>REAGENT −VE {c.neg}</Text>
+                    </View>
+                  ) : null}
+                  {c.inc > 0 ? (
+                    <View style={styles.mixChipMarginal}>
+                      <Text style={styles.mixChipTextMarginal}>INCONCLUSIVE {c.inc}</Text>
+                    </View>
+                  ) : null}
+                  {c.queued > 0 ? (
+                    <View style={styles.mixChipQueued}>
+                      <Text style={styles.mixChipText}>QUEUED {c.queued}</Text>
+                    </View>
+                  ) : null}
+                  <View style={styles.mixChevron}>
+                    <Icon name="chevronRight" size={16} color={T.textMuted} strokeWidth={2.5} />
+                  </View>
+                </View>
               </TouchableOpacity>
-            </View>
-          }
-          renderItem={({ item: r }) => <RecordRow r={r} onPress={() => navigation.navigate('RecordDetail', { uuid: r.record_uuid })} />}
-          ItemSeparatorComponent={() => <View style={styles.sep} />}
-        />
-      )}
+            )}
+            ItemSeparatorComponent={() => <View style={styles.sep} />}
+          />
+        ) : (
+          <FlatList
+            data={listRecords}
+            keyExtractor={(r) => r.record_uuid}
+            contentContainerStyle={styles.listPad}
+            showsVerticalScrollIndicator={true}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={() => void pullRefresh()}
+                tintColor={T.accent}
+                colors={[T.accent]}
+                progressViewOffset={8}
+              />
+            }
+            ListEmptyComponent={
+              <View style={styles.emptyBox}>
+                <View style={styles.emptyIconCircle}>
+                  <Icon name="search" size={22} color={T.textSecondary} strokeWidth={2.2} />
+                </View>
+                <Text style={styles.emptyTitle}>
+                  {query || bucket !== 'all' ? 'No matching records' : 'No test records yet'}
+                </Text>
+                <Text style={styles.emptyBody}>
+                  {query || bucket !== 'all'
+                    ? 'Widen the filter or clear the search to see more readings.'
+                    : 'Sealed readings from the field wizard land here, chained and searchable.'}
+                </Text>
+                <TouchableOpacity
+                  style={styles.emptyBtn}
+                  onPress={() => {
+                    if (query || bucket !== 'all') {
+                      setQuery('');
+                      setBucket('all');
+                    } else {
+                      navigation.navigate('NewTestSetup');
+                    }
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel={query || bucket !== 'all' ? 'Clear all filters' : 'Start a new field test'}
+                >
+                  <Text style={styles.emptyBtnText}>
+                    {query || bucket !== 'all' ? 'CLEAR ALL FILTERS' : 'START A FIELD TEST'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            }
+            renderItem={({ item: r }) => <RecordRow r={r} onPress={() => navigation.navigate('RecordDetail', { uuid: r.record_uuid })} />}
+            ItemSeparatorComponent={() => <View style={styles.sep} />}
+          />
+        )}
+      </FadeEntrance>
+
+      <StatutoryClockModal
+        visible={clockModalVisible}
+        onClose={() => setClockModalVisible(false)}
+        initialCaseRef={selectedClockCase}
+        cases={caseSummaries.map((c) => ({ caseRef: c.caseRef, timestampIso: c.lastAt }))}
+      />
 
       <LightTabBar
         active="records"
@@ -537,6 +574,47 @@ const styles = StyleSheet.create({
   screenTitle: { fontSize: 22, fontWeight: '700', color: T.textPrimary, letterSpacing: -0.2 },
   headerSub: { fontSize: 12, fontWeight: '500', color: T.textSecondary, marginTop: 2 },
   headerBtns: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  clockHeaderBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: T.accentSurface,
+    borderColor: T.borderStrong,
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    minHeight: 40,
+  },
+  clockHeaderBtnText: {
+    fontFamily: evidenceMono,
+    fontSize: 11,
+    fontWeight: '700',
+    color: T.accent,
+    letterSpacing: 0.4,
+  },
+  caseCardTopRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  caseClockTrigger: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: T.cardSubtle,
+    borderWidth: 1,
+    borderColor: T.border,
+    borderRadius: 4,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+  },
+  caseClockTriggerText: {
+    fontFamily: evidenceMono,
+    fontSize: 9.5,
+    fontWeight: '700',
+    color: T.accent,
+    letterSpacing: 0.4,
+  },
   statutoryTag: {
     backgroundColor: T.cardSubtle,
     paddingHorizontal: 10,
@@ -546,7 +624,7 @@ const styles = StyleSheet.create({
     borderColor: T.border,
   },
   statutoryTagText: { fontSize: 11, fontWeight: '700', color: T.textSecondary, letterSpacing: 0.6 },
-  iconBtn: { width: 48, height: 48, alignItems: 'center', justifyContent: 'center' },
+  iconBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
 
   topBlock: { paddingHorizontal: 16, paddingTop: 12, gap: 10 },
 

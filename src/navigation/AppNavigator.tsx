@@ -121,27 +121,28 @@ export const AppNavigator: React.FC = () => {
         screenOptions={{
           headerShown: false,
           contentStyle: { backgroundColor: T.canvas },
-          animation: 'slide_from_right',
+          animation: 'fade',
+          animationDuration: 200,
         }}
       >
-        {gate === 'login' && <Stack.Screen name="Login" component={LoginScreen} />}
-        {gate === 'brief' && <Stack.Screen name="PostLoginBrief" component={PostLoginBriefScreen} />}
+        {gate === 'login' && <Stack.Screen name="Login" component={LoginScreen} options={{ animation: 'fade' }} />}
+        {gate === 'brief' && <Stack.Screen name="PostLoginBrief" component={PostLoginBriefScreen} options={{ animation: 'fade' }} />}
         {gate === 'app' && (
           <>
-            <Stack.Screen name="Home" component={HomeScreen} />
-            <Stack.Screen name="CaseLog" component={CaseLogScreen} />
-            <Stack.Screen name="Integrity" component={IntegrityScreen} />
+            <Stack.Screen name="Home" component={HomeScreen} options={{ animation: 'fade' }} />
+            <Stack.Screen name="CaseLog" component={CaseLogScreen} options={{ animation: 'fade' }} />
+            <Stack.Screen name="Integrity" component={IntegrityScreen} options={{ animation: 'fade' }} />
             <Stack.Screen
               name="NewTestSetup"
               component={NewTestSetupScreen}
-              options={{ animation: 'slide_from_bottom' }}
+              options={{ animation: 'slide_from_bottom', animationDuration: 260 }}
             />
-            <Stack.Screen name="Capture" component={CaptureScreen} options={{ animation: 'fade' }} />
-            <Stack.Screen name="Analyze" component={AnalyzeScreen} options={{ animation: 'fade' }} />
-            <Stack.Screen name="Results" component={ResultsScreen} options={{ animation: 'fade' }} />
-            <Stack.Screen name="RecordDetail" component={RecordDetailScreen} />
-            <Stack.Screen name="Bunching" component={BunchingScreen} />
-            <Stack.Screen name="Settings" component={SettingsScreen} />
+            <Stack.Screen name="Capture" component={CaptureScreen} options={{ animation: 'fade', animationDuration: 220 }} />
+            <Stack.Screen name="Analyze" component={AnalyzeScreen} options={{ animation: 'fade', animationDuration: 200 }} />
+            <Stack.Screen name="Results" component={ResultsScreen} options={{ animation: 'slide_from_bottom', animationDuration: 260 }} />
+            <Stack.Screen name="RecordDetail" component={RecordDetailScreen} options={{ animation: 'slide_from_right', animationDuration: 240 }} />
+            <Stack.Screen name="Bunching" component={BunchingScreen} options={{ animation: 'slide_from_right', animationDuration: 240 }} />
+            <Stack.Screen name="Settings" component={SettingsScreen} options={{ animation: 'slide_from_bottom', animationDuration: 260 }} />
           </>
         )}
       </Stack.Navigator>

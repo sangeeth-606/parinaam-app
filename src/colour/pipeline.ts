@@ -160,9 +160,9 @@ export class ColourPipelineService implements ColourModule {
   }
 
   async calibrateAndExtract(
-    warpedImageUri: string,
-    homography: HomographyMatrix,
-    cardRef: CardIdentity
+    _warpedImageUri: string,
+    _homography: HomographyMatrix,
+    _cardRef: CardIdentity
   ): Promise<{ reagentLab: LabValue; residual: CalibrationResidual }> {
     // Dynamic import of reference values
     const refData = await import('./reference-values.json', { with: { type: 'json' } });

@@ -54,6 +54,8 @@ import {
 import { useLedgerStore } from '../state/ledger-store';
 import { useSyncStore } from '../state/sync-store';
 import { buildExportBundle, printCourtPdf, type ExportBundle } from '../services/export-flow';
+import { StatutoryClockModal } from '../components/StatutoryClockModal';
+import { FadeEntrance } from '../components/ui/FadeEntrance';
 import { evidenceTheme as T, evidenceMono } from '../theme/evidence';
 import {
   ABSTENTION_COPY,
@@ -164,12 +166,49 @@ export const RecordDetailScreen: React.FC<{ route: DetailRoute }> = ({ route }) 
   const [generating, setGenerating] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
   const [pdfNote, setPdfNote] = useState<string | null>(null);
+  const [showClockModal, setShowClockModal] = useState(false);
+
+  const renderHeader = (title: string, tag: string, citation: string) => (
+    <View style={styles.header}>
+      <View style={styles.headerTop}>
+        <TouchableOpacity
+          style={styles.backBtn}
+          onPress={() => navigation.goBack()}
+          accessibilityRole="button"
+          accessibilityLabel={record ? `Return to ${record.case_ref} ${record.package_no}` : 'Return to previous screen'}
+        >
+          <Icon name="chevronLeft" size={22} color={T.textPrimary} strokeWidth={2.5} />
+          <Text style={styles.backBtnText}>BACK</Text>
+        </TouchableOpacity>
+        <View style={styles.headerTopRight}>
+          {record ? (
+            <TouchableOpacity
+              style={styles.clockHeaderBtn}
+              onPress={() => setShowClockModal(true)}
+              accessibilityRole="button"
+              accessibilityLabel="View Rule 10(2) Seizure Clock Timers"
+            >
+              <Icon name="clock" size={13} color={T.accent} strokeWidth={2.4} />
+              <Text style={styles.clockHeaderBtnText}>CLOCK</Text>
+            </TouchableOpacity>
+          ) : null}
+          {tag ? (
+            <View style={styles.statutoryTag}>
+              <Text style={styles.statutoryTagText}>{tag}</Text>
+            </View>
+          ) : null}
+        </View>
+      </View>
+      <Text style={styles.screenTitle}>{title}</Text>
+      {citation ? <Text style={styles.citationMono}>{citation}</Text> : null}
+    </View>
+  );
 
   if (!record) {
     return (
       <View style={styles.screen}>
         <StatusBar barStyle="dark-content" />
-        {Header('Record', '', '')}
+        {renderHeader('Record', '', '')}
         <ScrollView contentContainerStyle={styles.scrollContent}>
           <StateBanner
             tone="warning"
@@ -222,9 +261,10 @@ export const RecordDetailScreen: React.FC<{ route: DetailRoute }> = ({ route }) 
     <View style={styles.screen}>
       <StatusBar barStyle="dark-content" />
 
-      {Header(record.case_ref + ' · ' + record.package_no, 'SEALED RECORD — IMMUTABLE', record.record_uuid)}
+      {renderHeader(record.case_ref + ' · ' + record.package_no, 'SEALED RECORD — IMMUTABLE', record.record_uuid)}
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
+        <FadeEntrance style={styles.entranceWrap}>
 
         {/* ============ OUTCOME — TWO REGISTERS, TRI-MODAL ============ */}
         <StateBanner
@@ -318,7 +358,9 @@ export const RecordDetailScreen: React.FC<{ route: DetailRoute }> = ({ route }) 
           </View>
           <Text style={styles.cardSubtext}>{GRADE_COPY[record.residual.grade].note} — decision is transparent ΔE00/Mahalanobis distance, not a black-box classifier.</Text>
           <View style={styles.labBlock}>
-            <LightSwatch lab={record.lab} />
+            <View style={styles.swatchBox}>
+              <LightSwatch lab={record.lab} size={50} />
+            </View>
             <View style={styles.labStats}>
               <ReadingRow label="L* (lightness)" value={record.lab.l.toFixed(2)} />
               <ReadingRow label="a* (green ↔ red)" value={signed(record.lab.a)} />
@@ -445,48 +487,40 @@ export const RecordDetailScreen: React.FC<{ route: DetailRoute }> = ({ route }) 
         </View>
 
         {/* ============ RULE 10(2) ONWARD LINKAGE ============ */}
-        <TouchableOpacity
-          style={styles.secondaryBtn}
-          onPress={() => navigation.push('Bunching', { focusUuid: record.record_uuid })}
-          accessibilityRole="button"
-          accessibilityLabel="Open package bunching for this case"
-        >
-          <Icon name="package" size={17} color={T.accent} strokeWidth={2.5} />
-          <Text style={styles.secondaryBtnText}>RULE 10(2) PACKAGE BUNCHING — THIS CASE</Text>
-        </TouchableOpacity>
+        <View style={styles.actionRow}>
+          <TouchableOpacity
+            style={[styles.secondaryBtn, styles.flex]}
+            onPress={() => setShowClockModal(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Open Rule 10(2) seizure timers for this case"
+          >
+            <Icon name="clock" size={17} color={T.accent} strokeWidth={2.5} />
+            <Text style={styles.secondaryBtnText} numberOfLines={1}>SEIZURE TIMERS</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.secondaryBtn, styles.flex]}
+            onPress={() => navigation.push('Bunching', { focusUuid: record.record_uuid })}
+            accessibilityRole="button"
+            accessibilityLabel="Open package bunching for this case"
+          >
+            <Icon name="package" size={17} color={T.accent} strokeWidth={2.5} />
+            <Text style={styles.secondaryBtnText} numberOfLines={1}>BUNCHING</Text>
+          </TouchableOpacity>
+        </View>
 
+        </FadeEntrance>
       </ScrollView>
+
+      {record ? (
+        <StatutoryClockModal
+          visible={showClockModal}
+          onClose={() => setShowClockModal(false)}
+          initialCaseRef={record.case_ref}
+          cases={[{ caseRef: record.case_ref, timestampIso: record.created_at }]}
+        />
+      ) : null}
     </View>
   );
-
-  /* Shared light header (defined after body for closure over navigation). */
-  function Header(title: string, tag: string, citation: string) {
-    return (
-      <View style={styles.header}>
-        <View style={styles.headerTop}>
-          <TouchableOpacity
-            style={styles.backBtn}
-            onPress={() => navigation.goBack()}
-            accessibilityRole="button"
-            accessibilityLabel={record ? `Return to ${record.case_ref} ${record.package_no}` : 'Return to previous screen'}
-          >
-            <Icon name="chevronLeft" size={22} color={T.textPrimary} strokeWidth={2.5} />
-            {/* G-D8: back never dead-ends — the label names where you land */}
-            <Text style={styles.backBtnText}>
-              {record ? `${record.case_ref} · ${record.package_no}` : 'BACK'}
-            </Text>
-          </TouchableOpacity>
-          {tag ? (
-            <View style={styles.statutoryTag}>
-              <Text style={styles.statutoryTagText}>{tag}</Text>
-            </View>
-          ) : null}
-        </View>
-        <Text style={styles.screenTitle}>{title}</Text>
-        {citation ? <Text style={styles.citationMono}>{citation}</Text> : null}
-      </View>
-    );
-  }
 };
 
 const styles = StyleSheet.create({
@@ -507,18 +541,39 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 8,
+  },
+  headerTopRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  clockHeaderBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: T.accent,
+    backgroundColor: T.cardSubtle,
+  },
+  clockHeaderBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: T.accent,
+    letterSpacing: 0.4,
   },
   backBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    minHeight: 48,
-    minWidth: 48,
-    paddingVertical: 8,
+    minHeight: 40,
+    paddingVertical: 6,
     paddingHorizontal: 6,
     marginLeft: -6,
   },
-  backBtnText: { fontSize: 15, fontWeight: '600', color: T.textPrimary, marginLeft: 4 },
+  backBtnText: { fontSize: 14, fontWeight: '700', color: T.textPrimary, marginLeft: 2 },
   statutoryTag: {
     backgroundColor: T.successSurface,
     paddingHorizontal: 10,
@@ -592,8 +647,19 @@ const styles = StyleSheet.create({
   },
   mockNoteText: { flex: 1, fontSize: 12, fontWeight: '600', color: T.marginalText },
 
-  labBlock: { flexDirection: 'row', gap: 16, alignItems: 'center', marginTop: 4 },
-  labStats: { flex: 1 },
+  labBlock: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 8,
+  },
+  swatchBox: {
+    width: 96,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  labStats: { flex: 1, minWidth: 0 },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
   tag: {
     flexDirection: 'row',
@@ -687,9 +753,15 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: T.accent,
     backgroundColor: T.card,
-    marginTop: 10,
   },
   secondaryBtnText: { fontSize: 13, fontWeight: '700', color: T.accent, letterSpacing: 0.3 },
+  actionRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 10,
+  },
+  flex: { flex: 1 },
+  entranceWrap: { gap: 16 },
 });
 
 export default RecordDetailScreen;

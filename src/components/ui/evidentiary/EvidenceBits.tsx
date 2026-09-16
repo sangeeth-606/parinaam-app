@@ -72,7 +72,9 @@ export const ReadingRow: React.FC<{ label: string; value: string; valueColor?: s
   valueColor,
 }) => (
   <View style={s.readingRow}>
-    <Text style={s.readingLabel}>{label}</Text>
+    <Text style={s.readingLabel} numberOfLines={2}>
+      {label}
+    </Text>
     <Text style={[s.readingValue, valueColor ? { color: valueColor } : null]}>{value}</Text>
   </View>
 );
@@ -342,28 +344,29 @@ const s = StyleSheet.create({
     paddingVertical: 7,
     borderBottomWidth: 1,
     borderBottomColor: T.border,
-    minHeight: 36,
-    gap: 12,
+    minHeight: 34,
+    gap: 8,
   },
-  readingLabel: { fontSize: 13, color: T.textSecondary, fontWeight: '500', flexShrink: 1 },
+  readingLabel: {
+    fontSize: 12.5,
+    color: T.textSecondary,
+    fontWeight: '500',
+    flex: 1,
+    paddingRight: 4,
+  },
   readingValue: {
-    fontSize: 13,
+    fontSize: 12.5,
     fontWeight: '700',
     color: T.textPrimary,
     fontFamily: evidenceMono,
     textAlign: 'right',
+    flexShrink: 0,
   },
 
   pill: {
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: 'rgba(15, 23, 42, 0.18)',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
   },
   pillLabel: { fontSize: 10, fontWeight: '600', color: T.textSecondary },
   pillValue: { fontSize: 11, fontWeight: '700', fontFamily: evidenceMono },
@@ -443,21 +446,28 @@ const s = StyleSheet.create({
   stepperConnector: { flex: 1, height: 1, backgroundColor: T.border, marginHorizontal: 4 },
   stepperConnectorDone: { backgroundColor: T.accent },
 
-  swatchCol: { alignItems: 'center', gap: 4 },
+  swatchCol: { width: 96, alignItems: 'center', gap: 4 },
   swatchPlate: {
     backgroundColor: colorimeterNeutral.panel,
-    padding: 8,
+    padding: 6,
     borderRadius: 6,
     borderWidth: 1,
     borderColor: T.border,
   },
   swatchPatch: {
-    borderRadius: 6,
+    borderRadius: 5,
     borderWidth: 1,
     borderColor: colorimeterNeutral.hairline,
   },
   swatchHex: { fontSize: 11, fontWeight: '700', color: T.textPrimary, fontFamily: evidenceMono },
-  swatchNote: { fontSize: 8, fontWeight: '700', color: T.textMuted, letterSpacing: 0.4 },
+  swatchNote: {
+    fontSize: 7.5,
+    fontWeight: '700',
+    color: T.textMuted,
+    letterSpacing: 0.2,
+    textAlign: 'center',
+    lineHeight: 10,
+  },
 
   chartBox: {
     backgroundColor: T.cardSubtle,

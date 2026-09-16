@@ -40,6 +40,10 @@ export class ReactionKineticsTracker {
     this.sampleIntervalMs = sampleIntervalMs;
   }
 
+  public getSampleIntervalMs(): number {
+    return this.sampleIntervalMs;
+  }
+
   /**
    * Initialize a new kinetic tracking session at t = 0 with unreacted sample Lab.
    */

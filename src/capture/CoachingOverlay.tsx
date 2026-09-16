@@ -66,7 +66,7 @@ export const CoachingOverlay: React.FC<CoachingOverlayProps> = ({
 
 const styles = StyleSheet.create({
   overlayContainer: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     justifyContent: 'space-between',
     padding: 20,
   },
