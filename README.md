@@ -27,8 +27,8 @@ Reviewers can change only server-owned case metadata (`case_status` and
 `panchnama_ref`); they cannot replace a record body or evidence bytes.
 
 A device attestation, when present, is an integrity seal. The server reports it
-as unverified unless a separately trusted device-key registry is introduced;
-it is not described as a statutory digital signature.
+as unverified because this prototype has no trusted device-key registry; it is
+not described as a statutory digital signature.
 
 ## Repository layout
 

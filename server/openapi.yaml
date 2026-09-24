@@ -6,8 +6,8 @@ info:
     Local/self-hosted API for the Parinaam offline field-test prototype. The
     service uses authoritative snake_case wire names. Record and evidence
     payloads are append-only; only case_status and panchnama_ref are mutable
-    review metadata. Device attestation is reported as unverified unless a
-    trusted device-key registry is separately configured.
+    review metadata. Device attestation is always reported as unverified in
+    this prototype; no trusted device-key registry is configured.
   contact:
     name: Parinaam repository maintainers
 servers:
