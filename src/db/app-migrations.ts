@@ -13,6 +13,11 @@
  */
 
 export const MIGRATION_APP_V1 = `
+CREATE TABLE IF NOT EXISTS app_schema_migrations (
+  version    INTEGER PRIMARY KEY NOT NULL,
+  applied_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS field_test (
   seq                 INTEGER NOT NULL,
   record_uuid         TEXT PRIMARY KEY NOT NULL UNIQUE,
@@ -109,7 +114,50 @@ CREATE TABLE IF NOT EXISTS app_state (
 );
 `;
 
+export const MIGRATION_APP_V2 = `
+CREATE TABLE IF NOT EXISTS record_sync_state (
+  record_uuid TEXT PRIMARY KEY NOT NULL,
+  state       TEXT NOT NULL CHECK (state IN ('demo-seed','queued','synced','dead-letter')),
+  reason      TEXT,
+  updated_at  TEXT NOT NULL,
+  FOREIGN KEY (record_uuid) REFERENCES field_test(record_uuid) ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_record_sync_state ON record_sync_state (state, updated_at);
+`;
+
 /** FTS5 mirror — applied only when the SQLite build supports it (driver probes). */
+export interface AppMigrationAdapter {
+  exec(sql: string): Promise<void>;
+  run(sql: string, ...params: unknown[]): Promise<unknown>;
+  get<T>(sql: string, ...params: unknown[]): Promise<T | null>;
+}
+
+export async function applyVersionedAppMigrations(adapter: AppMigrationAdapter): Promise<void> {
+  await adapter.exec(MIGRATION_APP_V1);
+  await adapter.run(
+    'INSERT OR IGNORE INTO app_schema_migrations (version, applied_at) VALUES (?, ?)',
+    1,
+    new Date().toISOString()
+  );
+  const version2 = await adapter.get<{ version: number }>('SELECT MAX(version) AS version FROM app_schema_migrations');
+  if (!version2 || Number(version2.version) < 2) {
+    try {
+      await adapter.exec('BEGIN IMMEDIATE');
+      await adapter.exec(MIGRATION_APP_V2);
+      await adapter.run(
+        'INSERT INTO app_schema_migrations (version, applied_at) VALUES (?, ?)',
+        2,
+        new Date().toISOString()
+      );
+      await adapter.exec('COMMIT');
+    } catch (error) {
+      await adapter.exec('ROLLBACK').catch(() => undefined);
+      throw error;
+    }
+  }
+}
+
 export const MIGRATION_APP_FTS = `
 CREATE VIRTUAL TABLE IF NOT EXISTS field_test_fts USING fts5(
   record_uuid UNINDEXED,

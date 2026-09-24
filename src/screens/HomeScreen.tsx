@@ -133,7 +133,7 @@ export const HomeScreen: React.FC = () => {
               {reachability === 'up'
                 ? queued > 0
                   ? `SYNC · ${queued} QUEUED`
-                  : 'SYNC · UP TO DATE'
+                  : 'SYNC · QUEUE EMPTY'
                 : reachability === 'down'
                   ? queued > 0
                     ? `OFFLINE · ${queued} HELD`

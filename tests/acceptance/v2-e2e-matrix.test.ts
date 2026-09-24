@@ -21,6 +21,7 @@ const { useLedgerStore } = await import('../../src/state/ledger-store.ts');
 const { useSyncStore } = await import('../../src/state/sync-store.ts');
 const { rememberServerCredentials } = await import('../../src/sync/server-credentials.ts');
 const { createApiServer } = await import('../../server/src/main.ts');
+const { seedDemo } = await import('../../server/src/seed.ts');
 
 const { server, db: apiDb } = await createApiServer(':memory:');
 let base = '';
@@ -42,6 +43,7 @@ describe('v2 H3 — end-to-end acceptance matrix vs live API', () => {
   before(async () => {
     await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    await seedDemo(apiDb);
     const login = await serverApi('POST', '/api/v1/auth/login', { username: 'admin', password: 'adminpass' }, false);
     adminToken = String(login.json.token);
     await useLedgerStore.getState().seed();
@@ -63,41 +65,40 @@ describe('v2 H3 — end-to-end acceptance matrix vs live API', () => {
     }
   });
 
-  it('syncs the 9 seeded fixtures FIRST (predecessors must reach the server before successors link)', async () => {
-    // Honest v2 scenario: the demo fixtures were pre-synced to no server, so chain
-    // successors can only link after the whole chain is uploaded from genesis.
-    // Out-of-order upload is handled by backoff/retry per phase-D design.
-    const { queueForSync, pendingCountDb } = await import('../../src/db/ledger-repository.ts');
-    for (const r of useLedgerStore.getState().records) {
-      await queueForSync(r.record_uuid, r.record_uuid);
-    }
-    assert.equal((await pendingCountDb()), 9);
-    const sum = await useSyncStore.getState().syncNow();
-    assert.equal(sum.failed, 0, JSON.stringify(sum));
-    assert.equal(sum.synced, 9, JSON.stringify(sum));
+  it('loads the identical 15-record demo chain locally and on the API without queueing demo seeds', async () => {
+    const { pendingCountDb } = await import('../../src/db/ledger-repository.ts');
+    assert.equal(useLedgerStore.getState().records.length, 15);
+    assert.ok(useLedgerStore.getState().records.every((record) => record.syncStatus === 'demo-seed'));
+    assert.equal(await pendingCountDb(), 0);
+    const health = await serverApi('GET', '/api/v1/health');
+    assert.equal(health.json.records, 15);
   });
 
-  it('seals 3 records across 2 cases (chains #10-#12 over the 9 fixtures)', async () => {
-    const seal = (caseRef: string, pkg: string, v: number, outcome: string) =>
+  it('seals 3 live records across 2 cases (chain #16-#18 over the shared demo chain)', async () => {
+    let recordNumber = 16;
+    const seal = (caseRef: string, pkg: string, value: number, outcome: 'CONSISTENT_WITH_REAGENT_POSITIVE' | 'INCONCLUSIVE') =>
       useLedgerStore.getState().appendRecord({
-        record_uuid: `H-MATRIX-${caseRef}-${pkg}`,
+        record_uuid: `00000000-0000-4000-8000-${String(recordNumber++).padStart(12, '0')}`,
         case_ref: caseRef,
         package_no: pkg,
         reagent: 'marquis',
-        lab: { l: 50 + v, a: v, b: -v },
+        lab: { l: 50 + value, a: value, b: -value },
         residual: { meanDeltaE: 0.4, maxDeltaE: 1.1, grade: 'GOOD' },
-        outcome: outcome as never,
-        confidence: 0.8,
+        outcome,
+        confidence: outcome === 'INCONCLUSIVE' ? 0.54 : 0.8,
         deltaE: 1.2,
-        conformalSet: ['PROXY-A'],
+        conformalSet: outcome === 'INCONCLUSIVE' ? ['POSITIVE', 'NEGATIVE'] : ['POSITIVE'],
+        abstentionReason: outcome === 'INCONCLUSIVE' ? 'low_margin' : null,
         created_at: new Date().toISOString(),
         operator: 'OFFICER-ADMIN',
-        sealPayload: { matrix: v },
+        operatorName: 'System Administrator',
+        officerRole: 'ADMIN',
+        isDemo: false,
       });
-    await seal('H-CASE-A/2026', 'P-1', 1, 'CONSISTENT_WITH_REAGENT_POSITIVE');
-    await seal('H-CASE-A/2026', 'P-2', 2, 'CONSISTENT_WITH_REAGENT_POSITIVE');
-    await seal('H-CASE-B/2026', 'P-1', 3, 'INCONCLUSIVE');
-    assert.equal(useLedgerStore.getState().records.length, 12);
+    await seal('H/CASE-A/CR/2026', 'P-1', 1, 'CONSISTENT_WITH_REAGENT_POSITIVE');
+    await seal('H/CASE-A/CR/2026', 'P-2', 2, 'CONSISTENT_WITH_REAGENT_POSITIVE');
+    await seal('H/CASE-B/CR/2026', 'P-1', 3, 'INCONCLUSIVE');
+    assert.equal(useLedgerStore.getState().records.length, 18);
   });
 
   it('the three new seals sync cleanly; the server accepted every hash + link', async () => {
@@ -105,40 +106,39 @@ describe('v2 H3 — end-to-end acceptance matrix vs live API', () => {
     assert.equal(sum.failed, 0, JSON.stringify(sum));
     assert.equal(sum.synced, 3, JSON.stringify(sum));
     const health = await serverApi('GET', '/api/v1/health', undefined, false);
-    assert.ok((health.json.records as number) >= 12);
+    assert.ok((health.json.records as number) >= 18);
     const cases = await serverApi('GET', '/api/v1/cases');
-    const roll = (cases.json.cases as { case_ref: string; records: number; case_status: string }[])
-      .find((c) => c.case_ref === 'H-CASE-A/2026');
-    assert.equal(roll?.records, 2);
-    const rollB = (cases.json.cases as { case_ref: string; records: number }[]).find((c) => c.case_ref === 'H-CASE-B/2026');
-    assert.equal(rollB?.records, 1);
+    const roll = (cases.json.items as { case_ref: string; record_count: number; case_status: string }[])
+      .find((c) => c.case_ref === 'H/CASE-A/CR/2026');
+    assert.equal(roll?.record_count, 2);
+    const rollB = (cases.json.items as { case_ref: string; record_count: number }[]).find((c) => c.case_ref === 'H/CASE-B/CR/2026');
+    assert.equal(rollB?.record_count, 1);
   });
 
-  it('senior flips H-CASE-B to ESCALATED; the APP pill source reflects the server fact', async () => {
-    const flip = await serverApi('POST', '/api/v1/cases/H-CASE-B%2F2026/status', { status: 'ESCALATED', note: 'forward to FSL' });
+  it('admin escalates H/CASE-B; the app status source reflects the server fact', async () => {
+    const flip = await serverApi('PATCH', '/api/v1/cases/H%2FCASE-B%2FCR%2F2026/status', { status: 'ESCALATED', note: 'Synthetic workflow escalation marker for local demonstration.' });
     assert.equal(flip.status, 200);
     await useSyncStore.getState().refreshCases();
     const cs = useSyncStore.getState().caseStatus;
-    assert.equal(cs['H-CASE-B/2026'].status, 'ESCALATED');
-    assert.equal(cs['H-CASE-A/2026'].status, 'REPORTED');
-    // history audited:
-    const detail = await serverApi('GET', '/api/v1/cases/H-CASE-B%2F2026');
-    const hist = detail.json.history as { from_status: string; to_status: string; actor: string }[];
-    assert.deepEqual([hist[0].from_status, hist[0].to_status, hist[0].actor], ['REPORTED', 'ESCALATED', 'admin']);
+    assert.equal(cs['H/CASE-B/CR/2026'].status, 'ESCALATED');
+    assert.equal(cs['H/CASE-A/CR/2026'].status, 'REPORTED');
+    const detail = await serverApi('GET', '/api/v1/cases/H%2FCASE-B%2FCR%2F2026');
+    const history = detail.json.status_history as { from_status: string; to_status: string; actor: string }[];
+    assert.deepEqual([history[0].from_status, history[0].to_status, history[0].actor], ['REPORTED', 'ESCALATED', 'admin']);
   });
 
   it('tamper BOTH ways: file-level UPDATE aborts (append-only); in-session corruption is detected at the exact index', async () => {
     // (a) the immutable file: any UPDATE on field_test aborts.
     const raw = new DatabaseSync(dbFile);
     assert.throws(
-      () => raw.prepare('UPDATE field_test SET outcome = ? WHERE record_uuid = ?').run('CONSISTENT_WITH_REAGENT_NEGATIVE', 'H-MATRIX-H-CASE-A/2026-P-1'),
+      () => raw.prepare('UPDATE field_test SET outcome = ? WHERE record_uuid = ?').run('CONSISTENT_WITH_REAGENT_NEGATIVE', '00000000-0000-4000-8000-000000000016'),
       /append-only/
     );
     raw.close();
 
     // (b) honest detection path: corrupt the in-session chain view, reverify flags the
     // EXACT broken record, and the sealed records on disk are untouched.
-    const idx = useLedgerStore.getState().records.findIndex((r) => r.record_uuid === 'H-MATRIX-H-CASE-A/2026-P-2');
+    const idx = useLedgerStore.getState().records.findIndex((r) => r.record_uuid === '00000000-0000-4000-8000-000000000017');
     const res = await useLedgerStore.getState().simulateTamper(idx);
     assert.equal(res.valid, false);
     assert.equal(res.brokenIndex, idx);

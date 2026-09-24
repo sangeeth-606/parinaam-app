@@ -111,6 +111,18 @@ export async function saveEvidenceImage(
   }
 }
 
+/** Read app-private evidence bytes for transport; missing evidence stays honestly null. */
+export async function readEvidenceImageBytes(ref: string, deps?: EvidenceFsDeps): Promise<Uint8Array | null> {
+  if (!ref) return null;
+  const fsDeps = deps ?? (await defaultDeps());
+  if (!fsDeps) return null;
+  try {
+    return await fsDeps.readIfPresent(ref);
+  } catch {
+    return null;
+  }
+}
+
 /** Storage facts for Settings → STORAGE (counts what this build wrote; honest null otherwise). */
 export async function evidenceStorageFacts(): Promise<{ files: number; bytes: number } | null> {
   try {

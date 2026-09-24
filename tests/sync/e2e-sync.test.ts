@@ -22,14 +22,18 @@ const { useLedgerStore } = await import('../../src/state/ledger-store.ts');
 const { useSyncStore } = await import('../../src/state/sync-store.ts');
 const { rememberServerCredentials } = await import('../../src/sync/server-credentials.ts');
 const { createApiServer } = await import('../../server/src/main.ts');
+const { seedDemo } = await import('../../server/src/seed.ts');
 
 const { server, db: apiDb } = await createApiServer(':memory:');
 let base = '';
+
+let liveUuid = '';
 
 describe('Phase E — real sync (device outbox ⇄ API server)', () => {
   before(async () => {
     await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    await seedDemo(apiDb);
     await useLedgerStore.getState().seed();
     await rememberServerCredentials({ username: 'admin', password: 'adminpass' });
     await useSyncStore.getState().init();
@@ -49,14 +53,39 @@ describe('Phase E — real sync (device outbox ⇄ API server)', () => {
     }
   });
 
-  it('seeds 9 demo fixtures, all pre-synced, queue empty', async () => {
+  it('seeds the identical 15-record demo chain as local-only demo seeds', async () => {
     const rec = useLedgerStore.getState();
-    assert.equal(rec.records.length, 9);
+    assert.equal(rec.records.length, 15);
+    assert.ok(rec.records.every((record) => record.syncStatus === 'demo-seed'));
     assert.equal(await repo.pendingCountDb(), 0);
   });
 
+  it('creates one real admin-attributed record after the shared demo chain', async () => {
+    const created = await useLedgerStore.getState().appendRecord({
+      record_uuid: '00000000-0000-4000-8000-000000000101',
+      case_ref: 'LIVE/E2E/CR-01/2026',
+      package_no: 'P-1',
+      reagent: 'marquis',
+      lab: { l: 21.2, a: 4.4, b: -2.2 },
+      residual: { meanDeltaE: 0.4, maxDeltaE: 1.1, grade: 'GOOD' },
+      outcome: 'CONSISTENT_WITH_REAGENT_POSITIVE',
+      confidence: 0.9,
+      deltaE: 1.2,
+      conformalSet: ['POSITIVE'],
+      abstentionReason: null,
+      created_at: new Date().toISOString(),
+      operator: 'OFFICER-ADMIN',
+      operatorName: 'System Administrator',
+      officerRole: 'ADMIN',
+      isDemo: false,
+    });
+    liveUuid = created.record_uuid;
+    assert.equal(created.seq, 16);
+    assert.equal(await repo.pendingCountDb(), 1);
+  });
+
   it('skips a pass while the backoff window is still open (honest schedule)', async () => {
-    const uuid = useLedgerStore.getState().records[0].record_uuid;
+    const uuid = liveUuid;
     await repo.queueForSync(uuid, uuid);
     const entries = await repo.pendingEntriesDb();
     await repo.noteQueueFailureDb(entries[0].id, 1, new Date(Date.now() + 60_000).toISOString(), 'forced backoff');
@@ -66,31 +95,31 @@ describe('Phase E — real sync (device outbox ⇄ API server)', () => {
   });
 
   it('when the window opens, the record really uploads and the server recomputes its hash', async () => {
-    const uuid = useLedgerStore.getState().records[0].record_uuid;
+    const uuid = liveUuid;
     const entries = await repo.pendingEntriesDb();
     await repo.noteQueueFailureDb(entries[0].id, 1, new Date(Date.now() - 1000).toISOString(), 'forced backoff');
     const sum = await useSyncStore.getState().syncNow();
     assert.equal(sum.synced, 1, JSON.stringify(sum));
     assert.equal(await repo.pendingCountDb(), 0);
-    assert.equal(useLedgerStore.getState().records[0].syncStatus, 'synced');
+    assert.equal(useLedgerStore.getState().records.find((record) => record.record_uuid === uuid)?.syncStatus, 'synced');
     // server-side fact, not app memory:
     const res = await fetch(base + '/api/v1/records', { headers: { authorization: `Bearer ${await token()}` } });
-    const data = (await res.json()) as { records: { record_uuid: string }[] };
-    assert.equal(data.records.length, 1);
-    assert.equal(data.records[0].record_uuid, uuid);
+    const data = (await res.json()) as { items: { record_uuid: string }[] };
+    assert.equal(data.items.length, 16);
+    assert.ok(data.items.some((record) => record.record_uuid === uuid));
     const v = await (await fetch(base + '/api/v1/records/verify', {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${await token()}` },
       body: JSON.stringify({ uuid }),
-    })).json() as { valid: boolean; checks: string[] };
-    assert.equal(v.valid, true);
-    assert.ok(v.checks.some((c) => c.includes('recomputed')));
+    })).json() as { verified: boolean; checks: string[] };
+    assert.equal(v.verified, true, JSON.stringify(v));
+    assert.ok(v.checks.some((c) => c.includes('record_hash')));
   });
 
   it('case statuses come back as SERVER facts after refresh', async () => {
     await useSyncStore.getState().refreshCases();
     const cs = useSyncStore.getState().caseStatus;
-    const ref = useLedgerStore.getState().records[0].case_ref;
+    const ref = 'LIVE/E2E/CR-01/2026';
     assert.ok(cs[ref], 'case present');
     assert.equal(cs[ref].status, 'REPORTED');
     assert.ok(useSyncStore.getState().statusFetchedAt);

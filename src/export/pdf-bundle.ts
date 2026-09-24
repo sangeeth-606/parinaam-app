@@ -1,9 +1,9 @@
 /**
- * Parinaam — Court-Tenderable PDF Evidence Bundle
+ * Parinaam — prototype PDF evidence bundle
  * Governed by spec/05-phase-4-evidentiary.md (Task 4.9 & Milestone M4.9).
  *
  * Implements:
- * 1. Multi-page court-tenderable document combining:
+ * 1. A multi-page local export document combining:
  *    - Executive Summary & Evidence Overview
  *    - BSA 2023 s. 63(4) Certificate Part A (Custodian)
  *    - BSA 2023 s. 63(4) Certificate Part B (Expert)

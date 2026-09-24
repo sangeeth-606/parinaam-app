@@ -11,7 +11,7 @@ import type { DbAdapter, DbOpenResult, OpenOptions } from './driver.ts';
 import type { LabValue, CalibrationResidual } from '../types/contracts';
 import type { AbstentionReason, KineticPoint, PresumptiveOutcomeKind, ReagentType } from '../types/domain';
 import type { LedgerRecord } from '../state/ledger-store';
-import { MIGRATION_APP_FTS, MIGRATION_APP_V1 } from './app-migrations.ts';
+import { MIGRATION_APP_FTS, applyVersionedAppMigrations } from './app-migrations.ts';
 import { openAppDatabase } from './driver.ts';
 
 export interface LedgerDbMeta {
@@ -68,7 +68,7 @@ interface FieldTestRow {
 let activeAdapter: DbAdapter | null = null;
 let activeMeta: LedgerDbMeta | null = null;
 
-function rowToRecord(row: FieldTestRow, synced: boolean): LedgerRecord {
+function rowToRecord(row: FieldTestRow, syncStatus: LedgerRecord['syncStatus']): LedgerRecord {
   const lab: LabValue = { l: row.corrected_lab_l, a: row.corrected_lab_a, b: row.corrected_lab_b };
   const residual: CalibrationResidual = {
     meanDeltaE: row.calib_residual_mean,
@@ -112,7 +112,7 @@ function rowToRecord(row: FieldTestRow, synced: boolean): LedgerRecord {
     chainHash: row.chain_hash,
     deviceAttestation: row.device_attestation,
     sealState: row.seal_state as LedgerRecord['sealState'],
-    syncStatus: synced ? 'synced' : 'queued',
+    syncStatus,
   };
   return rec;
 }
@@ -121,10 +121,16 @@ function rowToRecord(row: FieldTestRow, synced: boolean): LedgerRecord {
 export async function initLedgerDb(opts?: OpenOptions): Promise<{ records: LedgerRecord[]; meta: LedgerDbMeta }> {
   const opened: DbOpenResult = await openAppDatabase(opts);
   const { adapter } = opened;
-  await adapter.exec(MIGRATION_APP_V1);
+  await applyVersionedAppMigrations(adapter);
   if (opened.fts5) {
     try {
       await adapter.exec(MIGRATION_APP_FTS);
+      await adapter.exec(`
+        INSERT INTO field_test_fts (record_uuid, case_ref, panchnama_ref, package_no, kit_test_name, reagent, outcome)
+        SELECT record_uuid, case_ref, panchnama_ref, package_no, kit_test_name, reagent, outcome
+        FROM field_test
+        WHERE record_uuid NOT IN (SELECT record_uuid FROM field_test_fts)
+      `);
     } catch (e) {
       opened.fts5 = false; // degrade honestly — search falls back to LIKE
     }
@@ -138,10 +144,19 @@ export async function initLedgerDb(opts?: OpenOptions): Promise<{ records: Ledge
     error: opened.error,
   };
   const rows = await adapter.all<FieldTestRow>('SELECT * FROM field_test ORDER BY seq ASC');
-  const synced = new Set(
-    (await adapter.all<{ record_uuid: string }>('SELECT record_uuid FROM synced_record')).map((r) => r.record_uuid)
+  const states = await adapter.all<{ record_uuid: string; state: LedgerRecord['syncStatus'] }>(
+    'SELECT record_uuid, state FROM record_sync_state'
   );
-  return { records: rows.map((r) => rowToRecord(r, synced.has(r.record_uuid))), meta: activeMeta };
+  const stateByUuid = new Map(states.map((row) => [row.record_uuid, row.state]));
+  return {
+    records: rows.map((row) =>
+      rowToRecord(
+        row,
+        stateByUuid.get(row.record_uuid) ?? (row.is_demo === 1 ? 'demo-seed' : 'queued')
+      )
+    ),
+    meta: activeMeta,
+  };
 }
 
 export function ledgerDbMeta(): LedgerDbMeta | null {
@@ -209,7 +224,19 @@ export async function persistRecord(rec: LedgerRecord): Promise<boolean> {
     rec.deviceAttestation,
     rec.sealState
   );
-  return res.changes > 0;
+  if (res.changes > 0) {
+    await a.run(
+      `INSERT INTO record_sync_state (record_uuid, state, reason, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(record_uuid) DO UPDATE SET state = excluded.state, reason = excluded.reason, updated_at = excluded.updated_at`,
+      rec.record_uuid,
+      rec.isDemo ? 'demo-seed' : 'queued',
+      rec.isDemo ? 'preinstalled deterministic demo record' : null,
+      new Date().toISOString()
+    );
+    return true;
+  }
+  return false;
 }
 
 export async function nextSeq(): Promise<number> {
@@ -235,6 +262,8 @@ export async function queueForSync(recordUuid: string, idempotencyKey: string): 
 export async function markSyncedDb(recordUuid: string, serverAck?: string): Promise<void> {
   const a = activeAdapter;
   if (!a || a.kind === 'none') return;
+  const existing = await a.get<{ record_uuid: string }>('SELECT record_uuid FROM field_test WHERE record_uuid = ?', recordUuid);
+  if (!existing) return;
   await a.run(
     `INSERT OR IGNORE INTO synced_record (record_uuid, synced_at, server_ack) VALUES (?,?,?)`,
     recordUuid,
@@ -242,6 +271,14 @@ export async function markSyncedDb(recordUuid: string, serverAck?: string): Prom
     serverAck ?? null
   );
   await a.run(`DELETE FROM sync_queue WHERE record_uuid = ?`, recordUuid);
+  await a.run(
+    `INSERT INTO record_sync_state (record_uuid, state, reason, updated_at)
+     VALUES (?, 'synced', ?, ?)
+     ON CONFLICT(record_uuid) DO UPDATE SET state = 'synced', reason = excluded.reason, updated_at = excluded.updated_at`,
+    recordUuid,
+    serverAck ?? null,
+    new Date().toISOString()
+  );
 }
 
 export async function pendingCountDb(): Promise<number> {
@@ -355,16 +392,24 @@ export async function resetLedgerFile(): Promise<void> {
   const a = activeAdapter;
   if (!a) return;
   try {
-    // Drop immutable triggers first to allow clean demo reset
+    // Drop dependent mutable tables before the append-only evidence table.
+    // Reset is explicitly file-level; it never updates or deletes evidence rows.
     await a.exec(`
       DROP TRIGGER IF EXISTS trg_immutable_append_only;
       DROP TRIGGER IF EXISTS trg_immutable_no_delete;
+      DROP TRIGGER IF EXISTS field_test_no_update;
+      DROP TRIGGER IF EXISTS field_test_no_delete;
+      DROP TRIGGER IF EXISTS field_test_fts_ai;
+      DROP TABLE IF EXISTS record_sync_state;
+      DROP TABLE IF EXISTS sync_queue;
+      DROP TABLE IF EXISTS synced_record;
+      DROP TABLE IF EXISTS field_test_fts;
       DROP TABLE IF EXISTS field_test;
       DROP TABLE IF EXISTS outbox_queue;
       DROP TABLE IF EXISTS wizard_draft;
       DROP TABLE IF EXISTS app_state;
       DROP TABLE IF EXISTS audit_log;
-      DROP TABLE IF EXISTS field_test_fts;
+      DROP TABLE IF EXISTS app_schema_migrations;
     `);
   } catch {
     /* best effort */

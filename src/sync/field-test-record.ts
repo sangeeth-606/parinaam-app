@@ -1,97 +1,73 @@
-/**
- * FieldTestRecord wire adapter (v2 phase E; contract docs/v2-plan/04).
- *
- * Projects the app's richer LedgerRecord onto the backend FieldTestRecord shape.
- * Key properties the tests enforce:
- *  • record_hash = the chain's payload_sha256 = sha256(payload_jcs) — the server can
- *    recompute it (nothing here invents a new digest);
- *  • panchnama_ref rides along but is OUTSIDE the hashed payload (v2 §6);
- *  • outcome keeps the trilevel wire vocabulary (decision D1);
- *  • device_attestation is the signature hex or null — never a tier claim.
- */
+/** Adapter from the app ledger's view model to the authoritative snake_case wire contract. */
 
+import { canonicalizeJson } from '../crypto/canonical-json.ts';
+import {
+  OFFICER_ROLE_VALUES,
+  sealedPayloadFromCore,
+  type FieldTestOfficerRole,
+  type FieldTestRecordV1,
+} from '../contracts/field-test-record.ts';
 import type { LedgerRecord } from '../state/ledger-store';
 
-export interface FieldTestRecordWire {
-  record_uuid: string;
-  case_ref: string;
-  panchnama_ref: string | null;
-  package_no: string;
-  lot_no: string | null;
-  reagent: string;
-  kit: { make: string | null; test_name: string | null; lot_no: string | null; expiry: string | null };
-  corrected_lab: { l: number; a: number; b: number };
-  delta_e_00: number;
-  calibration_residual: { mean: number; max: number; grade: string };
-  outcome: string;
-  confidence: number;
-  conformal_set: string[];
-  abstention_reason: string | null;
-  kinetics: KineticPointWire[] | null;
-  gps: { lat: number; lon: number; accuracy_m: number | null; mocked: boolean } | null;
-  image_ref: string | null;
-  image_sha256: string | null;
-  operator_id: string;
-  operator_name: string | null;
-  officer_role: string | null;
-  created_at: string;
-  payload_jcs: string;
-  record_hash: string;
-  prev_hash: string;
-  chain_hash: string;
-  device_attestation: string | null;
-  is_demo?: boolean;
-  sync_status_at_seal: string;
-}
+export type FieldTestRecord = FieldTestRecordV1;
 
-interface KineticPointWire {
-  t_ms: number;
-  delta_e: number;
-}
-
-export function toFieldTestRecord(rec: LedgerRecord): FieldTestRecordWire {
-  return {
-    record_uuid: rec.record_uuid,
-    case_ref: rec.case_ref,
-    panchnama_ref: rec.panchnama_ref ?? null,
-    package_no: rec.package_no,
-    lot_no: rec.lot_no ?? null,
-    reagent: rec.reagent,
+export function toFieldTestRecord(record: LedgerRecord): FieldTestRecordV1 {
+  if (!record.operatorName || !record.officerRole || !(OFFICER_ROLE_VALUES as readonly string[]).includes(record.officerRole)) {
+    throw new Error('[permanent] record lacks bound operator identity');
+  }
+  if (record.residual.grade === 'REJECT') {
+    throw new Error('[permanent] REJECT calibration cannot be transmitted as valid field evidence');
+  }
+  const payload = sealedPayloadFromCore({
+    seq: record.seq,
+    record_uuid: record.record_uuid,
+    case_ref: record.case_ref,
+    package_no: record.package_no,
+    lot_no: record.lot_no ?? null,
+    reagent: record.reagent,
     kit: {
-      make: rec.kit_make ?? null,
-      test_name: rec.kit_test_name ?? null,
-      lot_no: rec.kit_lot_no ?? null,
-      expiry: rec.kit_expiry ?? null,
+      make: record.kit_make ?? null,
+      test_name: record.kit_test_name ?? null,
+      lot_no: record.kit_lot_no ?? null,
+      expiry: record.kit_expiry ?? null,
     },
-    corrected_lab: { l: rec.lab.l, a: rec.lab.a, b: rec.lab.b },
-    delta_e_00: rec.deltaE,
+    corrected_lab: record.lab,
+    delta_e_00: record.deltaE,
     calibration_residual: {
-      mean: rec.residual.meanDeltaE,
-      max: rec.residual.maxDeltaE,
-      grade: rec.residual.grade,
+      mean: record.residual.meanDeltaE,
+      max: record.residual.maxDeltaE,
+      grade: record.residual.grade,
     },
-    outcome: rec.outcome,
-    confidence: rec.confidence,
-    conformal_set: rec.conformalSet,
-    abstention_reason: rec.abstentionReason ?? null,
-    kinetics: rec.kinetics && rec.kinetics.length
-      ? rec.kinetics.map((k) => ({ t_ms: k.t_ms, delta_e: k.delta_e }))
+    outcome: record.outcome,
+    confidence: record.confidence,
+    conformal_set: record.conformalSet,
+    abstention_reason: record.abstentionReason ?? null,
+    kinetics: record.kinetics?.length ? record.kinetics : null,
+    gps: record.gps
+      ? {
+          lat: record.gps.lat,
+          lon: record.gps.lon,
+          accuracy_m: record.gps.accuracyM ?? null,
+          mocked: record.gps.mocked,
+        }
       : null,
-    gps: rec.gps
-      ? { lat: rec.gps.lat, lon: rec.gps.lon, accuracy_m: rec.gps.accuracyM ?? null, mocked: rec.gps.mocked }
-      : null,
-    image_ref: rec.imageRef ?? null,
-    image_sha256: rec.imageSha256 ?? null,
-    operator_id: rec.operator,
-    operator_name: rec.operatorName ?? null,
-    officer_role: rec.officerRole ?? null,
-    created_at: rec.created_at,
-    payload_jcs: rec.payloadJcs,
-    record_hash: rec.payloadSha256,
-    prev_hash: rec.prevHash,
-    chain_hash: rec.chainHash,
-    device_attestation: rec.deviceAttestation,
-    is_demo: rec.isDemo ?? false,
-    sync_status_at_seal: rec.syncStatus,
+    image_sha256: record.imageSha256 ?? null,
+    operator_id: record.operator,
+    operator_name: record.operatorName,
+    officer_role: record.officerRole as FieldTestOfficerRole,
+    created_at: record.created_at,
+    is_demo: record.isDemo ?? false,
+  });
+  const payloadJcs = canonicalizeJson(payload);
+  if (payloadJcs !== record.payloadJcs) {
+    throw new Error('[permanent] sealed payload does not match the persisted outer record fields');
+  }
+  return {
+    ...payload,
+    payload_jcs: payloadJcs,
+    record_hash: record.payloadSha256,
+    prev_hash: record.prevHash,
+    chain_hash: record.chainHash,
+    device_attestation: record.deviceAttestation,
   };
 }
