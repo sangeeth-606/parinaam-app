@@ -1,137 +1,153 @@
 # Parinaam
 
-> Calibrated evidence for the colour that decides a case.
+Parinaam is an offline-first Android field-test recording prototype for the
+Smart India Hackathon 2026 problem statement. It records a **presumptive
+colorimetric test event** and its local integrity chain. It does not identify a
+substance and does not replace laboratory confirmation.
 
-**Smart India Hackathon 2026 — Problem Statement 26231**  
-**Nodal Agency:** Narcotics Control Bureau (NCB), Ministry of Home Affairs  
-**Theme:** MedTech / BioTech / HealthTech | **Category:** Software  
-**Team:** shauryas  
+> **Scope:** this repository is a student hackathon prototype. The exported
+> workflow and integrity metadata are not a statutory certificate, a court
+> report, or a legal conclusion. No government or external case system is
+> contacted.
 
----
+## What the app records
 
-## 1. What It Does
+The camera capture and calibration pipeline produces a structured event with
+CIE-Lab measurements, calibration residual, reagent/kit information, optional
+GPS and kinetics, a qualified outcome, and an operator identity. Outcomes are
+restricted to:
 
-**Parinaam** is an offline-first Android application that transforms standard colorimetric chemical field tests (e.g. NIK, Sirchie NARK II pouch-and-ampoule kits) into **calibrated, confidence-scored, tamper-evident, court-tenderable digital records** without requiring any new physical chemistry, proprietary optical attachments, or external hardware.
+- `CONSISTENT_WITH_REAGENT_POSITIVE`
+- `CONSISTENT_WITH_REAGENT_NEGATIVE`
+- `INCONCLUSIVE`
 
-> [!IMPORTANT]
-> **Parinaam does NOT identify drugs.**
-> Under the NCB *Drug Law Enforcement Field Officers' Handbook* and SWGDRUG analytical guidelines, colorimetric field spot tests are **Category C** (presumptive/indicative only) and are legally inadmissible to prove substantive chemical identity in court. Definitive chemical proof requires laboratory analysis (GC-MS, LC-MS/MS, FTIR).
-> 
-> Parinaam records **the test event itself**, providing structured data, reproducible colorimetry, package-to-lot mapping, and cryptographic integrity proof.
+The local app ledger is append-only. A record's canonical JSON, record hash,
+and global predecessor chain are sealed before it enters the offline outbox.
+Reviewers can change only server-owned case metadata (`case_status` and
+`panchnama_ref`); they cannot replace a record body or evidence bytes.
 
----
+A device attestation, when present, is an integrity seal. The server reports it
+as unverified unless a separately trusted device-key registry is introduced;
+it is not described as a statutory digital signature.
 
-## 2. Core Architecture & Tech Stack
+## Repository layout
 
-- **Framework:** React Native 0.87.1 + Expo SDK 57 (Prebuild / EAS Dev Client workflow; **Expo Go is not supported** due to native camera frame processors, SQLCipher, and hardware keystore modules).
-- **Language:** TypeScript (strict mode).
-- **Camera & Vision:** `react-native-vision-camera` v5.2.3 (locked AE/AWB/focus), `react-native-worklets` (320x240 frame processing off the JS thread), `react-native-vision-camera-barcode-scanner` (ML Kit 4-corner marker tracking), `react-native-fast-opencv` (homography, perspective warping, Laplacian sharpness).
-- **Colour Engine:** Pure TypeScript (~200 lines, unit-tested against Python `colour-science` and Sharma 2005 CIEDE2000 datasets): Grey-ramp tone curve linearization -> White-patch von Kries -> Root-Polynomial degree-2 regression (RP-2) -> XYZ -> CIELAB -> CIEDE2000 ($\Delta E_{00}$).
-- **Decision Engine:** Quadratic Discriminant Analysis / Mahalanobis distance in $(a^*, b^*)$ space coupled with burst measurement noise ($\Sigma_{eff} = \Sigma_{class} + \Sigma_{meas}$) and class-conditional Mondrian conformal prediction. Dual abstentions: Low-margin and $\chi^2$ novelty detection.
-- **Storage:** `expo-sqlite` with SQLCipher (AES-256 encrypted at rest, key held in `expo-secure-store`), append-only database triggers (`ABORT` on `UPDATE` or `DELETE`), FTS5 search index.
-- **Evidentiary Integrity:** Hardware-backed ECDSA key attestation (`@pagopa/io-react-native-crypto`), RFC 8785 Canonical JSON Serialization (JCS), SHA-256 hash chaining, standalone POSIX `verify.sh` verification.
-- **Document Export:** `expo-print` generating Bharatiya Sakshya Adhiniyam (BSA) 2023 s. 63(4) dual certificates (Part A & Part B), NDPS Form-4 (Inventory), Form-5 (Magistrate Application), and Form-6 (Test Memo).
-- **Backend:** Self-hosted REST API (`server/`, `node:http` + dual-engine storage: embedded `node:sqlite` for hermetic testing and PostgreSQL for production / Docker Compose). Fully self-contained with NO external cloud or online platforms. Detailed contract and developer guide live at [`server/README.md`](server/README.md).
+```text
+src/                         Expo/React Native officer app
+  capture/ colour/ classify/ camera and field-test processing
+  contracts/                 shared server/app wire and error contracts
+  crypto/                    canonical JSON, SHA-256, chain helpers
+  db/                        app SQLite migrations and append-only ledger
+  demo/                      deterministic synthetic 15-record/4-case fixture
+  screens/ state/ sync/      UI, local state, and offline outbox
+server/                      self-hosted Node HTTP API
+  src/                        PostgreSQL/SQLite stores, migrations, RBAC, routes
+  openapi.yaml                machine-readable HTTP contract
+  README.md                   deployment and API guide
+tests/                       unit, contract, SQLite, API, and E2E tests
+scripts/                     local build and verification helpers
+```
 
----
+The untracked `camera-engine/` workspace is outside this repository's change
+set and is not required to run the API.
 
-## 3. Quick Start & Developer Setup
+## Requirements
 
-### Prerequisites
-- Node.js 22+ (the server + tests use `node:sqlite` / `--experimental-strip-types`) and npm
-- Docker & Docker Compose (optional, for running PostgreSQL backend)
-- Android Studio with Android SDK API 28+ installed (for the device build)
-- Target Android physical device (Snapdragon 6xx/7xx class, Android 13+)
+- Node.js 22+ and npm
+- Android Studio/SDK and a development build for the officer app
+- Docker Compose v2 for the PostgreSQL deployment
 
-### Installation & Development Build
+Expo Go is not sufficient for the native camera and device modules. The app is
+built as a custom development client.
+
+## App development
 
 ```bash
-# 1. Install dependencies (postinstall patches native configs via scripts/patch-react-native.js)
-npm install
-
-# 2. Prebuild native Android project
+npm ci
 npx expo prebuild
-
-# 3. Run development client on physical Android device
 npx expo run:android
-# Or via EAS build:
-# eas build --profile development --platform android
 ```
 
-> [!WARNING]
-> Do NOT use standard Expo Go. The native modules (`react-native-vision-camera`, `react-native-fast-opencv`, `@pagopa/io-react-native-crypto`, SQLCipher) require a custom development client build.
+The local demo build displays its demo credentials in the login screen. The
+local app-side demo account is intentionally separate from the server's
+self-hosted deployment credentials; do not use demo credentials on a shared
+host.
 
----
-
-## 4. Project File Structure
-
-```
-parinaam-app/
-├── README.md                           # This file
-├── App.tsx / app.json                  # Expo entry & config (React Native 0.87.1)
-├── src/                                # Application source — screens, components, state,
-│   │                                   #   capture pipeline, colour science, crypto, sync
-│   ├── screens/  components/  theme/   #   UI (WCAG AAA "evidentiary" light language)
-│   ├── state/                          #   zustand stores incl. case-context + sync engine
-│   ├── capture/  colour/  domain/      #   guided capture, calibration, classification
-│   ├── crypto/  db/  evidentiary/      #   hash chain, SQLite ledger, seals & certificates
-│   ├── sync/                           #   outbox transport ⇄ server
-│   └── services/  navigation/  types/  #   export flows, stacks, shared types
-├── server/                             # Self-hosted REST API: node:http + PostgreSQL / SQLite,
-│   │                                   #   contract & operations guide in server/README.md
-│   └── src/ (auth·verify·routes·bus·db·pg-store·seed·main)
-├── tests/                              # node:test suites (171 tests) — crypto, db, sync, server,
-│                                       #   auth, state, acceptance matrix incl. live API
-└── scripts/                            # metro stubs, native patching, verify.sh (chain demo)
-```
-
-### Running the stack (officer app + backend)
+Run the local quality gates with:
 
 ```bash
-# Backend via Docker Compose (PostgreSQL on 55433 + API on 8571 with auto-seeded demo data)
-docker compose up -d db server
-
-# Or run API directly on host:
-npm run seed:server              # Seed demo accounts and realistic cases
-npm run server                   # REST API on http://localhost:8571 (engine: node:sqlite)
-# PARINAAM_DB=postgres npm run server  # REST API against PostgreSQL
-
-# Running the mobile officer app:
-npx expo start --android         # officer app on device/emulator; point Settings → SYNC →
-                                 #   SERVER URL at the API (10.0.2.2:8571 from the Android
-                                 #   emulator reaching a host server; login admin/adminpass)
-npx expo start                   # press `w` to run the same app in the browser (web build;
-                                 #   camera capture is simulator-backed there)
-
-# Verification & Test Suites:
-npm test                         # 171 hermetic node:test cases (ledger, triggers, sync, server, e2e matrix)
-npm run lint                     # eslint incl. the forbidden-claims guard (see §6)
-npm run typecheck                # strict TS: app + server projects
+npm test
+npm run typecheck
+npm run lint
 ```
 
----
+The normal test suite is hermetic and uses an in-memory server SQLite database.
+An optional PostgreSQL integration test is described in
+[`server/README.md`](server/README.md).
 
-## 5. Team Roles (Grand Finale Allocation)
+## Self-hosted API with PostgreSQL
 
-| Role | Responsibility | Core Deliverables |
-|---|---|---|
-| **Role A — Capture** | Camera pipeline, frame processing worklets | VisionCamera 5, quality gates, 4-corner homography |
-| **Role B — Colour** | Colorimetry mathematics, calibration | Pure TS colour pipeline, calibration card design |
-| **Role C — Inference** | Statistical modeling, confidence guarantees | Mahalanobis QDA, conformal sets, dual abstentions |
-| **Role D — Evidence** | Cryptographic sealing, statutory certificates | Hardware attestation, hash chain, s. 63(4) PDF |
-| **Role E — Platform** | Storage, synchronization, backend API | SQLite append-only triggers, outbox sync, `server/` REST API |
-| **Role F — Demo & Docs**| Live presentation, QA, rehearsal | Flight-mode rehearsal, script timing, jury defense |
+From the repository root:
 
----
+```bash
+cp .env.example .env
+# Change the passwords and ports in .env as needed.
+docker compose up -d db server
+docker compose ps
+curl http://127.0.0.1:8571/api/v1/health
+```
 
-## 6. Key Legal & Procedural Guardrails
+The default host bindings are loopback-only: PostgreSQL `127.0.0.1:55433` and
+API `127.0.0.1:8571`. Set a different free `POSTGRES_PORT` or `API_PORT` when
+those ports are occupied. Set a bind address to `0.0.0.0` only for a deliberate
+LAN test, and place the API behind TLS and an access-controlled reverse proxy
+for any shared deployment.
 
-These are enforced in code, not just on paper — the ESLint config carries static rules for the
-forbidden-claims list, and the append-only triggers live in the DB layer:
+The API is the shared source for the officer app and the separate web
+repository. It serves the synthetic demo seed on an empty PostgreSQL database
+and refuses to mix that seed with a non-demo ledger. See
+[`server/README.md`](server/README.md) for seed accounts, filters, RBAC,
+evidence upload, export manifests, and curl examples. The complete route and
+schema description is [`server/openapi.yaml`](server/openapi.yaml).
 
-1. **Never Assert Substance Identity:** The outcome vocabulary is strictly `CONSISTENT_WITH_REAGENT_POSITIVE`, `CONSISTENT_WITH_REAGENT_NEGATIVE`, or `INCONCLUSIVE`.
-2. **Standing Order 1/88 is Repealed:** Repealed by Rule 29 of the NDPS Rules 2022. Cite **Rule 10(2) of NDPS Rules 2022** for package bunching.
-3. **Never Replace Panch Witnesses:** Sits *alongside* e-Sakshya video and mandatory civilian panchas under BNSS s. 103/105; replaces neither.
-4. **Device Key ≠ Digital Signature:** Bespoke device keys are termed **"device attestation"** or **"integrity seal"** under IT Act 2000.
-5. **No Gallery Import:** The camera pipeline is the sole ingest path; external file picking is physically blocked.
-6. **Append-Only Ledger:** `UPDATE`/`DELETE` on `test_record` raise `ABORT` via triggers — tamper is visible, never silent.
+To stop a verification stack without removing its database:
+
+```bash
+docker compose down
+```
+
+Do not use `docker compose down -v` for a stack containing data. The Compose
+volume is versioned so a new project does not silently reuse an old one.
+
+## Honest prototype boundaries
+
+- No gallery import: capture is the only evidence acquisition path.
+- No substance identity is asserted from a presumptive reagent result.
+- No confirmation, disposal, transfer, or government-system write is implied.
+- Device security is reported as `StrongBox`, `TrustedEnvironment`, or
+  `Software` based on the actual device capability; a software fallback is not
+  silently upgraded to hardware-backed status.
+- The server verifies hashes and authorization, but it is not a trusted device
+  key registry and does not issue a legal certificate.
+- PDF/DOCX/XLSX files are rendered by the web client from a server export
+  manifest. The API does not pretend that a JSON manifest is a signed filing.
+- The deterministic demo contains no real imagery, substance identity,
+  laboratory result, or evidentiary conclusion.
+
+## Guardrails maintained in the code
+
+- Strict TypeScript with no `any` in the backend contract path.
+- Append-only triggers for app evidence and server evidence/audit/history rows.
+- One global hash chain with atomic sequence/head checks.
+- Retryable missing-predecessor errors for out-of-order offline delivery.
+- RBAC for admin, supervisor, judiciary, senior, and junior accounts.
+- Explicit request IDs, bounded bodies, restricted CORS, hashed sessions, and
+  account suspension/session revocation.
+- No managed/cloud service dependency in the runtime configuration.
+
+## Team-facing references
+
+- [Server deployment and API guide](server/README.md)
+- [OpenAPI contract](server/openapi.yaml)
+- [Shared field-test contract](src/contracts/field-test-record.ts)
+- [Deterministic demo fixture](src/demo/demo-dataset.ts)
