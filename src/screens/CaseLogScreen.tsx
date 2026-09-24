@@ -19,11 +19,13 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { FlatList, RefreshControl, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import type { ViewStyle } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/AppNavigator';
 
 import { Icon } from '../components/ui/Icon';
+import type { IconName } from '../components/ui/Icon';
 import { OutcomeTag } from '../components/ui/evidentiary/EvidenceBits';
 import { LightTabBar } from '../components/ui/evidentiary/LightTabBar';
 import { StatutoryClockModal } from '../components/StatutoryClockModal';
@@ -111,6 +113,9 @@ export const CaseLogScreen: React.FC = () => {
   );
 
   const queued = useMemo(() => records.filter((r) => r.syncStatus === 'queued').length, [records]);
+  // Demo seeds are LOCAL ONLY: real records, but never uploaded — so they are
+  // reported separately and never folded into the upload-queue counts.
+  const demoSeeded = useMemo(() => records.filter((r) => r.syncStatus === 'demo-seed').length, [records]);
   const [view, setView] = useState<'cases' | 'records'>('cases');
   const [drillCase, setDrillCase] = useState<string | null>(null);
 
@@ -122,6 +127,7 @@ export const CaseLogScreen: React.FC = () => {
     neg: number;
     inc: number;
     queued: number;
+    demo: number;
     lastAt: string;
   }
   // G-D6: group the (search-narrowed) records into case cards — the unit a senior thinks in.
@@ -141,6 +147,7 @@ export const CaseLogScreen: React.FC = () => {
         neg: recs.filter((r) => r.outcome === 'CONSISTENT_WITH_REAGENT_NEGATIVE').length,
         inc: recs.filter((r) => r.outcome === 'INCONCLUSIVE').length,
         queued: recs.filter((r) => r.syncStatus === 'queued').length,
+        demo: recs.filter((r) => r.syncStatus === 'demo-seed').length,
         lastAt: recs.reduce((m, r) => (r.created_at > m ? r.created_at : m), recs[0].created_at),
       }))
       .sort((a, b) => (a.lastAt < b.lastAt ? 1 : -1));
@@ -257,6 +264,11 @@ export const CaseLogScreen: React.FC = () => {
           {queued > 0 ? (
             <View style={styles.queuedPill}>
               <Text style={styles.queuedPillText}>{queued} QUEUED</Text>
+            </View>
+          ) : null}
+          {demoSeeded > 0 ? (
+            <View style={styles.demoPill}>
+              <Text style={styles.demoPillText}>{demoSeeded} DEMO SEED · LOCAL ONLY</Text>
             </View>
           ) : null}
           {Object.keys(caseStatus).length > 0 ? (
@@ -396,6 +408,11 @@ export const CaseLogScreen: React.FC = () => {
                       <Text style={styles.mixChipText}>QUEUED {c.queued}</Text>
                     </View>
                   ) : null}
+                  {c.demo > 0 ? (
+                    <View style={styles.mixChipDemo}>
+                      <Text style={styles.mixChipTextDemo}>DEMO SEED {c.demo} · LOCAL ONLY</Text>
+                    </View>
+                  ) : null}
                   <View style={styles.mixChevron}>
                     <Icon name="chevronRight" size={16} color={T.textMuted} strokeWidth={2.5} />
                   </View>
@@ -474,6 +491,16 @@ export const CaseLogScreen: React.FC = () => {
   );
 };
 
+/**
+ * Three honest sync states. A demo seed is a real, chain-sealed record that lives
+ * ONLY on this device: it is never queued for upload and must never read as SYNCED.
+ */
+const syncChipFor = (status: LedgerRecord['syncStatus']): { style: ViewStyle; color: string; icon: IconName; label: string } => {
+  if (status === 'synced') return { style: styles.syncChip, color: T.textSecondary, icon: 'check', label: 'SYNCED' };
+  if (status === 'queued') return { style: styles.syncChipQueued, color: T.accent, icon: 'clock', label: 'QUEUED' };
+  return { style: styles.syncChipDemo, color: T.marginalText, icon: 'flask', label: 'DEMO SEED · LOCAL ONLY' };
+};
+
 /** One evidentiary register row: identity left, metrics + seal + sync right. */
 const RecordRow: React.FC<{ r: LedgerRecord; onPress: () => void }> = ({ r, onPress }) => {
   const serverCase = useSyncStore((x) => x.caseStatus[r.case_ref]);
@@ -506,12 +533,15 @@ const RecordRow: React.FC<{ r: LedgerRecord; onPress: () => void }> = ({ r, onPr
             <Text style={styles.serverChipText}>SERVER: {serverCase.status}</Text>
           </View>
         ) : null}
-        <View style={r.syncStatus === 'synced' ? styles.syncChip : styles.syncChipQueued}>
-          <Icon name={r.syncStatus === 'synced' ? 'check' : 'clock'} size={11} color={r.syncStatus === 'synced' ? T.textSecondary : T.accent} strokeWidth={2.5} />
-          <Text style={[styles.syncChipText, { color: r.syncStatus === 'synced' ? T.textSecondary : T.accent }]}>
-            {r.syncStatus === 'synced' ? 'SYNCED' : 'QUEUED'}
-          </Text>
-        </View>
+        {(() => {
+          const chip = syncChipFor(r.syncStatus);
+          return (
+            <View style={chip.style} accessibilityLabel={`Sync state: ${chip.label}`}>
+              <Icon name={chip.icon} size={11} color={chip.color} strokeWidth={2.5} />
+              <Text style={[styles.syncChipText, { color: chip.color }]}>{chip.label}</Text>
+            </View>
+          );
+        })()}
       </View>
     </View>
     <View style={styles.rowMeta}>
@@ -552,6 +582,8 @@ const styles = StyleSheet.create({
   mixChipTextMarginal: { fontFamily: evidenceMono, fontSize: 10, color: T.marginalText, letterSpacing: 0.3 },
   mixChipQueued: { backgroundColor: T.accentSurface, borderColor: T.borderStrong, borderWidth: 1, borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 },
   mixChipText: { fontFamily: evidenceMono, fontSize: 10, color: T.textSecondary, letterSpacing: 0.3 },
+  mixChipDemo: { backgroundColor: T.marginalSurface, borderColor: T.marginalBorder, borderWidth: 1, borderStyle: 'dashed', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 },
+  mixChipTextDemo: { fontFamily: evidenceMono, fontSize: 10, color: T.marginalText, letterSpacing: 0.3 },
   mixChevron: { marginLeft: 'auto', justifyContent: 'center' },
 
   serverPill: { borderWidth: 1, borderColor: T.border, borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, marginLeft: 6 },
@@ -679,6 +711,16 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   queuedPillText: { fontSize: 10, fontWeight: '700', color: T.accent, letterSpacing: 0.4 },
+  demoPill: {
+    backgroundColor: T.marginalSurface,
+    borderColor: T.marginalBorder,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderRadius: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  demoPillText: { fontSize: 10, fontWeight: '700', color: T.marginalText, letterSpacing: 0.4 },
 
   listPad: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 96 },
 
@@ -756,6 +798,18 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
   },
   syncChipText: { fontSize: 10, fontWeight: '700', letterSpacing: 0.4 },
+  syncChipDemo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: T.marginalSurface,
+    borderColor: T.marginalBorder,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+  },
   rowMeta: {
     flexDirection: 'row',
     justifyContent: 'space-between',

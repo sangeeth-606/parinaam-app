@@ -2,8 +2,8 @@
  * RecordDetailScreen — NDPS Sealed-Record Evidentiary Review Interface
  *
  * Purpose:
- * - The full court-tenderable view of ONE sealed ledger record: what a
- *   magistrate, defence counsel, or superior officer would examine.
+ * - The complete review view of ONE sealed ledger record: what a
+ *   reviewer, defence counsel, or superior officer would examine.
  *
  * Statutory Foundation:
  * - BNS s. 63(4) Part A / Part B certificate basis (generated live from the
@@ -15,13 +15,13 @@
  * Integrity law (AGENTS.md rules 2/6/10):
  * - "SEALED — IMMUTABLE" state must be unmistakable: append-only ledger, SQL
  *   trigger aborts any UPDATE/DELETE.
- * - The seal row records the ACHIEVED path only: device keystore signature when
+ * - The seal row records the ACHIEVED path only: device attestation when
  *   present, honest "chain-only, keystore unavailable" when null — never an
  *   assumed security level.
  *
  * Design Language: src/theme/evidence.ts + src/components/ui/evidentiary/EvidenceBits.tsx
  * (WCAG AAA light evidentiary review; tri-modal states; ≥48 dp targets; mono
- * technical metadata; dark terminal boxes for tenderable digests/exports).
+ * technical metadata; dark terminal boxes for integrity digests/exports).
  */
 
 import React, { useEffect, useState } from 'react';
@@ -320,7 +320,9 @@ export const RecordDetailScreen: React.FC<{ route: DetailRoute }> = ({ route }) 
                   ? `${serverCase.status} · fetched ${serverCaseAt ? new Date(serverCaseAt).toLocaleTimeString('en-IN') : '—'}`
                   : record.syncStatus === 'queued'
                     ? 'NOT YET UPLOADABLE — queued on device'
-                    : 'NOT FETCHED — pull to refresh on RECORDS'
+                    : record.syncStatus === 'demo-seed'
+                      ? 'LOCAL DEMO RECORD — never uploaded to the API'
+                      : 'NOT FETCHED — pull to refresh on RECORDS'
               }
               wide
             />
@@ -337,7 +339,13 @@ export const RecordDetailScreen: React.FC<{ route: DetailRoute }> = ({ route }) 
             />
             <MetaTile
               label="SYNC STATE"
-              value={record.syncStatus === 'synced' ? 'SYNCED' : 'QUEUED — OFFLINE OUTBOX'}
+              value={
+                record.syncStatus === 'synced'
+                  ? 'SYNCED — accepted by the configured API'
+                  : record.syncStatus === 'demo-seed'
+                    ? 'DEMO SEED — LOCAL ONLY, never uploaded'
+                    : 'QUEUED — OFFLINE OUTBOX'
+              }
               tone="default"
             />
           </View>

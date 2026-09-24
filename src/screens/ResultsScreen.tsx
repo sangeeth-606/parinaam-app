@@ -74,7 +74,8 @@ export const ResultsScreen: React.FC = () => {
   const { setup, burst, decision, residual, kinetics, record, setSeal, setRecord, setStep, reset } =
     useSessionStore();
   const appendRecord = useLedgerStore((s) => s.appendRecord);
-  const operator = useAuthStore((s) => s.officer?.id ?? 'UNAUTHENTICATED');
+  const officer = useAuthStore((s) => s.officer);
+  const operator = officer?.id ?? 'UNAUTHENTICATED';
   const packages = useLedgerStore((s) => s.records).filter((r) => r.case_ref === setup.caseRef);
 
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -154,22 +155,6 @@ export const ResultsScreen: React.FC = () => {
       : round2safe(kinetics && kinetics.length ? kinetics[kinetics.length - 1].delta_e : 0);
   const sealed = record !== null;
 
-  const sealedPayload = () => ({
-    record_uuid: record?.record_uuid ?? makeRecordUuid(),
-    case_ref: setup.caseRef,
-    package_no: setup.packageNo,
-    lot_no: setup.lotNo || undefined,
-    reagent: setup.reagent,
-    corrected_lab_l: burst.meanObservation[0],
-    corrected_lab_a: burst.meanObservation[1],
-    corrected_lab_b: burst.meanObservation[2],
-    calib_residual_mean: residual.meanDeltaE,
-    calib_grade: residual.grade,
-    outcome: decision.outcome.kind,
-    confidence: decision.confidence,
-    operator_id: operator,
-    device_clock_iso: new Date().toISOString(),
-  });
 
   const sealNow = async () => {
     setSealing(true);
@@ -217,9 +202,11 @@ export const ResultsScreen: React.FC = () => {
         abstentionReason: decision.abstentionReason ?? null,
         created_at: new Date().toISOString(),
         operator,
+        operatorName: officer?.name ?? 'Unknown Officer',
+        officerRole: officer?.role ?? 'ADMIN',
         kinetics: kinetics ?? undefined,
         gps: geo ?? undefined,
-        sealPayload: sealedPayload(),
+        isDemo: false,
       });
       setRecord(created);
       // G-D1/G-D3: seal updates the case context so the next lap pre-fills seamlessly.
@@ -643,10 +630,24 @@ export const ResultsScreen: React.FC = () => {
               <ReadingRow label="Confidence" value={abstained ? '— (abstained)' : `${Math.round(decision.confidence * 100)}%`} />
             </View>
 
-            <Text style={[styles.cardEyebrow, styles.mt10]}>SEAL PAYLOAD (EXACT BYTES CHAINED)</Text>
+            <Text style={[styles.cardEyebrow, styles.mt10]}>SEAL FIELDS</Text>
             <View style={[styles.terminalBox, styles.sheetPayloadBox]}>
               <Text style={styles.terminalValueSmall} selectable numberOfLines={10}>
-                {JSON.stringify(sealedPayload(), null, 1)}
+                {JSON.stringify(
+                  {
+                    case_ref: setup.caseRef,
+                    package_no: setup.packageNo,
+                    reagent: setup.reagent,
+                    corrected_lab: burst.meanObservation,
+                    calibration_residual: residual,
+                    outcome: decision.outcome.kind,
+                    confidence: decision.confidence,
+                    operator_id: operator,
+                    created_at: nowIso,
+                  },
+                  null,
+                  1
+                )}
               </Text>
             </View>
 

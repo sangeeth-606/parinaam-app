@@ -23,7 +23,7 @@ import { getPref, setPref } from '../auth/session-token.ts';
 export const BRIEF_SEEN_PREF = 'briefSeenV2';
 import { revokeServerSession } from '../state/sync-store.ts';
 
-export type OfficerRole = 'JUNIOR' | 'SENIOR';
+export type OfficerRole = 'JUNIOR' | 'SENIOR' | 'ADMIN' | 'SUPERVISOR' | 'JUDICIARY';
 
 export interface Officer {
   id: string;
@@ -40,7 +40,7 @@ export const DEMO_OFFICER: Officer = {
   name: 'Admin (Demo Officer)',
   rank: 'Duty Officer',
   badge: 'ADM-001',
-  role: 'SENIOR',
+  role: 'ADMIN',
   username: 'admin',
 };
 

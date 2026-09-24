@@ -57,6 +57,9 @@ export const IntegrityScreen: React.FC = () => {
   const demoCount = records.filter((r) => r.isDemo).length;
 
   const queued = records.filter((r) => r.syncStatus === 'queued');
+  // Demo seeds are local-only fixtures: they are neither queued nor "synced" —
+  // the outbox actions below must never imply they were uploaded.
+  const demoSeeded = records.filter((r) => r.syncStatus === 'demo-seed').length;
   const latest = records[records.length - 1];
   const attestedCount = records.filter((r) => r.deviceAttestation !== null).length;
 
@@ -289,13 +292,15 @@ export const IntegrityScreen: React.FC = () => {
           <Text style={styles.eyebrow}>RULE 10(2) OUTBOX</Text>
           <Text style={styles.heading}>Court-Package Upload Queue</Text>
           <Text style={styles.subtext}>
-            Queue drains when connectivity returns — the app works fully offline. Transport is a
-            state demonstration; no live government system is contacted.
+            Queue drains when connectivity returns — the app works fully offline. Records upload only
+            to the configured self-hosted API; no live government system is contacted.
           </Text>
           {queued.length === 0 ? (
             <View style={styles.clearBox}>
               <Icon name="wifiOff" size={18} color={T.textSecondary} strokeWidth={2.2} />
-              <Text style={styles.clearText}>Outbox clear — every sealed record in this session is marked synced.</Text>
+              <Text style={styles.clearText}>
+                Outbox clear — no records waiting to upload.{demoSeeded > 0 ? ` ${demoSeeded} demo-seed record${demoSeeded === 1 ? ' is' : 's are'} local-only and never uploaded.` : ''}
+              </Text>
             </View>
           ) : (
             <>
@@ -310,7 +315,7 @@ export const IntegrityScreen: React.FC = () => {
                   <Icon name="clock" size={16} color={T.accent} strokeWidth={2.2} />
                   <View style={styles.queueText}>
                     <Text style={styles.queueTitle}>{r.case_ref} · {r.package_no}</Text>
-                    <Text style={styles.queueSub}>SEQ #{r.seq} · queued for magistrate-form upload</Text>
+                    <Text style={styles.queueSub}>SEQ #{r.seq} · queued for self-hosted API upload</Text>
                   </View>
                   <Text style={styles.queueTime}>{formatIst(r.created_at)}</Text>
                 </TouchableOpacity>

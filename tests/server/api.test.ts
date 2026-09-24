@@ -1,251 +1,296 @@
-/**
- * Phase D API tests — real HTTP round-trips against an ephemeral in-memory server.
- * Proves: auth (admin/adminpass seeding), record ingest with REAL hash recomputation
- * (fixture records sealed by the app pipeline itself), rejection of tampered payloads,
- * idempotency, conflict wall, case rollups, caseStatus lifecycle + RBAC, verify endpoint.
- */
+/** Adversarial HTTP contract tests for the self-hosted API. */
 
-import { describe, it, before, after } from 'node:test';
+import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { AddressInfo } from 'node:net';
-
-const { createApiServer } = await import('../../server/src/main.ts');
-const { seedLedgerRecords } = await import('../../src/repo/fixtures.ts');
-const { buildSealedRecord } = await import('../../src/services/analysis-pipeline.ts');
-const { GENESIS_PREV_HASH } = await import('../../src/crypto/hash-chain.ts');
-
-interface SealedLike {
-  record_uuid: string;
-  case_ref: string;
-  panchnama_ref?: string;
-  package_no: string;
-  lot_no?: string;
-  reagent: string;
-  outcome: string;
-  confidence: number;
-  deltaE: number;
-  lab: { l: number; a: number; b: number };
-  residual: { meanDeltaE: number; maxDeltaE: number; grade: string };
-  conformalSet: string[];
-  abstentionReason?: string | null;
-  created_at: string;
-  operator: string;
-  payloadJcs: string;
-  payloadSha256: string;
-  prevHash: string;
-  chainHash: string;
-  deviceAttestation: string | null;
-}
-
-function wireRecord(r: SealedLike): Record<string, unknown> {
-  return {
-    record_uuid: r.record_uuid,
-    case_ref: r.case_ref,
-    panchnama_ref: r.panchnama_ref ?? null,
-    package_no: r.package_no,
-    lot_no: r.lot_no ?? null,
-    reagent: r.reagent,
-    kit: { make: 'Sirchie', test_name: 'NARK II', lot_no: 'MK-24B-118', expiry: null },
-    corrected_lab: r.lab,
-    delta_e_00: r.deltaE,
-    calibration_residual: { mean: r.residual.meanDeltaE, max: r.residual.maxDeltaE, grade: r.residual.grade },
-    outcome: r.outcome,
-    confidence: r.confidence,
-    conformal_set: r.conformalSet,
-    abstention_reason: r.abstentionReason ?? null,
-    kinetics: null,
-    gps: null,
-    image_ref: null,
-    image_sha256: null,
-    operator_id: r.operator,
-    operator_name: 'Admin (Demo Officer)',
-    officer_role: 'SENIOR',
-    created_at: r.created_at,
-    payload_jcs: r.payloadJcs,
-    record_hash: r.payloadSha256,
-    prev_hash: r.prevHash,
-    chain_hash: r.chainHash,
-    device_attestation: r.deviceAttestation,
-  };
-}
+import { createFieldTestRecord, type FieldTestRecordV1 } from '../../src/contracts/field-test-record.ts';
+import { buildDemoFieldTestRecords } from '../../src/demo/demo-dataset.ts';
+import { sha256HexBytes } from '../../src/crypto/sha256-bytes.ts';
+import { createApiServer } from '../../server/src/main.ts';
+import { seedDemo } from '../../server/src/seed.ts';
+import { patchAccount } from '../../server/src/user-service.ts';
+import type { AuthedOfficer } from '../../server/src/auth.ts';
 
 const { server, db } = await createApiServer(':memory:');
 let base = '';
-let token = '';
+let adminToken = '';
+let juniorToken = '';
+let supervisorToken = '';
+
+interface ApiResult {
+  status: number;
+  headers: Headers;
+  json: Record<string, unknown>;
+  bytes?: Uint8Array;
+}
 
 async function api(
   method: string,
   path: string,
-  opts: { body?: unknown; auth?: boolean; idem?: string } = {}
-): Promise<{ status: number; json: Record<string, unknown> }> {
-  const res = await fetch(base + path, {
-    method,
-    headers: {
-      'content-type': 'application/json',
-      ...(opts.auth ? { authorization: `Bearer ${token}` } : {}),
-      ...(opts.idem ? { 'idempotency-key': opts.idem } : {}),
-    },
-    body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
-  });
-  return { status: res.status, json: (await res.json()) as Record<string, unknown> };
+  options: { body?: unknown; token?: string | null; idem?: string; raw?: Uint8Array; contentType?: string } = {}
+): Promise<ApiResult> {
+  const headers = new Headers();
+  const token = options.token === undefined ? adminToken : options.token;
+  if (token) headers.set('authorization', `Bearer ${token}`);
+  if (options.idem) headers.set('idempotency-key', options.idem);
+  let body: BodyInit | undefined;
+  if (options.raw) {
+    body = Buffer.from(options.raw);
+    headers.set('content-type', options.contentType ?? 'application/octet-stream');
+  } else if (options.body !== undefined) {
+    body = JSON.stringify(options.body);
+    headers.set('content-type', 'application/json');
+  }
+  const response = await fetch(base + path, { method, headers, body });
+  const contentType = response.headers.get('content-type') ?? '';
+  if (contentType.startsWith('application/json')) {
+    return { status: response.status, headers: response.headers, json: (await response.json()) as Record<string, unknown> };
+  }
+  return { status: response.status, headers: response.headers, json: {}, bytes: new Uint8Array(await response.arrayBuffer()) };
 }
 
-describe('Parinaam API — v2 phase D', () => {
-  const sealed: SealedLike[] = [];
+async function login(username: string, password: string): Promise<ApiResult> {
+  return api('POST', '/api/v1/auth/login', { body: { username, password }, token: null });
+}
 
-  before(async () => {
-    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
-    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-    // Seal the first two fixture records exactly like the app does (real chain).
-    let prev = GENESIS_PREV_HASH;
-    for (const d of (await seedLedgerRecords()).slice(0, 2)) {
-      const { sealPayload, ...core } = d;
-      const { seal } = await buildSealedRecord(sealPayload, prev, d.record_uuid);
-      sealed.push({ ...core, ...seal, prevHash: prev } as unknown as SealedLike);
-      prev = seal.chainHash;
-    }
-    const loginRes = await api('POST', '/api/v1/auth/login', { body: { username: 'admin', password: 'adminpass' } });
-    assert.equal(loginRes.status, 200);
-    token = String((loginRes.json as { token: string }).token);
+const demo = await buildDemoFieldTestRecords();
+const lastDemo = demo.at(-1);
+if (!lastDemo) throw new Error('demo dataset unexpectedly empty');
+
+async function makeLive(
+  seq: number,
+  previousHash: string,
+  recordUuid: string,
+  caseRef: string,
+  packageNo: string,
+  imageSha256: string | null = null,
+  operatorId = 'OFFICER-ADMIN',
+  operatorName = 'System Administrator',
+  officerRole: 'ADMIN' | 'SENIOR' | 'JUNIOR' = 'ADMIN',
+  isDemo = false
+): Promise<FieldTestRecordV1> {
+  return createFieldTestRecord({
+    seq,
+    record_uuid: recordUuid,
+    case_ref: caseRef,
+    package_no: packageNo,
+    lot_no: null,
+    reagent: 'marquis',
+    kit: { make: 'Sirchie', test_name: 'NARK II', lot_no: 'MK-24B-118', expiry: '2027-04-30' },
+    corrected_lab: { l: 21.2, a: 4.4, b: -2.2 },
+    delta_e_00: 1.2,
+    calibration_residual: { mean: 0.4, max: 1.1, grade: 'GOOD' },
+    outcome: 'CONSISTENT_WITH_REAGENT_POSITIVE',
+    confidence: 0.9,
+    conformal_set: ['POSITIVE'],
+    abstention_reason: null,
+    kinetics: null,
+    gps: { lat: 28.5562, lon: 77.0999, accuracy_m: 5, mocked: false },
+    image_sha256: imageSha256,
+    operator_id: operatorId,
+    operator_name: operatorName,
+    officer_role: officerRole,
+    created_at: `2026-09-20T10:${String(seq % 60).padStart(2, '0')}:00.000Z`,
+    is_demo: isDemo,
+    device_attestation: null,
+  }, previousHash);
+}
+
+before(async () => {
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  await seedDemo(db);
+  const admin = await login('admin', 'adminpass');
+  adminToken = String(admin.json.token);
+  juniorToken = String((await login('gill', 'parinaam-officer-2026')).json.token);
+  supervisorToken = String((await login('supervisor', 'parinaam-super-2026')).json.token);
+});
+
+after(async () => {
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  await db.close();
+});
+
+describe('Parinaam self-hosted API contract', () => {
+  it('exposes an unauthenticated health fact and protects records', async () => {
+    const health = await api('GET', '/api/v1/health', { token: null });
+    assert.equal(health.status, 200);
+    assert.equal(health.json.records, 15);
+    const denied = await api('GET', '/api/v1/records', { token: null });
+    assert.equal(denied.status, 401);
+    assert.equal((denied.json.error as { code: string }).code, 'AUTH_REQUIRED');
   });
 
-  after(() => {
-    server.close();
-    db.close();
+  it('lists and filters the seeded records and cases with pagination', async () => {
+    const records = await api('GET', '/api/v1/records?region=DZU&limit=2&offset=0');
+    assert.equal(records.status, 200);
+    const items = records.json.items as Record<string, unknown>[];
+    assert.equal(items.length, 2);
+    assert.equal((records.json.page as { total: number }).total, 5);
+    assert.ok(items.every((item) => item.region === 'DZU'));
+    const cases = await api('GET', '/api/v1/cases?status=ESCALATED');
+    const caseItems = cases.json.items as Record<string, unknown>[];
+    assert.equal(caseItems.length, 1);
+    assert.equal(caseItems[0].case_ref, 'NCB/BZU/CR-19/2026');
   });
 
-  it('health is open and reports the engine', async () => {
-    const r = await api('GET', '/api/v1/health');
-    assert.equal(r.status, 200);
-    assert.equal(r.json.ok, true);
-    assert.equal(r.json.engine, 'node:sqlite');
+  it('enforces junior attribution on reads while allowing the reviewer roles to see all', async () => {
+    const junior = await api('GET', '/api/v1/records?limit=200', { token: juniorToken });
+    const items = junior.json.items as Record<string, unknown>[];
+    assert.ok(items.length > 0);
+    assert.ok(items.every((item) => item.operator_id === 'IC-9007'));
+    const supervisor = await api('GET', '/api/v1/records?limit=200', { token: supervisorToken });
+    assert.equal(((supervisor.json.items as unknown[]) ?? []).length, 15);
   });
 
-  it('rejects bad credentials and unauthenticated writes', async () => {
-    const r = await api('POST', '/api/v1/auth/login', { body: { username: 'admin', password: 'wrongpass' } });
-    assert.equal(r.status, 401);
-    const w = await api('POST', '/api/v1/records', { body: wireRecord(sealed[0]) });
-    assert.equal(w.status, 401);
+  it('ingests a valid live record atomically and replays its idempotency receipt', async () => {
+    const record = await makeLive(16, lastDemo.chain_hash, '00000000-0000-4000-8000-000000000016', 'LIVE/API/CR-01/2026', 'P-1');
+    const first = await api('POST', '/api/v1/records', { body: record, idem: 'api-live-16' });
+    assert.equal(first.status, 201);
+    const replay = await api('POST', '/api/v1/records', { body: record, idem: 'api-live-16' });
+    assert.equal(replay.status, 201);
+    assert.equal(replay.json.status, 'stored');
+    const sameUuid = await api('POST', '/api/v1/records', { body: record, idem: 'api-live-16-new' });
+    assert.equal(sameUuid.status, 200);
+    assert.equal(sameUuid.json.status, 'already-stored');
   });
 
-  it('auth/me identifies the seeded SENIOR officer', async () => {
-    const r = await api('GET', '/api/v1/auth/me', { auth: true });
-    assert.equal(r.status, 200);
-    assert.equal(r.json.username, 'admin');
-    assert.equal(r.json.role, 'SENIOR');
+  it('rejects payload/hash tampering, UUID conflicts, key reuse, and demo uploads', async () => {
+    const currentHead = (await db.store.get<{ chain_hash: string }>('SELECT chain_hash FROM ledger_head WHERE id = 1'))?.chain_hash ?? lastDemo.chain_hash;
+    const demoUpload = await makeLive(17, currentHead, '00000000-0000-4000-8000-000000000017', 'LIVE/API/CR-01/2026', 'P-DEMO', null, 'OFFICER-ADMIN', 'System Administrator', 'ADMIN', true);
+    const demoRejected = await api('POST', '/api/v1/records', { body: demoUpload, idem: 'api-demo-upload' });
+    assert.equal(demoRejected.status, 400);
+    assert.equal((demoRejected.json.error as { code: string }).code, 'DEMO_RECORD_UPLOAD_FORBIDDEN');
+    const record = await makeLive(17, currentHead, '00000000-0000-4000-8000-000000000017', 'LIVE/API/CR-01/2026', 'P-1');
+    const tampered = { ...record, package_no: 'P-999' };
+    const bad = await api('POST', '/api/v1/records', { body: tampered, idem: 'api-bad-17' });
+    assert.equal(bad.status, 422);
+    assert.equal((bad.json.error as { code: string }).code, 'noncanonical-payload');
+    const conflictBody = await makeLive(99, lastDemo.chain_hash, '00000000-0000-4000-8000-000000000016', 'LIVE/API/CR-01/2026', 'P-2');
+    const conflict = await api('POST', '/api/v1/records', { body: conflictBody, idem: 'api-conflict' });
+    assert.equal(conflict.status, 409);
+    const keyReuse = await api('POST', '/api/v1/records', { body: conflictBody, idem: 'api-live-16' });
+    assert.equal(keyReuse.status, 409);
   });
 
-  it('ingests an app-sealed record — server recomputes the hash', async () => {
-    const r = await api('POST', '/api/v1/records', { body: wireRecord(sealed[0]), auth: true, idem: 'k-1' });
-    assert.equal(r.status, 201);
-    assert.equal(r.json.status, 'stored');
-    const checks = r.json.checks as string[];
-    assert.ok(checks.some((c) => c.startsWith('record_hash')));
-    // case auto-created at REPORTED
-    const c = await api('GET', '/api/v1/cases', { auth: true });
-    const cases = c.json.cases as { case_ref: string; case_status: string; records: number }[];
-    assert.equal(cases[0].case_ref, sealed[0].case_ref);
-    assert.equal(cases[0].case_status, 'REPORTED');
-    assert.equal(cases[0].records, 1);
+  it('holds a successor retryably until its predecessor is stored', async () => {
+    const predecessor = await makeLive(17, (await db.store.get<{ chain_hash: string }>('SELECT chain_hash FROM ledger_head WHERE id = 1'))?.chain_hash ?? lastDemo.chain_hash, '00000000-0000-4000-8000-000000000017', 'LIVE/API/CR-02/2026', 'P-1');
+    const successor = await makeLive(18, predecessor.chain_hash, '00000000-0000-4000-8000-000000000018', 'LIVE/API/CR-02/2026', 'P-2');
+    const early = await api('POST', '/api/v1/records', { body: successor, idem: 'api-successor-early' });
+    assert.equal(early.status, 409);
+    assert.equal((early.json.error as { code: string; retryable: boolean }).code, 'PREV_HASH_NOT_STORED');
+    assert.equal((early.json.error as { retryable: boolean }).retryable, true);
+    const first = await api('POST', '/api/v1/records', { body: predecessor, idem: 'api-predecessor' });
+    assert.equal(first.status, 201);
+    const second = await api('POST', '/api/v1/records', { body: successor, idem: 'api-successor-late' });
+    assert.equal(second.status, 201);
   });
 
-  it('idempotent replay (same key) returns 200 without re-inserting', async () => {
-    const r = await api('POST', '/api/v1/records', { body: wireRecord(sealed[0]), auth: true, idem: 'k-1' });
-    assert.equal(r.status, 200);
-    assert.equal(r.json.status, 'replayed');
-    const c = await api('GET', '/api/v1/cases', { auth: true });
-    assert.equal((c.json.cases as { records: number }[])[0].records, 1);
+  it('allows only reviewer roles to mutate case workflow metadata', async () => {
+    const underReview = await api('PATCH', '/api/v1/cases/LIVE%2FAPI%2FCR-01%2F2026/status', { body: { status: 'UNDER_REVIEW', note: 'Synthetic review marker.' } });
+    assert.equal(underReview.status, 200);
+    const forbidden = await api('PATCH', '/api/v1/cases/LIVE%2FAPI%2FCR-01%2F2026/status', { body: { status: 'REVIEWED' }, token: juniorToken });
+    assert.equal(forbidden.status, 403);
+    const panchnama = await api('PATCH', '/api/v1/cases/LIVE%2FAPI%2FCR-01%2F2026/panchnama', { body: { panchnama_ref: 'PAN/LIVE/2026/01' }, token: supervisorToken });
+    assert.equal(panchnama.status, 200);
+    const invalid = await api('PATCH', '/api/v1/cases/LIVE%2FAPI%2FCR-01%2F2026/status', { body: { status: 'REPORTED' }, token: supervisorToken });
+    assert.equal(invalid.status, 409);
   });
 
-  it('rejects tampered payload: hash-mismatch and non-canonical JCS', async () => {
-    const tampered = { ...wireRecord(sealed[1]), payload_jcs: (sealed[1].payloadJcs as string).replace('"P-2"', '"P-9"') };
-    const r = await api('POST', '/api/v1/records', { body: tampered, auth: true });
-    assert.equal(r.status, 422);
-    assert.match(String(r.json.error), /hash-mismatch|canonical/);
+  it('uploads and downloads only bytes matching the sealed image hash', async () => {
+    const bytes = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
+    const imageHash = await sha256HexBytes(bytes);
+    const record = await makeLive(19, (await db.store.get<{ chain_hash: string }>('SELECT chain_hash FROM ledger_head WHERE id = 1'))?.chain_hash ?? lastDemo.chain_hash, '00000000-0000-4000-8000-000000000019', 'LIVE/API/CR-03/2026', 'P-1', imageHash);
+    assert.equal((await api('POST', '/api/v1/records', { body: record, idem: 'api-image-record' })).status, 201);
+    const bad = await api('PUT', '/api/v1/records/00000000-0000-4000-8000-000000000019/evidence', { raw: new Uint8Array([1, 2, 3]), contentType: 'image/jpeg' });
+    assert.equal(bad.status, 422);
+    const stored = await api('PUT', '/api/v1/records/00000000-0000-4000-8000-000000000019/evidence', { raw: bytes, contentType: 'image/jpeg' });
+    assert.equal(stored.status, 201);
+    const downloaded = await api('GET', '/api/v1/records/00000000-0000-4000-8000-000000000019/evidence');
+    assert.equal(downloaded.status, 200);
+    assert.deepEqual([...(downloaded.bytes ?? [])], [...bytes]);
   });
 
-  it('same uuid + different content hits the conflict wall (409)', async () => {
-    const diff = { ...wireRecord(sealed[0]), record_hash: 'beef'.repeat(16) };
-    const r = await api('POST', '/api/v1/records', { body: diff, auth: true });
-    assert.equal(r.status, 409);
+  it('supports account approval, suspension, stats, export manifests, and authenticated SSE', async () => {
+    const created = await api('POST', '/api/v1/users', { body: { username: 'new-officer', password: 'temporary-pass-123', display_name: 'New Officer', role: 'JUNIOR', officer_code: 'NEW-001' } });
+    assert.equal(created.status, 201);
+    assert.equal(created.json.status, 'PENDING');
+    assert.equal((await login('new-officer', 'temporary-pass-123')).status, 401);
+    const approved = await api('PATCH', '/api/v1/users/new-officer', { body: { status: 'ACTIVE' } });
+    assert.equal(approved.status, 200);
+    const newLogin = await login('new-officer', 'temporary-pass-123');
+    assert.equal(newLogin.status, 200);
+    const stats = await api('GET', '/api/v1/stats');
+    assert.equal(stats.status, 200);
+    assert.ok((stats.json.totals as { records: number }).records >= 18);
+    const exported = await api('GET', '/api/v1/cases/LIVE%2FAPI%2FCR-01%2F2026/export?formats=pdf,docx,xlsx');
+    assert.equal(exported.status, 200);
+    assert.deepEqual(exported.json.requested_formats, ['pdf', 'docx', 'xlsx']);
+    const unauthenticatedStream = await fetch(base + '/api/v1/stream');
+    assert.equal(unauthenticatedStream.status, 401);
+    const juniorStream = await api('GET', '/api/v1/stream', { token: juniorToken });
+    assert.equal(juniorStream.status, 403);
+    const controller = new AbortController();
+    const stream = await fetch(base + '/api/v1/stream', { headers: { authorization: `Bearer ${adminToken}` }, signal: controller.signal });
+    assert.equal(stream.status, 200);
+    assert.match(stream.headers.get('content-type') ?? '', /text\/event-stream/);
+    controller.abort();
+    const suspended = await api('PATCH', '/api/v1/users/new-officer', { body: { status: 'SUSPENDED' } });
+    assert.equal(suspended.status, 200);
+    const afterSuspend = await api('GET', '/api/v1/auth/me', { token: String(newLogin.json.token) });
+    assert.equal(afterSuspend.status, 401);
   });
 
-  it('second record links via prev_hash; out-of-order is acceptable but reported', async () => {
-    const r = await api('POST', '/api/v1/records', { body: wireRecord(sealed[1]), auth: true });
-    assert.equal(r.status, 201);
-    assert.ok((r.json.checks as string[]).some((c) => c.includes('in sequence')));
+  it('keeps junior case detail and exports scoped to the junior attribution', async () => {
+    const head = await db.store.get<{ chain_hash: string }>('SELECT chain_hash FROM ledger_head WHERE id = 1');
+    assert.ok(head);
+    const adminRecord = await makeLive(20, head.chain_hash, '00000000-0000-4000-8000-000000000020', 'LIVE/API/CR-04/2026', 'P-1');
+    assert.equal((await api('POST', '/api/v1/records', { body: adminRecord, idem: 'api-visibility-admin-20' })).status, 201);
+    const juniorRecord = await makeLive(21, adminRecord.chain_hash, '00000000-0000-4000-8000-000000000021', 'LIVE/API/CR-04/2026', 'P-2', null, 'IC-9007', 'Intelligence Officer S. Gill', 'JUNIOR');
+    assert.equal((await api('POST', '/api/v1/records', { body: juniorRecord, idem: 'api-visibility-junior-21', token: juniorToken })).status, 201);
+
+    const detail = await api('GET', '/api/v1/cases/LIVE%2FAPI%2FCR-04%2F2026', { token: juniorToken });
+    assert.equal(detail.status, 200);
+    const visible = detail.json.records as Record<string, unknown>[];
+    assert.equal(visible.length, 1);
+    assert.equal(visible[0].operator_id, 'IC-9007');
+    const exported = await api('GET', '/api/v1/cases/LIVE%2FAPI%2FCR-04%2F2026/export', { token: juniorToken });
+    assert.equal(exported.status, 200);
+    assert.equal((exported.json.records as unknown[]).length, 1);
   });
 
-  it('verify endpoint re-checks a stored record honestly', async () => {
-    const r = await api('POST', '/api/v1/records/verify', { body: { uuid: sealed[0].record_uuid }, auth: true });
-    assert.equal(r.status, 200);
-    assert.equal(r.json.valid, true);
-    const checks = r.json.checks as string[];
-    assert.ok(checks.some((c) => c.startsWith('device_attestation')));
+  it('serializes competing demotions so one active administrator always remains', async () => {
+    const created = await api('POST', '/api/v1/users', {
+      body: { username: 'admin-two', password: 'temporary-pass-123', display_name: 'Second Administrator', role: 'ADMIN', officer_code: 'ADMIN-002' },
+    });
+    assert.equal(created.status, 201);
+    assert.equal((await api('PATCH', '/api/v1/users/admin-two', { body: { status: 'ACTIVE' } })).status, 200);
+
+    const actor: AuthedOfficer = {
+      id: 1,
+      officerCode: 'OFFICER-ADMIN',
+      username: 'admin',
+      displayName: 'System Administrator',
+      role: 'ADMIN',
+      status: 'ACTIVE',
+      token: adminToken,
+    };
+    const outcomes = await Promise.allSettled([
+      patchAccount(db, actor, 'admin', { role: 'SENIOR' }),
+      patchAccount(db, actor, 'admin-two', { role: 'SENIOR' }),
+    ]);
+    assert.equal(outcomes.filter((outcome) => outcome.status === 'fulfilled').length, 1);
+    const rejected = outcomes.find((outcome) => outcome.status === 'rejected');
+    assert.ok(rejected && rejected.status === 'rejected' && rejected.reason instanceof Error);
+    assert.match(rejected.reason.message, /last active administrator/i);
+    const activeAdmins = await db.store.get<{ count: number }>("SELECT COUNT(*) AS count FROM officers WHERE role = 'ADMIN' AND status = 'ACTIVE'");
+    assert.equal(Number(activeAdmins?.count ?? 0), 1);
   });
 
-  it('caseStatus lifecycle with RBAC: SENIOR moves it, JUNIOR may not', async () => {
-    const ref = sealed[0].case_ref;
-    const ok = await api('POST', `/api/v1/cases/${encodeURIComponent(ref)}/status`, { body: { status: 'UNDER_REVIEW', note: 'desk check' }, auth: true });
-    assert.equal(ok.status, 200);
-    assert.equal(ok.json.from, 'REPORTED');
-
-    await db.insertOfficer('jun', 'juniorpw', 'Junior Officer', 'JUNIOR');
-    const juniorToken = token;
-    const jr = await api('POST', '/api/v1/auth/login', { body: { username: 'jun', password: 'juniorpw' } });
-    assert.equal(jr.status, 200);
-    token = String(jr.json.token);
-    const denied = await api('POST', `/api/v1/cases/${encodeURIComponent(ref)}/status`, { body: { status: 'REVIEWED' }, auth: true });
-    assert.equal(denied.status, 403);
-    token = juniorToken; // back to admin for the remaining assertions
-    const detail = await api('GET', `/api/v1/cases/${encodeURIComponent(ref)}`, { auth: true });
-    assert.equal((detail.json.case as { case_status: string }).case_status, 'UNDER_REVIEW');
-    const bad = await api('POST', `/api/v1/cases/${encodeURIComponent('NOPE/XX/CR-9/2026')}/status`, { body: { status: 'REVIEWED' }, auth: true });
-    assert.equal(bad.status, 404);
-    const illegal = await api('POST', `/api/v1/cases/${encodeURIComponent(ref)}/status`, { body: { status: 'BOGUS' }, auth: true });
-    assert.equal(illegal.status, 400);
-  });
-
-  it('records list/detail round-trip by case', async () => {
-    const l = await api('GET', `/api/v1/records?case_ref=${encodeURIComponent(sealed[0].case_ref)}`, { auth: true });
-    assert.equal((l.json.records as unknown[]).length, 2);
-    const d = await api('GET', `/api/v1/records/${sealed[1].record_uuid}`, { auth: true });
-    assert.equal((d.json.record as { package_no: string }).package_no, sealed[1].package_no);
-    assert.equal((d.json.stored as { case_status: string }).case_status, 'UNDER_REVIEW');
-  });
-
-  it('SSE stream pushes an ingest event to a live subscriber', async () => {
-    const events: string[] = [];
-    const ac = new AbortController();
-    const consume = (async () => {
-      const res = await fetch(base + '/api/v1/stream', { signal: ac.signal });
-      const reader = res.body?.getReader();
-      const dec = new TextDecoder();
-      if (!reader) return;
-      while (events.length < 2 && events.every((e) => !e.includes('record-ingested'))) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        events.push(dec.decode(value, { stream: true }));
-      }
-      ac.abort();
-    })();
-    await new Promise((r) => setTimeout(r, 60));
-    const rr = await api('POST', '/api/v1/records', { body: wireRecord(sealed[0]), auth: true, idem: 'sse-k' });
-    assert.equal(rr.status, 200); // replayed via key, but hello event still precedes; ingest of already-stored → no publish. Push a NEW one instead:
-    void rr;
-    const fresh = { ...wireRecord(sealed[1]), record_uuid: 'sse-fresh-uuid-1' };
-    const r2 = await api('POST', '/api/v1/records', { body: fresh, auth: true });
-    assert.equal(r2.status, 201);
-    await consume;
-    const all = events.join('');
-    assert.ok(all.includes('hello') && all.includes('record-ingested'), 'hello + ingest frame received');
-  });
-
-  it('logout revokes the token', async () => {
-    const out = await api('POST', '/api/v1/auth/logout', { auth: true });
-    assert.equal(out.status, 200);
-    const me = await api('GET', '/api/v1/auth/me', { auth: true });
-    assert.equal(me.status, 401);
-    token = ''; // further tests none
+  it('logs out and revokes the bearer token', async () => {
+    const logout = await api('POST', '/api/v1/auth/logout');
+    assert.equal(logout.status, 200);
+    const after = await api('GET', '/api/v1/auth/me', { token: adminToken });
+    assert.equal(after.status, 401);
   });
 });

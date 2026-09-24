@@ -1,29 +1,41 @@
-/**
- * Parinaam API — in-process event bus (v2 phase D). Feeds GET /api/v1/stream (SSE)
- * so the separate web repo can render live ingest/review activity without polling.
- */
+/** In-process event bus for the single self-hosted API process. */
+
+export type BusEventType = 'record-ingested' | 'case-status' | 'case-panchnama';
 
 export interface BusEvent {
-  type: 'record-ingested' | 'case-status';
+  id: string;
+  type: BusEventType;
   payload: Record<string, unknown>;
   at: string;
 }
 
-type Listener = (e: BusEvent) => void;
+type Listener = (event: BusEvent) => void;
 const listeners = new Set<Listener>();
+let eventSequence = 0;
 
-export function subscribe(l: Listener): () => void {
-  listeners.add(l);
-  return () => listeners.delete(l);
+export function subscribe(listener: Listener): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
 }
 
-export function publish(type: BusEvent['type'], payload: Record<string, unknown>): void {
-  const e: BusEvent = { type, payload, at: new Date().toISOString() };
-  for (const l of [...listeners]) {
+export function publish(type: BusEventType, payload: Record<string, unknown>): BusEvent {
+  eventSequence += 1;
+  const event: BusEvent = {
+    id: `${Date.now().toString(36)}-${eventSequence.toString(36)}`,
+    type,
+    payload,
+    at: new Date().toISOString(),
+  };
+  for (const listener of [...listeners]) {
     try {
-      l(e);
+      listener(event);
     } catch {
-      listeners.delete(l);
+      listeners.delete(listener);
     }
   }
+  return event;
+}
+
+export function subscriberCount(): number {
+  return listeners.size;
 }

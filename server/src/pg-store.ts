@@ -1,153 +1,330 @@
 /**
- * Parinaam API — PostgreSQL store adapter.
- * Speaks the exact same portable-SQL dialect as the sqlite store (see db.ts header
- * rules); the only PG-specific work here is `?` → `$n` placeholder rewriting and the
- * schema types. One pool, max 1 connection: record ingestion computes seq/chain from
- * the previous row, so serialising through the pool is also the correctness guard.
+ * PostgreSQL adapter for the shared SqlStore contract.
+ *
+ * Portable SQL uses `?` placeholders. Rewriting is SQL-aware: question marks in
+ * string/identifier literals, dollar-quoted bodies, and comments are preserved.
+ * Transactions reserve one pool client and expose a client-bound store.
  */
 
-import type { SqlStore } from './db.ts';
+import { Pool, types } from 'pg';
+import type { PoolClient } from 'pg';
+import type { SqlRunResult, SqlStore } from './storage.ts';
 
-const SCHEMA_PG = `
-CREATE TABLE IF NOT EXISTS officers (
-  id           BIGSERIAL PRIMARY KEY,
-  username     TEXT NOT NULL UNIQUE,
-  pass_salt    TEXT NOT NULL,
-  pass_hash    TEXT NOT NULL,
-  display_name TEXT NOT NULL,
-  role         TEXT NOT NULL CHECK (role IN ('JUNIOR','SENIOR','ADMIN','SUPERVISOR','JUDICIARY')),
-  created_at   TEXT NOT NULL
-);
+interface PgQueryResult {
+  rows: unknown[];
+  rowCount: number | null;
+}
 
-CREATE TABLE IF NOT EXISTS sessions (
-  token      TEXT PRIMARY KEY,
-  officer_id BIGINT NOT NULL REFERENCES officers(id) ON DELETE CASCADE,
-  created_at TEXT NOT NULL,
-  expires_at TEXT NOT NULL
-);
+interface PgExecutor {
+  query(text: string, values?: unknown[]): Promise<PgQueryResult>;
+}
 
-CREATE TABLE IF NOT EXISTS field_test (
-  seq                BIGINT NOT NULL,
-  record_uuid        TEXT PRIMARY KEY,
-  case_ref           TEXT NOT NULL,
-  package_no         TEXT NOT NULL,
-  operator_id        TEXT NOT NULL,
-  outcome            TEXT NOT NULL,
-  confidence         DOUBLE PRECISION NOT NULL,
-  created_at         TEXT NOT NULL,
-  received_at        TEXT NOT NULL,
-  payload_jcs        TEXT NOT NULL,
-  record_hash        TEXT NOT NULL,
-  prev_hash          TEXT NOT NULL,
-  chain_hash         TEXT NOT NULL,
-  device_attestation TEXT,
-  image_ref          TEXT,
-  image_sha256       TEXT,
-  body               TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_ft_case ON field_test (case_ref, created_at);
-CREATE INDEX IF NOT EXISTS idx_ft_seq ON field_test (seq);
+function poolExecutor(pool: Pool): PgExecutor {
+  return {
+    query: async (text, values): Promise<PgQueryResult> => {
+      const result = await pool.query(text, values);
+      return { rows: result.rows, rowCount: result.rowCount };
+    },
+  };
+}
 
-CREATE TABLE IF NOT EXISTS idempotency (
-  key         TEXT PRIMARY KEY,
-  record_uuid TEXT NOT NULL,
-  created_at  TEXT NOT NULL
-);
+function clientExecutor(client: PoolClient): PgExecutor {
+  return {
+    query: async (text, values): Promise<PgQueryResult> => {
+      const result = await client.query(text, values);
+      return { rows: result.rows, rowCount: result.rowCount };
+    },
+  };
+}
 
-CREATE TABLE IF NOT EXISTS cases (
-  case_ref      TEXT PRIMARY KEY,
-  case_status   TEXT NOT NULL,
-  first_seen    TEXT NOT NULL,
-  last_seen     TEXT NOT NULL,
-  panchnama_ref TEXT
-);
+/**
+ * Replace unquoted PostgreSQL placeholders with `$1`, `$2`, … .
+ * Exported for deterministic adapter tests.
+ */
+export function rewritePositionalPlaceholders(sql: string, expectedParameterCount?: number): string {
+  let output = '';
+  let placeholder = 0;
+  let index = 0;
+  let state: 'normal' | 'single' | 'double' | 'backtick' | 'line-comment' | 'block-comment' = 'normal';
+  let blockDepth = 0;
+  let singleBackslashEscapes = false;
 
-CREATE TABLE IF NOT EXISTS case_status_history (
-  id          BIGSERIAL PRIMARY KEY,
-  case_ref    TEXT NOT NULL,
-  from_status TEXT NOT NULL,
-  to_status   TEXT NOT NULL,
-  actor       TEXT NOT NULL,
-  at          TEXT NOT NULL,
-  note        TEXT
-);
+  while (index < sql.length) {
+    const character = sql[index];
+    const next = sql[index + 1];
 
-CREATE TABLE IF NOT EXISTS server_audit (
-  id         BIGSERIAL PRIMARY KEY,
-  actor      TEXT NOT NULL,
-  action     TEXT NOT NULL,
-  subject    TEXT,
-  at         TEXT NOT NULL,
-  detail     TEXT
-);
-`;
+    if (state === 'single') {
+      output += character;
+      index += 1;
+      if (character === "'" && next === "'") {
+        output += next;
+        index += 1;
+      } else if (character === '\\' && singleBackslashEscapes && next !== undefined) {
+        output += next;
+        index += 1;
+      } else if (character === "'") {
+        state = 'normal';
+        singleBackslashEscapes = false;
+      }
+      continue;
+    }
 
-export const DEFAULT_DATABASE_URL = 'postgres://parinaam:parinaam@localhost:55433/parinaam';
+    if (state === 'double') {
+      output += character;
+      index += 1;
+      if (character === '"' && next === '"') {
+        output += next;
+        index += 1;
+      } else if (character === '"') {
+        state = 'normal';
+      }
+      continue;
+    }
+
+    if (state === 'backtick') {
+      output += character;
+      index += 1;
+      if (character === '`' && next === '`') {
+        output += next;
+        index += 1;
+      } else if (character === '`') {
+        state = 'normal';
+      }
+      continue;
+    }
+
+    if (state === 'line-comment') {
+      output += character;
+      index += 1;
+      if (character === '\n' || character === '\r') state = 'normal';
+      continue;
+    }
+
+    if (state === 'block-comment') {
+      if (character === '/' && next === '*') {
+        output += '/*';
+        index += 2;
+        blockDepth += 1;
+      } else if (character === '*' && next === '/') {
+        output += '*/';
+        index += 2;
+        blockDepth -= 1;
+        if (blockDepth === 0) state = 'normal';
+      } else {
+        output += character;
+        index += 1;
+      }
+      continue;
+    }
+
+    if ((character === 'e' || character === 'E') && next === "'") {
+      output += `${character}${next}`;
+      index += 2;
+      state = 'single';
+      singleBackslashEscapes = true;
+      continue;
+    }
+    if (character === "'") {
+      output += character;
+      index += 1;
+      state = 'single';
+      singleBackslashEscapes = false;
+      continue;
+    }
+    if (character === '"') {
+      output += character;
+      index += 1;
+      state = 'double';
+      continue;
+    }
+    if (character === '`') {
+      output += character;
+      index += 1;
+      state = 'backtick';
+      continue;
+    }
+    if (character === '-' && next === '-') {
+      output += '--';
+      index += 2;
+      state = 'line-comment';
+      continue;
+    }
+    if (character === '/' && next === '*') {
+      output += '/*';
+      index += 2;
+      blockDepth = 1;
+      state = 'block-comment';
+      continue;
+    }
+    if (character === '$') {
+      const match = /^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/.exec(sql.slice(index));
+      if (match) {
+        const delimiter = match[0];
+        const closing = sql.indexOf(delimiter, index + delimiter.length);
+        if (closing < 0) throw new Error('unterminated PostgreSQL dollar-quoted string');
+        const end = closing + delimiter.length;
+        output += sql.slice(index, end);
+        index = end;
+        continue;
+      }
+    }
+    if (character === '?') {
+      if (next === '|' || next === '&') {
+        output += character;
+        index += 1;
+        continue;
+      }
+      placeholder += 1;
+      output += `$${placeholder}`;
+      index += 1;
+      continue;
+    }
+
+    output += character;
+    index += 1;
+  }
+
+  if (state === 'single' || state === 'double' || state === 'backtick' || state === 'block-comment') {
+    throw new Error('unterminated PostgreSQL quoted text or comment');
+  }
+  if (expectedParameterCount !== undefined && placeholder !== expectedParameterCount) {
+    throw new Error(`SQL parameter count mismatch: expected ${placeholder}, received ${expectedParameterCount}`);
+  }
+  return output;
+}
+
+function assertOpen(closed: boolean): void {
+  if (closed) throw new Error('PostgreSQL store is closed');
+}
+
+class PgTransactionStore implements SqlStore {
+  readonly engine = 'postgres' as const;
+  private readonly executor: PgExecutor;
+
+  constructor(executor: PgExecutor) {
+    this.executor = executor;
+  }
+
+  async get<T>(sql: string, ...params: unknown[]): Promise<T | undefined> {
+    const result = await this.executor.query(rewritePositionalPlaceholders(sql, params.length), params);
+    return result.rows[0] as T | undefined;
+  }
+
+  async all<T>(sql: string, ...params: unknown[]): Promise<T[]> {
+    const result = await this.executor.query(rewritePositionalPlaceholders(sql, params.length), params);
+    return result.rows as T[];
+  }
+
+  async run(sql: string, ...params: unknown[]): Promise<SqlRunResult> {
+    const result = await this.executor.query(rewritePositionalPlaceholders(sql, params.length), params);
+    const rowCount = result.rowCount ?? 0;
+    return { rowCount, changes: rowCount, lastInsertRowid: null };
+  }
+
+  transaction<T>(_fn: (store: SqlStore) => Promise<T>): Promise<T> {
+    return Promise.reject(new Error('Nested PostgreSQL transactions are not supported; use the current transaction-bound store'));
+  }
+
+  close(): Promise<void> {
+    return Promise.reject(new Error('A transaction-bound PostgreSQL store cannot be closed independently'));
+  }
+}
 
 export class PgStore implements SqlStore {
   readonly engine = 'postgres' as const;
-  // pg types are ambient-free here: the package is loaded dynamically so the
-  // sqlite/test path never requires it at runtime.
-  private pool: {
-    query(text: string, values?: unknown[]): Promise<{ rows: unknown[] }>;
-    end(): Promise<void>;
-  };
+  private readonly pool: Pool;
+  private readonly executor: PgExecutor;
+  private closed = false;
+  private closing = false;
 
-  private constructor(pool: PgStore['pool']) {
+  private constructor(pool: Pool) {
     this.pool = pool;
+    this.executor = poolExecutor(pool);
   }
 
-  static async connect(url?: string): Promise<SqlStore> {
-    const target = url ?? DEFAULT_DATABASE_URL;
-    const pg = (await import('pg')) as unknown as {
-      default?: {
-        Pool: new (c: Record<string, unknown>) => PgStore['pool'];
-        types?: { setTypeParser: (oid: number, fn: (val: string) => unknown) => void };
-      };
-      Pool?: new (c: Record<string, unknown>) => PgStore['pool'];
-      types?: { setTypeParser: (oid: number, fn: (val: string) => unknown) => void };
-    };
-    const types = pg.default?.types ?? pg.types;
-    if (types?.setTypeParser) {
-      types.setTypeParser(20, (v: string) => parseInt(v, 10)); // int8 / BIGINT -> number
+  static async connect(url?: string): Promise<PgStore> {
+    const target = url ?? process.env.DATABASE_URL;
+    if (!target) {
+      throw new Error('PostgreSQL storage requires DATABASE_URL or an explicit PostgreSQL target');
     }
-    const Pool = (pg.default?.Pool ?? pg.Pool)!;
-    const pool = new Pool({ connectionString: target, max: 1 });
+
+    const configuredMax = Number(process.env.PARINAAM_DB_POOL_MAX ?? '10');
+    const max = Number.isSafeInteger(configuredMax) && configuredMax >= 2 && configuredMax <= 50
+      ? configuredMax
+      : 10;
+    const pool = new Pool({
+      connectionString: target,
+      max,
+      min: 0,
+      application_name: 'parinaam-server',
+      statement_timeout: 30_000,
+    });
+    // An idle pool error must have a listener or Node emits an unhandled event.
+    // Keep details out of logs because driver errors can contain connection metadata.
+    pool.on('error', () => undefined);
+
+    types.setTypeParser(20, (value) => Number.parseInt(value, 10));
     const store = new PgStore(pool);
-    for (const stmt of SCHEMA_PG.split(';').map((s) => s.trim()).filter((s) => s.length > 0)) {
-      await pool.query(stmt);
-    }
     try {
-      await pool.query('ALTER TABLE cases ADD COLUMN IF NOT EXISTS panchnama_ref TEXT;');
-      await pool.query('ALTER TABLE officers DROP CONSTRAINT IF EXISTS officers_role_check;');
-      await pool.query("ALTER TABLE officers ADD CONSTRAINT officers_role_check CHECK (role IN ('JUNIOR','SENIOR','ADMIN','SUPERVISOR','JUDICIARY'));");
+      const client = await pool.connect();
+      client.release();
     } catch {
-      /* already up to date */
+      await pool.end();
+      throw new Error('unable to connect to PostgreSQL');
     }
     return store;
   }
 
-  /** Portable dialect uses `?`; node-postgres wants $1..$n. No literal '?' exists in SQL text. */
-  private static positional(sql: string): string {
-    let n = 0;
-    return sql.replace(/\?/g, () => `$${++n}`);
+  static positional(sql: string): string {
+    return rewritePositionalPlaceholders(sql);
   }
 
   async get<T>(sql: string, ...params: unknown[]): Promise<T | undefined> {
-    const res = await this.pool.query(PgStore.positional(sql), params);
-    return res.rows[0] as T | undefined;
+    assertOpen(this.closed || this.closing);
+    const result = await this.executor.query(rewritePositionalPlaceholders(sql, params.length), params);
+    return result.rows[0] as T | undefined;
   }
 
   async all<T>(sql: string, ...params: unknown[]): Promise<T[]> {
-    const res = await this.pool.query(PgStore.positional(sql), params);
-    return res.rows as T[];
+    assertOpen(this.closed || this.closing);
+    const result = await this.executor.query(rewritePositionalPlaceholders(sql, params.length), params);
+    return result.rows as T[];
   }
 
-  async run(sql: string, ...params: unknown[]): Promise<void> {
-    await this.pool.query(PgStore.positional(sql), params);
+  async run(sql: string, ...params: unknown[]): Promise<SqlRunResult> {
+    assertOpen(this.closed || this.closing);
+    const result = await this.executor.query(rewritePositionalPlaceholders(sql, params.length), params);
+    const rowCount = result.rowCount ?? 0;
+    return { rowCount, changes: rowCount, lastInsertRowid: null };
+  }
+
+  async transaction<T>(fn: (store: SqlStore) => Promise<T>): Promise<T> {
+    assertOpen(this.closed || this.closing);
+    const client = await this.pool.connect();
+    const transactionStore = new PgTransactionStore(clientExecutor(client));
+    let failed = false;
+    try {
+      await client.query('BEGIN');
+      const result = await fn(transactionStore);
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      failed = true;
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        // Releasing a failed client with an error below also destroys it.
+      }
+      throw error;
+    } finally {
+      client.release(failed ? true : undefined);
+    }
   }
 
   async close(): Promise<void> {
+    if (this.closed) return;
+    this.closing = true;
     await this.pool.end();
+    this.closed = true;
   }
 }

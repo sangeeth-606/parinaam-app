@@ -10,9 +10,8 @@ import assert from 'node:assert/strict';
 const { createHttpSyncClient } = await import('../../src/sync/http-client.ts');
 const { toFieldTestRecord } = await import('../../src/sync/field-test-record.ts');
 const { GENESIS_PREV_HASH } = await import('../../src/crypto/hash-chain.ts');
-const { seedLedgerRecords, buildSealedRecord } = {
+const { seedLedgerRecords } = {
   seedLedgerRecords: (await import('../../src/repo/fixtures.ts')).seedLedgerRecords,
-  buildSealedRecord: (await import('../../src/services/analysis-pipeline.ts')).buildSealedRecord,
 };
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -20,10 +19,7 @@ function jsonResponse(status: number, body: unknown): Response {
 }
 
 // One REAL sealed fixture record shared by all transport tests.
-const [fixtureSource] = await seedLedgerRecords();
-const { sealPayload: fixtureSealPayload, ...fixtureCore } = fixtureSource;
-const { seal: fixtureSeal } = await buildSealedRecord(fixtureSealPayload, GENESIS_PREV_HASH, fixtureSource.record_uuid);
-const SEALED = { ...fixtureCore, ...fixtureSeal, prevHash: GENESIS_PREV_HASH, syncStatus: 'queued' } as never;
+const [SEALED] = await seedLedgerRecords();
 
 describe('Phase E http-client — transport edges', () => {
   it('uploads a real app-sealed record whose record_hash equals sha256(payload_jcs)', async () => {

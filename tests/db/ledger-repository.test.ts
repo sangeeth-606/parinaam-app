@@ -42,8 +42,9 @@ describe('v2 persistence — SQLite as the ledger source of truth', () => {
 
   it('first seed hydrates the fixture chain and persists it to the file', async () => {
     const st = useLedgerStore.getState();
-    assert.equal(st.records.length, 9);
+    assert.equal(st.records.length, 15);
     assert.ok(st.records.every((r) => r.isDemo));
+    assert.ok(st.records.every((r) => r.syncStatus === 'demo-seed'));
     assert.ok(st.verification?.valid);
     assert.equal(st.persistence?.kind, 'node-sqlite');
     assert.equal(ledgerDbMeta()?.pathLabel, dbFile);
@@ -55,7 +56,7 @@ describe('v2 persistence — SQLite as the ledger source of truth', () => {
     const st = useLedgerStore.getState();
     const base = st.records[0];
     const created = await st.appendRecord({
-      record_uuid: 'test-append-uuid-1',
+      record_uuid: '00000000-0000-4000-8000-000000000001',
       case_ref: 'NCB/TEST/CR-99/2026',
       package_no: 'P-1',
       reagent: base.reagent,
@@ -68,14 +69,13 @@ describe('v2 persistence — SQLite as the ledger source of truth', () => {
       created_at: new Date().toISOString(),
       operator: 'OFFICER-ADMIN',
       operatorName: 'Admin (Demo Officer)',
-      officerRole: 'SENIOR',
-      sealPayload: { case_ref: 'NCB/TEST/CR-99/2026', package_no: 'P-1' },
+      officerRole: 'ADMIN',
     });
     assert.equal(created.syncStatus, 'queued');
-    assert.equal(created.seq, 10);
+    assert.equal(created.seq, 16);
     assert.equal(await pendingCountDb(), 1);
 
-    useLedgerStore.getState().markSynced(['test-append-uuid-1']);
+    useLedgerStore.getState().markSynced(['00000000-0000-4000-8000-000000000001']);
     await tick(50);
     assert.equal(await pendingCountDb(), 0);
   });
@@ -84,14 +84,14 @@ describe('v2 persistence — SQLite as the ledger source of truth', () => {
     const beforeRecords = useLedgerStore.getState().records;
     useLedgerStore.setState({ records: [], seeded: false, verification: null });
     const { records: afterRecords } = await initLedgerDb({ nodeFile: dbFile });
-    assert.equal(afterRecords.length, 10);
+    assert.equal(afterRecords.length, 16);
     for (let i = 0; i < afterRecords.length; i++) {
       assert.equal(afterRecords[i].payloadJcs, beforeRecords[i].payloadJcs);
       assert.equal(afterRecords[i].chainHash, beforeRecords[i].chainHash);
     }
     // appended record came back already SYNCED (synced_record membership, not memory)
-    assert.equal(afterRecords[9].syncStatus, 'synced');
-    assert.equal(afterRecords[9].operatorName, 'Admin (Demo Officer)');
+    assert.equal(afterRecords[15].syncStatus, 'synced');
+    assert.equal(afterRecords[15].operatorName, 'Admin (Demo Officer)');
     useLedgerStore.setState({ records: afterRecords, seeded: true });
     const v = await useLedgerStore.getState().reverify();
     assert.ok(v.valid);
@@ -101,11 +101,11 @@ describe('v2 persistence — SQLite as the ledger source of truth', () => {
     const db = new DatabaseSync(dbFile);
     try {
       assert.throws(
-        () => db.prepare('UPDATE field_test SET package_no = ? WHERE record_uuid = ?').run('P-66', 'test-append-uuid-1'),
+        () => db.prepare('UPDATE field_test SET package_no = ? WHERE record_uuid = ?').run('P-66', '00000000-0000-4000-8000-000000000001'),
         /append-only/
       );
       assert.throws(
-        () => db.prepare('DELETE FROM field_test WHERE record_uuid = ?').run('test-append-uuid-1'),
+        () => db.prepare('DELETE FROM field_test WHERE record_uuid = ?').run('00000000-0000-4000-8000-000000000001'),
         /append-only/
       );
     } finally {
@@ -115,7 +115,7 @@ describe('v2 persistence — SQLite as the ledger source of truth', () => {
 
   it('search: DB answers (FTS5 when compiled, LIKE otherwise) for case refs and kits', async () => {
     const byCase = await searchRecordUuids('CR-14');
-    assert.ok(byCase && byCase.length === 6, 'six CR-14 fixture records findable');
+    assert.ok(byCase && byCase.length === 5, 'five CR-14 fixture records findable');
     const byKit = await searchRecordUuids('NARK');
     assert.ok(byKit && byKit.length >= 7, 'kit names findable');
     const none = await searchRecordUuids('ZZZ-NOPE');
@@ -158,8 +158,9 @@ describe('v2 persistence — demo reset replaces the file, never mutates rows', 
     useLedgerStore.setState({ records: [], seeded: false, verification: null });
     await useLedgerStore.getState().seed();
     const st = useLedgerStore.getState();
-    assert.equal(st.records.length, 9);
+    assert.equal(st.records.length, 15);
     assert.ok(st.records.every((r) => r.isDemo));
+    assert.ok(st.records.every((r) => r.syncStatus === 'demo-seed'));
     assert.ok(st.verification?.valid);
     assert.equal(await pendingCountDb(), 0);
     await markSyncedDb('noop'); // must not throw against fresh queue table

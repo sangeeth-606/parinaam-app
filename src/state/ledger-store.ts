@@ -28,7 +28,8 @@ import {
   type HashChainRecordItem,
 } from '../crypto/hash-chain.ts';
 import { buildSealedRecord } from '../services/analysis-pipeline.ts';
-import { seedLedgerRecords, type LedgerSeed } from '../repo/fixtures.ts';
+import { sealedPayloadFromCore, type FieldTestOfficerRole } from '../contracts/field-test-record.ts';
+import { seedLedgerRecords } from '../repo/fixtures.ts';
 import {
   initLedgerDb,
   ledgerDbMeta,
@@ -74,19 +75,23 @@ export interface LedgerRecord {
   chainHash: string;
   deviceAttestation: string | null;
   sealState: SealOutcome['sealState'];
-  syncStatus: 'queued' | 'synced';
+  syncStatus: 'demo-seed' | 'queued' | 'synced';
 }
 
 type SealOutcome = Awaited<ReturnType<typeof buildSealedRecord>> extends { seal: infer S } ? S : never;
 
-/** Stored content minus chain/sequence fields, plus the exact object to canonicalize. */
-export interface AppendInput
-  extends Omit<
-    LedgerRecord,
-    'seq' | 'syncStatus' | 'payloadJcs' | 'payloadSha256' | 'prevHash' | 'chainHash' | 'deviceAttestation' | 'sealState'
-  > {
-  sealPayload: Record<string, unknown>;
-}
+/** Core facts appended by the capture flow; the store builds the final seal. */
+export type AppendInput = Omit<
+  LedgerRecord,
+  | 'seq'
+  | 'syncStatus'
+  | 'payloadJcs'
+  | 'payloadSha256'
+  | 'prevHash'
+  | 'chainHash'
+  | 'deviceAttestation'
+  | 'sealState'
+>;
 
 export type { CalibrationResidual };
 
@@ -119,25 +124,9 @@ function chainItems(records: LedgerRecord[]): HashChainRecordItem[] {
   }));
 }
 
-/** Build the demo fixture chain (canonical JSON + real hashing, flagged isDemo). */
+/** Hydrate the shared deterministic demo chain without re-sealing it. */
 async function fixtureRecords(): Promise<LedgerRecord[]> {
-  const drafts: LedgerSeed[] = await seedLedgerRecords();
-  const records: LedgerRecord[] = [];
-  let prevHash = GENESIS_PREV_HASH;
-  for (const d of drafts) {
-    const { sealPayload, ...core } = d;
-    const { seal } = await buildSealedRecord(sealPayload, prevHash, d.record_uuid);
-    records.push({
-      ...core,
-      ...seal,
-      isDemo: true,
-      seq: records.length + 1,
-      prevHash,
-      syncStatus: 'synced',
-    });
-    prevHash = seal.chainHash;
-  }
-  return records;
+  return seedLedgerRecords();
 }
 
 export const useLedgerStore = create<LedgerState>((set, get) => ({
@@ -165,9 +154,6 @@ export const useLedgerStore = create<LedgerState>((set, get) => ({
         records = await fixtureRecords();
         for (const r of records) {
           await persistRecord(r);
-          // Demo rows are presented SYNCED (they ship with the build) — record that fact
-          // in the DB itself so restarts tell the same story as this session.
-          await markSyncedDb(r.record_uuid, 'preinstalled-demo-fixture');
         }
       }
     } catch (err) {
@@ -191,12 +177,55 @@ export const useLedgerStore = create<LedgerState>((set, get) => ({
       state.records.length > 0
         ? state.records[state.records.length - 1].chainHash
         : GENESIS_PREV_HASH;
-    const { sealPayload, ...core } = input;
-    const { seal } = await buildSealedRecord(sealPayload, prevHash, input.record_uuid);
+    if (!input.operatorName || !input.officerRole) {
+      throw new Error('operatorName and officerRole are required to seal a record');
+    }
+    const seq = state.records.length + 1;
+    const sealPayload = sealedPayloadFromCore({
+      seq,
+      record_uuid: input.record_uuid,
+      case_ref: input.case_ref,
+      package_no: input.package_no,
+      lot_no: input.lot_no ?? null,
+      reagent: input.reagent,
+      kit: {
+        make: input.kit_make ?? null,
+        test_name: input.kit_test_name ?? null,
+        lot_no: input.kit_lot_no ?? null,
+        expiry: input.kit_expiry ?? null,
+      },
+      corrected_lab: input.lab,
+      delta_e_00: input.deltaE,
+      calibration_residual: {
+        mean: input.residual.meanDeltaE,
+        max: input.residual.maxDeltaE,
+        grade: input.residual.grade === 'REJECT' ? 'DEGRADED' : input.residual.grade,
+      },
+      outcome: input.outcome,
+      confidence: input.confidence,
+      conformal_set: input.conformalSet,
+      abstention_reason: input.abstentionReason ?? null,
+      kinetics: input.kinetics?.length ? input.kinetics : null,
+      gps: input.gps
+        ? {
+            lat: input.gps.lat,
+            lon: input.gps.lon,
+            accuracy_m: input.gps.accuracyM ?? null,
+            mocked: input.gps.mocked,
+          }
+        : null,
+      image_sha256: input.imageSha256 ?? null,
+      operator_id: input.operator,
+      operator_name: input.operatorName,
+      officer_role: input.officerRole as FieldTestOfficerRole,
+      created_at: input.created_at,
+      is_demo: input.isDemo ?? false,
+    });
+    const { seal } = await buildSealedRecord(sealPayload as unknown as Record<string, unknown>, prevHash, input.record_uuid);
     const record: LedgerRecord = {
-      ...core,
+      ...input,
       ...seal,
-      seq: state.records.length + 1,
+      seq,
       prevHash,
       syncStatus: 'queued',
     };
@@ -250,12 +279,17 @@ export const useLedgerStore = create<LedgerState>((set, get) => ({
   },
 
   markSynced: (uuids) => {
+    const eligible = new Set(
+      get().records
+        .filter((record) => uuids.includes(record.record_uuid) && record.syncStatus === 'queued')
+        .map((record) => record.record_uuid)
+    );
     set((s) => ({
       records: s.records.map((r) =>
-        uuids.includes(r.record_uuid) ? { ...r, syncStatus: 'synced' } : r
+        eligible.has(r.record_uuid) ? { ...r, syncStatus: 'synced' } : r
       ),
     }));
-    for (const uuid of uuids) void markSyncedDb(uuid).catch(() => undefined);
+    for (const uuid of eligible) void markSyncedDb(uuid).catch(() => undefined);
   },
 }));
 

@@ -157,6 +157,7 @@ export async function openAppDatabase(opts: OpenOptions = {}): Promise<DbOpenRes
     const { DatabaseSync } = await import('node:sqlite');
     const file = opts.nodeFile ?? process.env.PARINAAM_DB_FILE ?? 'parinaam.local.db';
     const handle = new DatabaseSync(file);
+    handle.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;');
     const adapter = new NodeAdapter(handle, file);
     return { adapter, encryption: 'none', fts5: await probeFts(adapter) };
   }
@@ -172,6 +173,7 @@ export async function openAppDatabase(opts: OpenOptions = {}): Promise<DbOpenRes
     }
     const db = await SQLite.openDatabaseAsync('parinaam.db');
     if (keyHex) await db.execAsync(cipherKeyPragma(keyHex));
+    await db.execAsync('PRAGMA foreign_keys = ON;');
     const adapter = new ExpoAdapter(
       db as unknown as ExpoDb,
       'parinaam.db (app-private)',
