@@ -1,263 +1,298 @@
-# Parinaam Backend API & Storage Architecture (`server/`)
+# Parinaam self-hosted API
 
-The **in-repo backend** for Parinaam. It serves both the React Native officer mobile application (`parinaam-app`) and the web supervision dashboard (`parinaam-web`).
+This directory contains the API used by the Parinaam officer app and by the
+separate `parinaam-web` dashboard. It is a small Node.js service with two local
+storage engines:
 
-Designed for **complete self-hosting without cloud or third-party online platforms**:
-- **Zero cloud platforms**: No external BaaS, no Supabase, no SaaS dependencies. Fully self-contained on-premise / containerized infrastructure.
-- **Interchangeable storage engines**:
-  - **PostgreSQL**: Production engine via Docker Compose running on conflict-free port **`55433`** (container `5432`).
-  - **SQLite (`node:sqlite`)**: Lightweight file-backed (`server/data/parinaam-server.db`) or `:memory:` store for fast, hermetic local testing.
-- **Port**: API binds to **`8571`** (configurable via `PARINAAM_API_PORT`).
-- **CORS**: Wide-open (`Access-Control-Allow-Origin: *`) for seamless local development between the mobile app, backend, and web dashboard repos.
+- **PostgreSQL 15** through Docker Compose for a shared, persistent deployment.
+- **`node:sqlite`** for hermetic tests and a single-process local fallback.
 
----
+There is no dependency on a hosted backend, managed database, or other online
+platform. The API does not write to any government system.
 
-## 1. Quick Start
+The normative HTTP description is [`openapi.yaml`](openapi.yaml). The shared
+record contract is [`../src/contracts/field-test-record.ts`](../src/contracts/field-test-record.ts).
 
-### Option A: Docker Compose (PostgreSQL + API Server) — Recommended for Web Team
+## Run with PostgreSQL
+
+Requirements: Docker Compose v2 and Node.js 22+ (Node is only needed for the
+host-side seed command or the test runner).
 
 ```bash
-# Start PostgreSQL (port 55433) and the API server (port 8571) with auto-seeded demo data:
+cp .env.example .env                 # edit passwords before sharing a host
+# Optional: choose free host ports in .env, for example:
+# POSTGRES_PORT=55434
+# API_PORT=8572
+
 docker compose up -d db server
-
-# Verify containers are healthy:
 docker compose ps
-
-# View API logs:
-docker compose logs -f server
+curl http://127.0.0.1:8571/api/v1/health
 ```
 
-The database port is mapped to **`55433`** on your host machine to prevent port collisions with any existing PostgreSQL instance running on the default `5432` port.
+The default host mappings are PostgreSQL `127.0.0.1:55433` and API
+`127.0.0.1:8571`. Set `POSTGRES_BIND` or `API_BIND` to `0.0.0.0` only when a
+LAN client must connect, and put the API behind an appropriate TLS reverse
+proxy before exposing it beyond a trusted development network.
 
-### Option B: Local Node.js against Docker PostgreSQL
+The Compose file creates a project-scoped, versioned volume named
+`parinaam_pgdata_v2`; it does not reuse retired data. The default account
+password is a local-development value. Always replace it in `.env` and in the
+database before a shared deployment.
+
+To run a one-shot idempotent seed against the same database:
 
 ```bash
-# 1. Start the PostgreSQL container only:
+docker compose run --rm seed
+```
+
+`PARINAAM_SEED=1` also seeds an empty database when the API starts. The seed
+refuses to mix the synthetic demo ledger with a non-demo ledger.
+
+### Run the API on the host against the container database
+
+```bash
 docker compose up -d db
-
-# 2. Seed realistic demo accounts and cases:
-PARINAAM_DB=postgres npm run seed:server
-
-# 3. Start the API server:
-PARINAAM_DB=postgres npm run server
-```
-
-### Option C: Lightweight Embedded SQLite (No Docker Required)
-
-```bash
-# Seed the local SQLite database:
+export PARINAAM_DB=postgres
+export DATABASE_URL=postgres://parinaam:parinaam@127.0.0.1:55433/parinaam
+export PARINAAM_API_ADMIN_PASSWORD='replace-this-local-password'
 npm run seed:server
-
-# Start server against SQLite:
 npm run server
 ```
 
----
+For a local file database instead, leave `PARINAAM_DB` unset and optionally set
+`PARINAAM_SERVER_DB`:
 
-## 2. Seed Accounts & Roles
+```bash
+PARINAAM_SERVER_DB=server/data/parinaam-server.db npm run server
+```
 
-The seed script (`npm run seed:server` or `PARINAAM_SEED=1` in Docker Compose) creates authentic accounts representing each role defined in the supervision workflow:
+Do not point two independent API processes at the same SQLite file.
 
-| Username | Password | Role | Display Name | Permissions / UI View |
-|---|---|---|---|---|
-| `admin` | `adminpass` | `SENIOR` | Admin / Station House Officer | Full administrative access, Section 52A disposal certifications, user creation, case review |
-| `supervisor` | `superpass` | `SUPERVISOR` | Superintendent R. K. Verma (NCB DZU) | Supervisor dashboard, case status review/escalation, forensic lab approvals |
-| `judiciary` | `judiciarypass` | `JUDICIARY` | Special Judge P. S. Bhatia (NDPS Court) | Judicial read-only view, cryptographic attestation verification, certificate audits |
-| `sharma` | `sharmapass` | `SENIOR` | HC-4412 Sharma (Delhi Zonal Unit) | Senior field officer, package sealing, Rule 10(2) bunching |
-| `gill` | `gillpass` | `JUNIOR` | IC-9007 Gill (Mumbai Zonal Unit) | Junior field officer (can submit test records; cannot transition case review status) |
+## Synthetic seed data
 
----
+The seed contains exactly **15 records across 4 cases**, with fixed
+chronological timestamps, a linked hash chain, `is_demo: true`, null image
+hashes, and null device attestations. It does not contain real imagery,
+substance identities, laboratory confirmation, or legal conclusions.
 
-## 3. Seeded Demo Cases
+| Case | Records | Status | Panchnama reference |
+|---|---:|---|---|
+| `NCB/DZU/CR-14/2026` | 5 | `UNDER_REVIEW` | `PAN/DZU/2026/884` |
+| `NCB/MZU/CR-02/2026` | 3 | `REPORTED` | `PAN/MZU/2026/091` |
+| `NCB/KZU/CR-07/2026` | 4 | `REVIEWED` | `PAN/KZU/2026/312` |
+| `NCB/BZU/CR-19/2026` | 3 | `ESCALATED` | `PAN/BZU/2026/505` |
 
-Four coherent multi-zone cases are seeded out-of-the-box with valid RFC 8785 canonical JCS hashes and unbroken cryptographic chains:
+The deterministic records are shared byte-for-byte by the app's local SQLite
+fixture and the server seed. Demo rows are local/synthetic and are not marked
+as uploaded by the officer app.
 
-1. **`NCB/DZU/CR-14/2026`** (Delhi Zonal Unit — Air Cargo Complex, IGI Airport)
-   - **Status**: `UNDER_REVIEW` | **Panchnama**: `PAN/DZU/2026/884`
-   - **Records**: 6 packages (`P-1` through `P-6`), Marquis reagent positive. Demonstrates NDPS Rule 10(2) "Identical Results" bunching ($\Delta E_{00} \le 3.0$).
-2. **`NCB/MZU/CR-02/2026`** (Mumbai Zonal Unit — Container Berth 4, JNPT Docks)
-   - **Status**: `REPORTED` | **Panchnama**: `PAN/MZU/2026/091`
-   - **Records**: 3 packages (`P-1` Duquenois-Levine inconclusive, `P-2` Scott negative, `P-3` Mecke positive). Divergent reagents demonstrate refused bunching.
-3. **`NCB/KZU/CR-07/2026`** (Kolkata Zonal Unit — Howrah Railway Yard Parcel Office)
-   - **Status**: `REVIEWED` | **Panchnama**: `PAN/KZU/2026/312`
-   - **Records**: 4 packages (`P-1` to `P-3` Froehde/Marquis positive for Opioids, `P-4` inert cutting agent). Certified under Section 52A NDPS.
-4. **`NCB/BZU/CR-19/2026`** (Bengaluru Zonal Unit — Electronic City International Courier Hub)
-   - **Status**: `ESCALATED` | **Panchnama**: `PAN/BZU/2026/505`
-   - **Records**: 2 packages (`P-1`, `P-2` Marquis positive for synthetic methamphetamine). Commercial quantity escalated to Special Operations.
+### Seed accounts
 
----
+The following are **local demonstration credentials only**. On Compose, the
+admin account is created from `PARINAAM_API_ADMIN_PASSWORD` before the seed
+runs; if that variable is changed, the Compose default below is not used.
+The other accounts are created by `server/src/seed.ts` with these passwords.
 
-## 4. API Endpoints Reference
-
-All `/api/v1/*` endpoints accept and return JSON. Endpoints marked `Bearer` require an `Authorization: Bearer <token>` header obtained from `/api/v1/auth/login`.
-
-### Authentication & Account
-
-| Method | Endpoint | Auth | Description |
+| Username | Password | Role | Access summary |
 |---|---|---|---|
-| `POST` | `/api/v1/auth/login` | Open | Log in with `{ username, password }`. Rate-limited (5 attempts / 60s per IP). |
-| `POST` | `/api/v1/auth/logout` | Bearer | Revoke current session token. |
-| `GET` | `/api/v1/auth/me` | Bearer | Return `{ id, username, display_name, role }` for the authenticated token. |
+| `admin` | `parinaam-admin-2026` (or `PARINAAM_API_ADMIN_PASSWORD`) | `ADMIN` | Full account, analytics, audit, ingest, and review access |
+| `supervisor` | `parinaam-super-2026` | `SUPERVISOR` | Read, analytics, audit, and case review; no account management |
+| `judiciary` | `parinaam-jud-2026` | `JUDICIARY` | Read, verification, and export access only |
+| `sharma` | `parinaam-officer-2026` | `SENIOR` | Ingest as self, read all, verify, and review |
+| `gill` | `parinaam-officer-2026` | `JUNIOR` | Ingest as self and read only attributed records/cases |
+| `mukherjee` | `parinaam-officer-2026` | `SENIOR` | Ingest as self, read all, verify, and review |
+| `rao` | `parinaam-officer-2026` | `SENIOR` | Ingest as self, read all, verify, and review |
 
-### Dashboard & Analytics
+New accounts created through the API start as `PENDING`, must be approved by
+an `ADMIN`, and cannot log in until approved. Suspended or pending accounts
+cannot use an existing bearer token. A password reset revokes that account's
+sessions.
 
-| Method | Endpoint | Auth | Description |
-|---|---|---|---|
-| `GET` | `/api/v1/health` | Open | Healthcheck returning `{ ok: true, engine: "postgres", records: 15 }`. |
-| `GET` | `/api/v1/stats` | Bearer | Summary numbers for dashboard home: total cases, cases by status, total records, records by outcome, total officers, and recent audit activity. |
-| `GET` | `/api/v1/stream` | Open | Real-time Server-Sent Events (SSE) feed (`record-ingested`, `case-status`). |
+## HTTP conventions
 
-### Cases & Supervision
-
-| Method | Endpoint | Auth | Description |
-|---|---|---|---|
-| `GET` | `/api/v1/cases` | Bearer | List cases with rollup counts. Query params: `status` (`REPORTED`, `UNDER_REVIEW`, `REVIEWED`, `ESCALATED`), `search` (substring match on case_ref / panchnama_ref). |
-| `GET` | `/api/v1/cases/:caseRef` | Bearer | Detailed case record including metadata, list of test packages, and complete chronological status transition history. |
-| `POST` | `/api/v1/cases/:caseRef/status` | Bearer (Senior/Admin) | Update case status: `{ status: "UNDER_REVIEW"|"REVIEWED"|"ESCALATED", note?: string }`. |
-| `POST` | `/api/v1/cases/:caseRef/panchnama` | Bearer | Attach or update Panchnama reference: `{ panchnama_ref: string }`. |
-
-### Field Test Records (Evidentiary)
-
-| Method | Endpoint | Auth | Description |
-|---|---|---|---|
-| `POST` | `/api/v1/records` | Bearer | Ingest sealed `FieldTestRecord`. Validates RFC 8785 canonical JCS, recomputes SHA-256 hash, checks chain continuity. Supports `Idempotency-Key` header. |
-| `GET` | `/api/v1/records` | Bearer | Query test records. Query params: `case_ref`, `outcome`, `operator_id`, `search`, `limit`, `offset`. |
-| `GET` | `/api/v1/records/:uuid` | Bearer | Retrieve full record payload (including image reference, GPS coordinates, calibration residuals, kinetics curve, and attestation seal). |
-| `POST` | `/api/v1/records/verify` | Bearer | Cryptographically re-verify stored record integrity: `{ uuid: string }` $\to$ `{ valid: boolean, checks: string[] }`. |
-
-### User Management & Audit Trail
-
-| Method | Endpoint | Auth | Description |
-|---|---|---|---|
-| `GET` | `/api/v1/users` | Bearer | List all registered officers and reviewers. |
-| `POST` | `/api/v1/users` | Bearer (Senior/Admin) | Onboard new account: `{ username, password, display_name, role }`. |
-| `GET` | `/api/v1/audit` | Bearer | Audit log entries (login events, record uploads, status transitions). Query params: `limit`, `offset`. |
-
----
-
-## 5. Field Test Record Wire Schema
-
-Below is the exact JSON structure of a test record as stored and returned by `GET /api/v1/records/:uuid`:
+- Base path: `/api/v1`.
+- JSON request bodies are limited to 1,000,000 bytes.
+- Evidence uploads are raw `image/jpeg` or `image/png` bytes, limited to 5 MiB.
+- Authenticated endpoints use `Authorization: Bearer <token>`.
+- Record ingestion also requires an `Idempotency-Key` header of 8–160
+  URL-safe characters.
+- Every response includes `X-Request-ID`; JSON errors have this shape:
 
 ```json
 {
-  "record_uuid": "a3f19c20-7d41-4b02-9e58-1c6d2f70ab11",
-  "case_ref": "NCB/DZU/CR-14/2026",
-  "panchnama_ref": "PAN/DZU/2026/884",
-  "package_no": "P-1",
-  "lot_no": "LOT-DEL-2026-01",
-  "reagent": "marquis",
-  "kit": {
-    "make": "Sirchie",
-    "test_name": "NARK II",
-    "lot_no": "MK-24B-118",
-    "expiry": "2027-04-30"
+  "error": {
+    "code": "INVALID_FILTER",
+    "message": "region is too long",
+    "retryable": false
   },
-  "corrected_lab": { "l": 19.58, "a": 16.3, "b": -12.48 },
-  "delta_e_00": 1.95,
-  "calibration_residual": { "mean": 0.8, "max": 1.5, "grade": "GREEN" },
-  "outcome": "CONSISTENT_WITH_REAGENT_POSITIVE",
-  "confidence": 0.97,
-  "conformal_set": ["POSITIVE"],
-  "abstention_reason": null,
-  "kinetics": [
-    { "t_ms": 0, "delta_e": 0.1 },
-    { "t_ms": 15000, "delta_e": 1.36 },
-    { "t_ms": 30000, "delta_e": 1.95 }
-  ],
-  "gps": {
-    "lat": 28.5562,
-    "lon": 77.0999,
-    "accuracy_m": 5.2,
-    "mocked": false
-  },
-  "image_ref": "file:///evidence/NCB-DZU-CR14-P1.jpg",
-  "image_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a01",
-  "operator_id": "HC-4412 Sharma",
-  "operator_name": "Head Constable R. Sharma",
-  "officer_role": "SENIOR",
-  "created_at": "2026-09-14T09:11:00.000Z",
-  "payload_jcs": "{\"calib_grade\":\"GREEN\",\"calib_residual_mean\":0.8,\"case_ref\":\"NCB/DZU/CR-14/2026\",\"confidence\":0.97,\"corrected_lab_a\":16.3,\"corrected_lab_b\":-12.48,\"corrected_lab_l\":19.58,\"device_clock_iso\":\"2026-09-14T09:11:00.000Z\",\"operator_id\":\"HC-4412 Sharma\",\"outcome\":\"CONSISTENT_WITH_REAGENT_POSITIVE\",\"package_no\":\"P-1\",\"reagent\":\"marquis\",\"record_uuid\":\"a3f19c20-7d41-4b02-9e58-1c6d2f70ab11\"}",
-  "record_hash": "2ffc82a588b394f4da677c77d455486958fe7d42cfbba76033488ee2798e16ea",
-  "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
-  "chain_hash": "959cb4a5b42d13ec80277874945d81aa42cb782e3bbda94ba32e3ea8fa0c04f9",
-  "device_attestation": "3045022100959cb4a5b42d13ec80277874945d81aa42cb782e3bbda94ba32e3ea8fa0c02202ffc82a588b394f4da677c77d455486958fe7d42cfbba76033488ee2798e16"
+  "request_id": "..."
 }
 ```
 
----
+Successful list endpoints return `{ "items": [...], "page": { "limit", "offset", "total", "has_more" } }`.
+The API uses authoritative snake_case wire names. Do not infer camelCase
+aliases.
 
-## 6. Sample curl Workflows for Frontend Developers
+### Authentication and health
 
-### 1. Health & Ping
-```bash
-curl -s http://localhost:8571/api/v1/health | jq
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| `GET` | `/api/v1/health` | Public | Service, storage engine, record count, and ledger head |
+| `POST` | `/api/v1/auth/login` | Public | `{ "username": "...", "password": "..." }` → bearer token and officer |
+| `GET` | `/api/v1/auth/me` | Bearer | Current officer identity and account status |
+| `POST` | `/api/v1/auth/logout` | Bearer | Revoke the current token |
+
+Login attempts are limited per client IP and username. The API hashes bearer
+tokens before storing them; the raw token is returned only at login.
+
+### Records and evidence
+
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| `POST` | `/api/v1/records` | Writer | Ingest one sealed `FieldTestRecordV1`; atomic with case, audit, idempotency, and chain head |
+| `GET` | `/api/v1/records` | Bearer | Filtered/paginated record summaries |
+| `GET` | `/api/v1/records/:uuid` | Bearer | Full sealed record, summary, and evidence status |
+| `POST` | `/api/v1/records/verify` | Bearer | `{ "uuid": "..." }` integrity verification result |
+| `GET` | `/api/v1/records/:uuid/verify` | Bearer | Same verification result without a JSON body |
+| `PUT` | `/api/v1/records/:uuid/evidence` | Writer | Upload raw evidence bytes; the bytes must match the sealed `image_sha256` |
+| `GET` | `/api/v1/records/:uuid/evidence` | Bearer | Download the immutable evidence bytes and integrity headers |
+
+Record list filters are `date_from`, `date_to`, `region`, `location`,
+`department`, `officer`, `kit_type`, `kit_batch`, `outcome`, `status`,
+`case_ref`, `search`, `limit`, and `offset`. Dates accept `YYYY-MM-DD` or an
+ISO UTC timestamp. `outcome` and `status` values are validated; invalid filters
+return `400`.
+
+The server checks all of the following before accepting a record: exact
+contract keys and enums, canonical JSON, `record_hash = SHA256(payload_jcs)`,
+`chain_hash = SHA256(prev_hash + record_hash)`, the current sequence/head,
+indexed columns, and the authenticated operator binding. A missing
+predecessor is `409 PREV_HASH_NOT_STORED` with `retryable: true`; it is not a
+permanent rejection.
+
+`case_status` and `panchnama_ref` are case-level review facts and are not part
+of the record hash. Evidence rows are append-only. A declared image without
+uploaded bytes is reported as `DECLARED_NOT_UPLOADED`, not as an available
+image.
+
+### Cases, review, and exports
+
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| `GET` | `/api/v1/cases` | Bearer | Case summaries with `status`, `region`, `location`, `search`, and pagination filters |
+| `GET` | `/api/v1/cases/:caseRef` | Bearer | Case metadata, ordered record summaries, and status history |
+| `PATCH` | `/api/v1/cases/:caseRef/status` | Senior/Admin/Supervisor | `{ "status": "UNDER_REVIEW", "note": "..." }`; validates the workflow |
+| `PATCH` | `/api/v1/cases/:caseRef/panchnama` | Senior/Admin/Supervisor | `{ "panchnama_ref": "PAN/..." }` or `null` |
+| `GET` | `/api/v1/cases/:caseRef/export` | Bearer | JSON export manifest; optional `formats=pdf,docx,xlsx` |
+
+Allowed case transitions are `REPORTED → UNDER_REVIEW|ESCALATED`,
+`UNDER_REVIEW → REVIEWED|ESCALATED`, and `ESCALATED → REVIEWED`. `REVIEWED` is
+terminal. Every accepted transition increments the case version and appends
+history and audit rows. Supervisors and admins may review; judiciary accounts
+are read/export-only.
+
+The export endpoint returns a deterministic data manifest, not binary files.
+The web client renders PDF, DOCX, and XLSX from that manifest and must retain
+the manifest's disclaimer. It also returns each record's integrity checks and
+whether evidence is available.
+
+### Dashboard, accounts, audit, and events
+
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| `GET` | `/api/v1/stats` | Bearer | Record/case totals, status/outcome/region breakdowns, ledger head, and account counts |
+| `GET` | `/api/v1/users` | Admin | Paginated account list with `last_login_at` and approval facts |
+| `POST` | `/api/v1/users` | Admin | Create a `PENDING` account; password is 12–256 characters |
+| `PATCH` | `/api/v1/users/:username` | Admin | Approve, suspend, change role/name, or reset password |
+| `GET` | `/api/v1/audit` | Admin/Supervisor | Paginated audit/filter view (`actor`, `action`, `subject`, `search`) |
+| `GET` | `/api/v1/stream` | Reviewer roles | Bounded Server-Sent Events stream (`record-ingested`, `case-status`, `case-panchnama`); junior officers receive `403` |
+
+The stream is intentionally unavailable to junior accounts because its events
+are global. The web dashboard should use `/stats` for its initial page, then use filtered
+record/case endpoints for drill-down. It should render the server's status and
+panchnama values as facts; it must not edit record payloads or evidence.
+
+## Record contract and integrity boundary
+
+The sealed payload contains only the field-test event and operator binding. A
+live record has the following top-level fields (the OpenAPI schema is the
+machine-readable source):
+
+```text
+schema_version, seq, record_uuid, case_ref, package_no, lot_no, reagent, kit,
+corrected_lab, delta_e_00, calibration_residual, outcome, confidence,
+conformal_set, abstention_reason, kinetics, gps, image_sha256, operator_id,
+operator_name, officer_role, created_at, is_demo, payload_jcs, record_hash,
+prev_hash, chain_hash, device_attestation
 ```
 
-### 2. Login as Supervisor
-```bash
-TOKEN=$(curl -s -X POST http://localhost:8571/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username":"supervisor","password":"superpass"}' | jq -r .token)
+`payload_jcs` is canonical JSON. `record_hash` is its SHA-256 digest.
+`chain_hash` is SHA-256 of `prev_hash + record_hash`, with a genesis previous
+hash of 64 zeroes. The server has no trusted device-key registry, so a
+non-null `device_attestation` is reported as
+`UNVERIFIED_NO_TRUSTED_DEVICE_KEY_REGISTRY`; it is not treated as a statutory
+credential.
 
-echo "Session token: $TOKEN"
+The only mutable review metadata is `cases.case_status` and
+`cases.panchnama_ref`. The API does not accept a replacement for a sealed
+record body or evidence bytes. The app's `demo-seed` sync state is a local fact and is never sent to this API.
+Authenticated ingest also rejects `is_demo: true`; the deterministic demo is
+installed only by the local seed process.
+
+## Worked curl workflow
+
+```bash
+BASE=http://127.0.0.1:8571/api/v1
+ADMIN_TOKEN=$(curl -fsS -X POST "$BASE/auth/login" \
+  -H 'content-type: application/json' \
+  -d '{"username":"admin","password":"parinaam-admin-2026"}' | jq -r .token)
+
+curl -fsS -H "Authorization: Bearer $ADMIN_TOKEN" "$BASE/stats" | jq
+curl -fsS -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "$BASE/records?region=DZU&limit=20&offset=0" | jq
+curl -fsS -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "$BASE/cases/NCB%2FDZU%2FCR-14%2F2026" | jq
+curl -fsS -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "$BASE/cases/NCB%2FDZU%2FCR-14%2F2026/export?formats=pdf,docx,xlsx" | jq
 ```
 
-### 3. Fetch Dashboard Summary Numbers
-```bash
-curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8571/api/v1/stats | jq
-```
+To submit a live record, obtain the exact sealed JSON from the officer app's
+outbox; do not hand-edit its hashes. Send it with a stable key:
 
-### 4. Fetch Cases List (with status filter)
 ```bash
-curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8571/api/v1/cases?status=UNDER_REVIEW" | jq
-```
-
-### 5. Fetch Case Detail (metadata + packages + audit history)
-```bash
-curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8571/api/v1/cases/NCB%2FDZU%2FCR-14%2F2026" | jq
-```
-
-### 6. Transition Case Status (Review Workflow)
-```bash
-curl -s -X POST "http://localhost:8571/api/v1/cases/NCB%2FDZU%2FCR-14%2F2026/status" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "status": "REVIEWED",
-    "note": "Forensic laboratory report confirmed Marquis presumptive positive. Section 52A disposal inventory signed."
-  }' | jq
-```
-
-### 7. Re-verify Cryptographic Evidence Chain
-```bash
-curl -s -X POST "http://localhost:8571/api/v1/records/verify" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"uuid":"a3f19c20-7d41-4b02-9e58-1c6d2f70ab11"}' | jq
-```
-
-### 8. Add a New Officer Account (Admin Only)
-```bash
-ADMIN_TOKEN=$(curl -s -X POST http://localhost:8571/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"adminpass"}' | jq -r .token)
-
-curl -s -X POST http://localhost:8571/api/v1/users \
+curl -fsS -X POST "$BASE/records" \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "username": "patil",
-    "password": "patilpassword",
-    "display_name": "Inspector S. Patil (Pune)",
-    "role": "SENIOR"
-  }' | jq
+  -H 'content-type: application/json' \
+  -H 'Idempotency-Key: officer-device-00000016' \
+  --data-binary @record.json | jq
 ```
 
----
+Upload evidence only when the record has a non-null sealed `image_sha256`:
 
-## 7. Legal & Forensic Guardrails (Rule 6/7/10 Culture)
+```bash
+curl -fsS -X PUT "$BASE/records/RECORD_UUID/evidence" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H 'content-type: image/jpeg' \
+  --data-binary @capture.jpg
+```
 
-1. **Trilevel Vocabulary**: The wire format uses exact statutory terms: `CONSISTENT_WITH_REAGENT_POSITIVE`, `CONSISTENT_WITH_REAGENT_NEGATIVE`, and `INCONCLUSIVE`. The backend NEVER infers substance identity (e.g. it never outputs "Heroin Detected").
-2. **Non-Editable Evidentiary Data**: Record hashes, colorimetry, package numbers, timestamps, and operator identities are cryptographically sealed and immutable. Only `case_status` and `panchnama_ref` can be transitioned through authenticated review actions.
-3. **Single Attestation Source**: The server recomputes `sha256(payload_jcs)` using the exact same canonical serializer (`src/crypto/canonical-json.ts`) used on-device.
+## Verification commands
+
+```bash
+npm ci
+npm test
+npm run typecheck
+npm run lint
+docker compose config --quiet
+```
+
+The optional PostgreSQL test is run against a deliberately isolated database:
+
+```bash
+PARINAAM_TEST_DATABASE_URL=postgres://parinaam:parinaam@127.0.0.1:55433/parinaam \
+  node --experimental-strip-types --test tests/sync/e2e-postgres.test.ts
+```
+
+Do not use a database containing real evidence for the synthetic seed or demo
+credentials. Back up PostgreSQL before changing versions, and use a unique
+Compose project name when running parallel verification stacks.

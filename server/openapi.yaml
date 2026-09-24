@@ -1,0 +1,1159 @@
+openapi: 3.0.3
+info:
+  title: Parinaam Self-Hosted API
+  version: 1.0.0
+  description: >-
+    Local/self-hosted API for the Parinaam offline field-test prototype. The
+    service uses authoritative snake_case wire names. Record and evidence
+    payloads are append-only; only case_status and panchnama_ref are mutable
+    review metadata. Device attestation is reported as unverified unless a
+    trusted device-key registry is separately configured.
+  contact:
+    name: Parinaam repository maintainers
+servers:
+  - url: http://127.0.0.1:8571/api/v1
+    description: Local Compose API
+  - url: http://127.0.0.1:8572/api/v1
+    description: Example alternate local port
+tags:
+  - name: Health
+  - name: Authentication
+  - name: Records
+  - name: Cases
+  - name: Dashboard
+  - name: Accounts
+  - name: Audit
+  - name: Events
+paths:
+  /health:
+    get:
+      tags: [Health]
+      operationId: getHealth
+      security: []
+      responses:
+        '200':
+          description: Service health and current ledger head.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /auth/login:
+    post:
+      tags: [Authentication]
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: A newly issued bearer session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /auth/logout:
+    post:
+      tags: [Authentication]
+      operationId: logout
+      responses:
+        '200':
+          description: Current session revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean, example: true }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /auth/me:
+    get:
+      tags: [Authentication]
+      operationId: getCurrentOfficer
+      responses:
+        '200':
+          description: Current authenticated officer.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Officer'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /records:
+    post:
+      tags: [Records]
+      operationId: ingestRecord
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FieldTestRecord'
+      responses:
+        '201':
+          description: Record and case facts committed atomically.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestResponse'
+        '200':
+          description: Existing UUID or idempotency replay.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+    get:
+      tags: [Records]
+      operationId: listRecords
+      parameters:
+        - $ref: '#/components/parameters/DateFrom'
+        - $ref: '#/components/parameters/DateTo'
+        - $ref: '#/components/parameters/Region'
+        - $ref: '#/components/parameters/Location'
+        - $ref: '#/components/parameters/Department'
+        - $ref: '#/components/parameters/OfficerId'
+        - $ref: '#/components/parameters/KitType'
+        - $ref: '#/components/parameters/KitBatch'
+        - $ref: '#/components/parameters/Outcome'
+        - $ref: '#/components/parameters/CaseStatus'
+        - $ref: '#/components/parameters/CaseRef'
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Filtered record summaries.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /records/verify:
+    post:
+      tags: [Records]
+      operationId: verifyRecordByBody
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [uuid]
+              additionalProperties: false
+              properties:
+                uuid: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Integrity result, including a non-OK verification code when appropriate.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerificationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /records/{uuid}:
+    parameters:
+      - $ref: '#/components/parameters/RecordUuid'
+    get:
+      tags: [Records]
+      operationId: getRecord
+      responses:
+        '200':
+          description: Full sealed record and indexed summary.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordDetailResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /records/{uuid}/verify:
+    get:
+      tags: [Records]
+      operationId: verifyRecordByPath
+      parameters:
+        - $ref: '#/components/parameters/RecordUuid'
+      responses:
+        '200':
+          description: Integrity result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerificationResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /records/{uuid}/evidence:
+    parameters:
+      - $ref: '#/components/parameters/RecordUuid'
+    put:
+      tags: [Records]
+      operationId: uploadEvidence
+      requestBody:
+        required: true
+        content:
+          image/jpeg:
+            schema: { type: string, format: binary }
+          image/png:
+            schema: { type: string, format: binary }
+      responses:
+        '200':
+          description: The same evidence was already stored.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvidenceResponse'
+        '201':
+          description: Evidence bytes were stored after hash verification.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvidenceResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+    get:
+      tags: [Records]
+      operationId: downloadEvidence
+      responses:
+        '200':
+          description: Immutable evidence bytes. X-Content-SHA256 and ETag contain the digest.
+          headers:
+            X-Content-SHA256:
+              schema: { type: string, pattern: '^[0-9a-f]{64}$' }
+            ETag:
+              schema: { type: string }
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+            image/png:
+              schema: { type: string, format: binary }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /cases:
+    get:
+      tags: [Cases]
+      operationId: listCases
+      parameters:
+        - $ref: '#/components/parameters/CaseStatus'
+        - $ref: '#/components/parameters/Region'
+        - $ref: '#/components/parameters/Location'
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Filtered case summaries.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /cases/{caseRef}:
+    parameters:
+      - $ref: '#/components/parameters/CaseRefPath'
+    get:
+      tags: [Cases]
+      operationId: getCase
+      responses:
+        '200':
+          description: Case metadata, ordered records, and status history.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseDetailResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /cases/{caseRef}/status:
+    parameters:
+      - $ref: '#/components/parameters/CaseRefPath'
+    patch:
+      tags: [Cases]
+      operationId: updateCaseStatus
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CaseStatusUpdate'
+      responses:
+        '200':
+          description: Updated case metadata and version.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseMutationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /cases/{caseRef}/panchnama:
+    parameters:
+      - $ref: '#/components/parameters/CaseRefPath'
+    patch:
+      tags: [Cases]
+      operationId: updatePanchnama
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PanchnamaUpdate'
+      responses:
+        '200':
+          description: Updated panchnama reference and case version.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseMutationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /cases/{caseRef}/export:
+    parameters:
+      - $ref: '#/components/parameters/CaseRefPath'
+    get:
+      tags: [Cases]
+      operationId: exportCaseManifest
+      parameters:
+        - name: formats
+          in: query
+          required: false
+          description: Comma-separated subset of pdf,docx,xlsx. The API returns a manifest; the web client renders files.
+          schema:
+            type: string
+            example: pdf,docx,xlsx
+      responses:
+        '200':
+          description: Deterministic export manifest for client-side rendering.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportManifest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /stats:
+    get:
+      tags: [Dashboard]
+      operationId: getStats
+      parameters:
+        - $ref: '#/components/parameters/DateFrom'
+        - $ref: '#/components/parameters/DateTo'
+        - $ref: '#/components/parameters/Region'
+        - $ref: '#/components/parameters/Outcome'
+        - $ref: '#/components/parameters/CaseStatus'
+      responses:
+        '200':
+          description: Dashboard aggregates and current ledger head.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Stats'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /users:
+    get:
+      tags: [Accounts]
+      operationId: listUsers
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Admin-only account list.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [Accounts]
+      operationId: createUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAccountRequest'
+      responses:
+        '201':
+          description: Pending account created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /users/{username}:
+    parameters:
+      - name: username
+        in: path
+        required: true
+        schema: { type: string, pattern: '^[a-z0-9._-]+$' }
+    patch:
+      tags: [Accounts]
+      operationId: updateUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAccountRequest'
+      responses:
+        '200':
+          description: Account updated; sessions are revoked for suspension or password reset.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /audit:
+    get:
+      tags: [Audit]
+      operationId: listAudit
+      parameters:
+        - name: actor
+          in: query
+          schema: { type: string, maxLength: 80 }
+        - name: action
+          in: query
+          schema: { type: string, maxLength: 80 }
+        - name: subject
+          in: query
+          schema: { type: string, maxLength: 160 }
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Admin/supervisor audit entries.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /stream:
+    get:
+      tags: [Events]
+      operationId: openEventStream
+      responses:
+        '200':
+          description: >-
+            Authenticated text/event-stream. Events include hello,
+            record-ingested, case-status, and case-panchnama. A client should
+            reconnect with bounded backoff.
+          content:
+            text/event-stream:
+              schema: { type: string }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Stable key scoped to the authenticated officer; 8–160 URL-safe characters.
+      schema: { type: string, minLength: 8, maxLength: 160, pattern: '^[A-Za-z0-9._:-]+$' }
+    RecordUuid:
+      name: uuid
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    CaseRefPath:
+      name: caseRef
+      in: path
+      required: true
+      description: URL-encode a case reference such as NCB/DZU/CR-14/2026.
+      schema: { type: string, pattern: '^[A-Za-z0-9-]+/[A-Za-z0-9-]+/[A-Za-z0-9-]+/[0-9]{4}$' }
+    DateFrom:
+      name: date_from
+      in: query
+      schema: { type: string, example: '2026-09-01' }
+    DateTo:
+      name: date_to
+      in: query
+      schema: { type: string, example: '2026-09-30' }
+    Region:
+      name: region
+      in: query
+      schema: { type: string, maxLength: 40, example: DZU }
+    Location:
+      name: location
+      in: query
+      schema: { type: string, maxLength: 120 }
+    Department:
+      name: department
+      in: query
+      schema: { type: string, maxLength: 80, example: NCB }
+    OfficerId:
+      name: officer
+      in: query
+      description: Officer code, not a display name.
+      schema: { type: string, maxLength: 80, example: IC-9007 }
+    KitType:
+      name: kit_type
+      in: query
+      schema: { type: string, maxLength: 120 }
+    KitBatch:
+      name: kit_batch
+      in: query
+      schema: { type: string, maxLength: 80 }
+    Outcome:
+      name: outcome
+      in: query
+      schema:
+        $ref: '#/components/schemas/Outcome'
+    CaseStatus:
+      name: status
+      in: query
+      schema:
+        $ref: '#/components/schemas/CaseStatus'
+    CaseRef:
+      name: case_ref
+      in: query
+      schema: { type: string, maxLength: 120 }
+    Search:
+      name: search
+      in: query
+      schema: { type: string, maxLength: 200 }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+    Offset:
+      name: offset
+      in: query
+      schema: { type: integer, minimum: 0, default: 0 }
+  responses:
+    BadRequest:
+      description: Invalid request or filter.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+    Unauthorized:
+      description: Missing, invalid, expired, or revoked bearer token.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+    Forbidden:
+      description: Authenticated role or record-attribution check failed.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+    NotFound:
+      description: Resource not found or not visible to this officer.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+    Conflict:
+      description: Idempotency, sequence, workflow, version, or evidence conflict.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+    PayloadTooLarge:
+      description: JSON or evidence body exceeds the configured limit.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+    UnsupportedMediaType:
+      description: Evidence content type is not JPEG or PNG.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+    Unprocessable:
+      description: Sealed record contract, canonical JSON, or hash validation failed.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+    ServiceUnavailable:
+      description: The live event stream is at its configured client limit.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+    InternalError:
+      description: Internal server failure.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+  schemas:
+    ApiError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, retryable]
+          properties:
+            code: { type: string, example: INVALID_FILTER }
+            message: { type: string }
+            retryable: { type: boolean }
+            details: {}
+        request_id: { type: string, format: uuid }
+    Page:
+      type: object
+      required: [limit, offset, total, has_more]
+      properties:
+        limit: { type: integer }
+        offset: { type: integer }
+        total: { type: integer }
+        has_more: { type: boolean }
+    Health:
+      type: object
+      required: [ok, service, api_version, engine, records, ledger_head]
+      properties:
+        ok: { type: boolean, example: true }
+        service: { type: string, example: parinaam-api }
+        api_version: { type: string, example: v1 }
+        engine: { type: string, enum: [node:sqlite, postgres] }
+        records: { type: integer, minimum: 0 }
+        ledger_head:
+          nullable: true
+          $ref: '#/components/schemas/LedgerHead'
+    LedgerHead:
+      type: object
+      required: [seq, chain_hash]
+      properties:
+        seq: { type: integer, minimum: 0 }
+        chain_hash: { type: string, pattern: '^[0-9a-f]{64}$' }
+        updated_at: { type: string, format: date-time }
+    Officer:
+      type: object
+      required: [id, officer_code, username, display_name, role, status]
+      properties:
+        id: { type: integer }
+        officer_code: { type: string }
+        username: { type: string }
+        display_name: { type: string }
+        role:
+          type: string
+          enum: [JUNIOR, SENIOR, ADMIN, SUPERVISOR, JUDICIARY]
+        status:
+          type: string
+          enum: [PENDING, ACTIVE, SUSPENDED]
+    LoginRequest:
+      type: object
+      required: [username, password]
+      additionalProperties: false
+      properties:
+        username: { type: string, minLength: 1, maxLength: 80 }
+        password: { type: string, minLength: 1, maxLength: 256 }
+    LoginResponse:
+      type: object
+      required: [token, officer]
+      properties:
+        token: { type: string, description: Opaque bearer token; only its SHA-256 digest is stored server-side. }
+        officer: { $ref: '#/components/schemas/Officer' }
+    Outcome:
+      type: string
+      enum: [CONSISTENT_WITH_REAGENT_POSITIVE, CONSISTENT_WITH_REAGENT_NEGATIVE, INCONCLUSIVE]
+    CaseStatus:
+      type: string
+      enum: [REPORTED, UNDER_REVIEW, REVIEWED, ESCALATED]
+    FieldTestRecord:
+      type: object
+      additionalProperties: false
+      required:
+        - schema_version
+        - seq
+        - record_uuid
+        - case_ref
+        - package_no
+        - lot_no
+        - reagent
+        - kit
+        - corrected_lab
+        - delta_e_00
+        - calibration_residual
+        - outcome
+        - confidence
+        - conformal_set
+        - abstention_reason
+        - kinetics
+        - gps
+        - image_sha256
+        - operator_id
+        - operator_name
+        - officer_role
+        - created_at
+        - is_demo
+        - payload_jcs
+        - record_hash
+        - prev_hash
+        - chain_hash
+        - device_attestation
+      properties:
+        schema_version: { type: string, enum: [parinaam-field-record-v1] }
+        seq: { type: integer, minimum: 1 }
+        record_uuid: { type: string, format: uuid }
+        case_ref: { type: string, pattern: '^[A-Z0-9-]+/[A-Z0-9-]+/[A-Z0-9-]+/[0-9]{4}$' }
+        package_no: { type: string, pattern: '^P-[0-9]+$' }
+        lot_no: { type: string, nullable: true, maxLength: 80 }
+        reagent:
+          type: string
+          enum: [marquis, mecke, mandelin, scott, duquenois_levine, simons, ehrlich, nitric_acid, ferric_chloride]
+        kit: { $ref: '#/components/schemas/Kit' }
+        corrected_lab: { $ref: '#/components/schemas/Lab' }
+        delta_e_00: { type: number, minimum: 0 }
+        calibration_residual: { $ref: '#/components/schemas/CalibrationResidual' }
+        outcome: { $ref: '#/components/schemas/Outcome' }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        conformal_set:
+          type: array
+          minItems: 1
+          items: { type: string, enum: [POSITIVE, NEGATIVE] }
+        abstention_reason:
+          type: string
+          nullable: true
+          enum: [low_margin, novelty_ood, calibration_failed, null]
+        kinetics:
+          type: array
+          nullable: true
+          maxItems: 500
+          items: { $ref: '#/components/schemas/KineticPoint' }
+        gps:
+          allOf: [{ $ref: '#/components/schemas/Gps' }]
+          nullable: true
+        image_sha256: { type: string, nullable: true, pattern: '^[0-9a-f]{64}$' }
+        operator_id: { type: string, minLength: 2, maxLength: 80 }
+        operator_name: { type: string, nullable: true, maxLength: 120 }
+        officer_role:
+          type: string
+          enum: [JUNIOR, SENIOR, ADMIN, SUPERVISOR, JUDICIARY]
+        created_at: { type: string, format: date-time }
+        is_demo: { type: boolean }
+        payload_jcs: { type: string, maxLength: 250000 }
+        record_hash: { type: string, pattern: '^[0-9a-f]{64}$' }
+        prev_hash: { type: string, pattern: '^[0-9a-f]{64}$' }
+        chain_hash: { type: string, pattern: '^[0-9a-f]{64}$' }
+        device_attestation: { type: string, nullable: true, maxLength: 16384 }
+    Kit:
+      type: object
+      additionalProperties: false
+      required: [make, test_name, lot_no, expiry]
+      properties:
+        make: { type: string, nullable: true }
+        test_name: { type: string, nullable: true }
+        lot_no: { type: string, nullable: true }
+        expiry: { type: string, nullable: true, pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' }
+    Lab:
+      type: object
+      additionalProperties: false
+      required: [l, a, b]
+      properties:
+        l: { type: number }
+        a: { type: number }
+        b: { type: number }
+    CalibrationResidual:
+      type: object
+      additionalProperties: false
+      required: [mean, max, grade]
+      properties:
+        mean: { type: number, minimum: 0 }
+        max: { type: number, minimum: 0 }
+        grade: { type: string, enum: [GOOD, DEGRADED] }
+    KineticPoint:
+      type: object
+      additionalProperties: false
+      required: [t_ms, delta_e]
+      properties:
+        t_ms: { type: integer, minimum: 0 }
+        delta_e: { type: number, minimum: 0 }
+    Gps:
+      type: object
+      additionalProperties: false
+      required: [lat, lon, accuracy_m, mocked]
+      properties:
+        lat: { type: number, minimum: -90, maximum: 90 }
+        lon: { type: number, minimum: -180, maximum: 180 }
+        accuracy_m: { type: number, nullable: true, minimum: 0 }
+        mocked: { type: boolean }
+    RecordSummary:
+      type: object
+      required: [seq, record_uuid, case_ref, case_status, panchnama_ref, package_no, reagent, region, department, location_label, operator_id, operator_name, outcome, confidence, created_at, received_at, record_hash, prev_hash, chain_hash, image_sha256, evidence_status, is_demo]
+      properties:
+        seq: { type: integer }
+        record_uuid: { type: string, format: uuid }
+        case_ref: { type: string }
+        case_status: { $ref: '#/components/schemas/CaseStatus' }
+        panchnama_ref: { type: string, nullable: true }
+        package_no: { type: string }
+        reagent: { type: string }
+        kit_type: { type: string, nullable: true }
+        kit_batch: { type: string, nullable: true }
+        region: { type: string }
+        department: { type: string }
+        location_label: { type: string }
+        operator_id: { type: string }
+        operator_name: { type: string, nullable: true }
+        outcome: { $ref: '#/components/schemas/Outcome' }
+        confidence: { type: number }
+        created_at: { type: string, format: date-time }
+        received_at: { type: string, format: date-time }
+        record_hash: { type: string }
+        prev_hash: { type: string }
+        chain_hash: { type: string }
+        image_sha256: { type: string, nullable: true }
+        evidence_status: { type: string, enum: [AVAILABLE, DECLARED_NOT_UPLOADED, NOT_PROVIDED] }
+        is_demo: { type: boolean }
+    RecordDetailResponse:
+      type: object
+      required: [record, summary, evidence]
+      properties:
+        record: { $ref: '#/components/schemas/FieldTestRecord' }
+        summary: { $ref: '#/components/schemas/RecordSummary' }
+        evidence:
+          type: object
+          required: [status, sha256, download_url]
+          properties:
+            status: { type: string, enum: [AVAILABLE, DECLARED_NOT_UPLOADED, NOT_PROVIDED] }
+            sha256: { type: string, nullable: true }
+            download_url: { type: string, nullable: true }
+    RecordListResponse:
+      type: object
+      required: [items, page]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/RecordSummary' } }
+        page: { $ref: '#/components/schemas/Page' }
+    VerificationResponse:
+      type: object
+      required: [record_uuid, verified, code, retryable, checks, device_attestation_status]
+      properties:
+        record_uuid: { type: string, format: uuid }
+        verified: { type: boolean }
+        code: { type: string }
+        reason: { type: string, nullable: true }
+        retryable: { type: boolean }
+        checks: { type: array, items: { type: string } }
+        device_attestation_status: { type: string, enum: [UNVERIFIED_NO_TRUSTED_DEVICE_KEY_REGISTRY, NOT_PROVIDED] }
+    IngestResponse:
+      type: object
+      required: [status, record_uuid, case_ref, case_status, checks]
+      properties:
+        status: { type: string, enum: [stored, already-stored] }
+        record_uuid: { type: string, format: uuid }
+        case_ref: { type: string }
+        case_status: { $ref: '#/components/schemas/CaseStatus' }
+        evidence_status: { type: string, enum: [PENDING, NOT_PROVIDED] }
+        checks: { type: array, items: { type: string } }
+    EvidenceResponse:
+      type: object
+      required: [status, record_uuid, sha256]
+      properties:
+        status: { type: string, enum: [stored, already-stored] }
+        record_uuid: { type: string, format: uuid }
+        sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        content_type: { type: string, enum: [image/jpeg, image/png] }
+        byte_size: { type: integer }
+    CaseSummary:
+      type: object
+      required: [case_ref, case_status, panchnama_ref, region, department, location_label, first_record_at, last_record_at, created_at, updated_at, record_count]
+      properties:
+        case_ref: { type: string }
+        case_status: { $ref: '#/components/schemas/CaseStatus' }
+        panchnama_ref: { type: string, nullable: true }
+        region: { type: string }
+        department: { type: string }
+        location_label: { type: string }
+        first_record_at: { type: string, nullable: true, format: date-time }
+        last_record_at: { type: string, nullable: true, format: date-time }
+        created_at: { type: string, nullable: true, format: date-time }
+        updated_at: { type: string, nullable: true, format: date-time }
+        record_count: { type: integer }
+    CaseListResponse:
+      type: object
+      required: [items, page]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/CaseSummary' } }
+        page: { $ref: '#/components/schemas/Page' }
+    StatusHistory:
+      type: object
+      required: [from_status, to_status, actor, at, note]
+      properties:
+        from_status: { $ref: '#/components/schemas/CaseStatus' }
+        to_status: { $ref: '#/components/schemas/CaseStatus' }
+        actor: { type: string }
+        at: { type: string, format: date-time }
+        note: { type: string, nullable: true }
+    CaseDetail:
+      type: object
+      required: [case_ref, case_status, panchnama_ref, region, department, location_label, first_record_at, last_record_at, created_at, updated_at, version]
+      properties:
+        case_ref: { type: string }
+        case_status: { $ref: '#/components/schemas/CaseStatus' }
+        panchnama_ref: { type: string, nullable: true }
+        region: { type: string }
+        department: { type: string }
+        location_label: { type: string }
+        first_record_at: { type: string, nullable: true, format: date-time }
+        last_record_at: { type: string, nullable: true, format: date-time }
+        created_at: { type: string, nullable: true, format: date-time }
+        updated_at: { type: string, nullable: true, format: date-time }
+        version: { type: integer, minimum: 1 }
+    CaseDetailResponse:
+      type: object
+      required: [case, records, status_history]
+      properties:
+        case: { $ref: '#/components/schemas/CaseDetail' }
+        records: { type: array, items: { $ref: '#/components/schemas/RecordSummary' } }
+        status_history: { type: array, items: { $ref: '#/components/schemas/StatusHistory' } }
+    CaseStatusUpdate:
+      type: object
+      required: [status]
+      additionalProperties: false
+      properties:
+        status: { $ref: '#/components/schemas/CaseStatus' }
+        note: { type: string, nullable: true, maxLength: 500 }
+    PanchnamaUpdate:
+      type: object
+      required: [panchnama_ref]
+      additionalProperties: false
+      properties:
+        panchnama_ref: { type: string, nullable: true, maxLength: 200 }
+    CaseMutationResponse:
+      type: object
+      required: [case_ref, case_status, panchnama_ref, version, unchanged]
+      properties:
+        case_ref: { type: string }
+        case_status: { $ref: '#/components/schemas/CaseStatus' }
+        panchnama_ref: { type: string, nullable: true }
+        version: { type: integer, minimum: 1 }
+        unchanged: { type: boolean }
+    Stats:
+      type: object
+      required: [totals, cases_by_status, records_by_outcome, cases_by_region, ledger_head, accounts]
+      properties:
+        totals:
+          type: object
+          required: [records, cases, evidence_blobs, demo_records]
+          properties:
+            records: { type: integer }
+            cases: { type: integer }
+            evidence_blobs: { type: integer }
+            demo_records: { type: integer }
+        cases_by_status:
+          type: object
+          additionalProperties: { type: integer }
+        records_by_outcome:
+          type: object
+          additionalProperties: { type: integer }
+        cases_by_region:
+          type: object
+          additionalProperties:
+            type: object
+            required: [cases, records]
+            properties:
+              cases: { type: integer }
+              records: { type: integer }
+        ledger_head: { $ref: '#/components/schemas/LedgerHead' }
+        accounts:
+          type: object
+          required: [active, pending, suspended]
+          properties:
+            active: { type: integer }
+            pending: { type: integer }
+            suspended: { type: integer }
+    Account:
+      type: object
+      required: [id, officer_code, username, display_name, role, status, created_at, approved_by, approved_at, last_login_at]
+      properties:
+        id: { type: integer }
+        officer_code: { type: string }
+        username: { type: string }
+        display_name: { type: string }
+        role: { type: string, enum: [JUNIOR, SENIOR, ADMIN, SUPERVISOR, JUDICIARY] }
+        status: { type: string, enum: [PENDING, ACTIVE, SUSPENDED] }
+        created_at: { type: string, format: date-time }
+        approved_by: { type: integer, nullable: true }
+        approved_at: { type: string, nullable: true, format: date-time }
+        last_login_at: { type: string, nullable: true, format: date-time }
+    AccountListResponse:
+      type: object
+      required: [items, page]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Account' } }
+        page: { $ref: '#/components/schemas/Page' }
+    CreateAccountRequest:
+      type: object
+      required: [username, password, display_name, role, officer_code]
+      additionalProperties: false
+      properties:
+        username: { type: string, pattern: '^[a-z0-9._-]+$' }
+        password: { type: string, minLength: 12, maxLength: 256 }
+        display_name: { type: string, minLength: 1, maxLength: 120 }
+        role: { type: string, enum: [JUNIOR, SENIOR, ADMIN, SUPERVISOR, JUDICIARY] }
+        officer_code: { type: string, pattern: '^[A-Za-z0-9._-]+$' }
+    UpdateAccountRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        display_name: { type: string, minLength: 1, maxLength: 120 }
+        role: { type: string, enum: [JUNIOR, SENIOR, ADMIN, SUPERVISOR, JUDICIARY] }
+        status: { type: string, enum: [PENDING, ACTIVE, SUSPENDED] }
+        password: { type: string, minLength: 12, maxLength: 256 }
+    AuditEntry:
+      type: object
+      required: [id, actor, action, subject, at, detail]
+      properties:
+        id: { type: integer }
+        actor: { type: string }
+        action: { type: string }
+        subject: { type: string, nullable: true }
+        at: { type: string, format: date-time }
+        detail: { type: string, nullable: true }
+    AuditListResponse:
+      type: object
+      required: [items, page]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/AuditEntry' } }
+        page: { $ref: '#/components/schemas/Page' }
+    ExportManifest:
+      type: object
+      required: [manifest_version, generated_at, generated_by, requested_formats, rendering, disclaimer, legal_scope, case, status_history, records]
+      properties:
+        manifest_version: { type: string, enum: [parinaam-export-v1] }
+        generated_at: { type: string, format: date-time }
+        generated_by:
+          type: object
+          required: [username, officer_code, role]
+          properties:
+            username: { type: string }
+            officer_code: { type: string }
+            role: { type: string }
+        requested_formats:
+          type: array
+          items: { type: string, enum: [pdf, docx, xlsx] }
+        rendering: { type: string }
+        disclaimer: { type: string }
+        legal_scope: { type: string }
+        case: { $ref: '#/components/schemas/CaseDetail' }
+        status_history: { type: array, items: { $ref: '#/components/schemas/StatusHistory' } }
+        records:
+          type: array
+          items:
+            type: object
+            required: [record, integrity, evidence]
+            properties:
+              record: { $ref: '#/components/schemas/FieldTestRecord' }
+              integrity:
+                type: object
+                required: [verified, code, checks, device_attestation_status]
+                properties:
+                  verified: { type: boolean }
+                  code: { type: string }
+                  checks: { type: array, items: { type: string } }
+                  device_attestation_status: { type: string }
+              evidence: { type: object, additionalProperties: true }

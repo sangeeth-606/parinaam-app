@@ -1,64 +1,116 @@
+# Parinaam — self-hosted backend stack (PostgreSQL 15 + REST API).
+#
+#   docker compose up -d db      # just the database, mapped to 127.0.0.1:55433
+#   docker compose up -d server  # database + API (waits for db health)
+#   docker compose run --rm seed # load the realistic demo dataset (idempotent)
+#
+# Every knob is overridable via .env (see .env.example):
+#   POSTGRES_PORT   host port for the DB        (default 55433, loopback-only)
+#   API_PORT        host port for the API       (default 8571)
+#   API_BIND        host interface for the API  (default 127.0.0.1; 0.0.0.0 to expose on LAN)
+# All container ports are fixed internally; only the host-side mapping is configurable.
+
 services:
-  # Parinaam — PostgreSQL database service (conflict-free port 55433:5432)
+  # -------------------------------------------------------------- PostgreSQL 15
   db:
     image: postgres:15-alpine
-    container_name: parinaam-db
-    environment:
-      POSTGRES_DB: parinaam
-      POSTGRES_USER: parinaam
-      POSTGRES_PASSWORD: parinaam
-    ports:
-      - "55433:5432"
-    volumes:
-      - parinaam_pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U parinaam -d parinaam"]
-      interval: 2s
-      timeout: 3s
-      retries: 15
     restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-parinaam}
+      POSTGRES_USER: ${POSTGRES_USER:-parinaam}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-parinaam}
+      # Deterministic collation so case_ref ordering matches the host tooling.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    # Loopback-only by default: the DB is never exposed to the LAN unless the
+    # operator explicitly changes POSTGRES_BIND. The API reaches it over the
+    # compose network by service name, so host exposure is only for psql/tooling.
+    ports:
+      - "${POSTGRES_BIND:-127.0.0.1}:${POSTGRES_PORT:-55433}:5432"
+    volumes:
+      - parinaam_pgdata_v2:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-parinaam} -d ${POSTGRES_DB:-parinaam}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks: [parinaam]
 
-  # Parinaam REST API Server (runs on port 8571 against PostgreSQL)
+  # -------------------------------------------------------------- REST API (server runtime)
   server:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: parinaam-server
-    ports:
-      - "8571:8571"
-    environment:
-      - NODE_ENV=development
-      - PARINAAM_DB=postgres
-      - DATABASE_URL=postgres://parinaam:parinaam@db:5432/parinaam
-      - PARINAAM_API_PORT=8571
-      - PARINAAM_SEED=1
+      target: server
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
-    volumes:
-      - .:/app
-    command: npm run server
-    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PARINAAM_DB: postgres
+      # In-network DSN: service name `db`, internal port 5432.
+      DATABASE_URL: postgres://${POSTGRES_USER:-parinaam}:${POSTGRES_PASSWORD:-parinaam}@db:5432/${POSTGRES_DB:-parinaam}
+      # Demo officer seeded on first boot.
+      PARINAAM_API_ADMIN_PASSWORD: ${PARINAAM_API_ADMIN_PASSWORD:-parinaam-admin-2026}
+      # Internal listen port is fixed; the host mapping below is what you change.
+      PARINAAM_API_PORT: 8571
+      # Opt-in: load the realistic demo dataset when the database is empty.
+      PARINAAM_SEED: ${PARINAAM_SEED:-1}
+      PARINAAM_CORS_ORIGINS: ${PARINAAM_CORS_ORIGINS:-http://localhost:8081,http://127.0.0.1:8081}
+      PARINAAM_TRUST_PROXY: ${PARINAAM_TRUST_PROXY:-false}
+    ports:
+      - "${API_BIND:-127.0.0.1}:${API_PORT:-8571}:8571"
+    # Explicit so the service is correct even if pointed at an older image.
+    command: ["node", "--experimental-strip-types", "server/src/main.ts"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8571/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    networks: [parinaam]
 
-  # Parinaam — engine / test runner sandbox
-  parinaam:
+  # -------------------------------------------------------------- demo data seed (one-shot)
+  seed:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: parinaam-engine
-    ports:
-      - "8572:8571"
+      target: server
+    depends_on:
+      db:
+        condition: service_healthy
     environment:
-      - NODE_ENV=development
-      - EXPO_OFFLINE=1
-      - CI=1
-      - PARINAAM_API_PORT=8572
-    volumes:
-      - .:/app
-      - /app/node_modules
-    command: npm test
+      NODE_ENV: production
+      PARINAAM_DB: postgres
+      DATABASE_URL: postgres://${POSTGRES_USER:-parinaam}:${POSTGRES_PASSWORD:-parinaam}@db:5432/${POSTGRES_DB:-parinaam}
+      PARINAAM_API_ADMIN_PASSWORD: ${PARINAAM_API_ADMIN_PASSWORD:-parinaam-admin-2026}
+    command: ["node", "--experimental-strip-types", "server/src/seed.ts"]
     restart: "no"
+    # No host port: an init-style job, run on demand (`docker compose run --rm seed`).
+    networks: [parinaam]
+
+  # -------------------------------------------------------------- test runner (on demand)
+  # Runs the node:test suite once and exits; no host port is published (the suite
+  # boots its own ephemeral API on a random loopback port inside the container).
+  #   docker compose run --rm test
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: test
+    profiles: ["test"]
+    environment:
+      NODE_ENV: development
+      EXPO_OFFLINE: 1
+      CI: 1
+    command: ["npm", "test"]
+    restart: "no"
+    networks: [parinaam]
+
+networks:
+  parinaam: {}
 
 volumes:
-  parinaam_pgdata:
-
+  # Project-scoped and versioned so it can never reuse the retired v1 demo volume.
+  parinaam_pgdata_v2:

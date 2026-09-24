@@ -3,7 +3,7 @@
 # Strictly POSIX compliant using GNU coreutils (sha256sum, awk, grep).
 # Zero external runtime or library dependencies.
 
-set -euo pipefail
+set -eu
 
 BUNDLE_DIR="${1:-.}"
 

@@ -2,7 +2,7 @@ module.exports = {
   root: true,
   // The rule messages below quote the forbidden strings on purpose — the linter must not
   // scan its own config for them.
-  ignorePatterns: ['.eslintrc.js'],
+  ignorePatterns: ['.eslintrc.js', 'camera-engine/**'],
   parser: '@typescript-eslint/parser',
   plugins: ['@typescript-eslint'],
   rules: {

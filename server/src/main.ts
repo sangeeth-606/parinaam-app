@@ -1,203 +1,324 @@
-/**
- * Parinaam API — HTTP front door (v2 phase D).
- * node:http only. CORS is wide-open for GET reads by design: the separate web-repo
- * dashboard (and the officer app) must consume the same API. Tighten with an allow-list
- * before this API ever leaves the LAN.
- *
- * Run:  npm run server            (port: PARINAAM_API_PORT, default 8571)
- * Engine: PARINAAM_DB=postgres + DATABASE_URL → PostgreSQL (docker compose service
- * `db`); otherwise the embedded node:sqlite file (default), or ':memory:' in tests,
- * which boot `await createApiServer(':memory:')` on an ephemeral port.
- */
+/** Self-hosted HTTP front door for the Parinaam API. */
 
-import http from 'node:http';
+import http, { type IncomingMessage, type ServerResponse } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
-import { ServerDb, defaultDbPath } from './db.ts';
-import { authenticate, login } from './auth.ts';
-import type { Ctx } from './routes.ts';
-import { routes } from './routes.ts';
-import { subscribe } from './bus.ts';
+import { ServerDb, hashPassword, insertOfficer } from './db.ts';
+import { authenticate } from './auth.ts';
+import { routes, type ApiResponse, type Ctx } from './routes.ts';
+import { subscribe, subscriberCount } from './bus.ts';
+import { seedDemo } from './seed.ts';
+import { ApiError, apiErrorBody } from '../../src/contracts/api-errors.ts';
+import { MAX_EVIDENCE_BYTES } from '../../src/contracts/field-test-record.ts';
 
-const MAX_BODY_BYTES = 1_000_000;
+const JSON_BODY_LIMIT = 1_000_000;
+const MAX_SSE_CLIENTS = 100;
+const PUBLIC_ROUTES = new Set(['GET /api/v1/health', 'POST /api/v1/auth/login']);
 
-type RouteMatch = { handler: (ctx: Ctx) => unknown; params: Record<string, string> };
+type RouteMatch = { handler: (ctx: Ctx) => Promise<ApiResponse> | ApiResponse; params: Record<string, string> };
 
 function matchRoute(method: string, pathname: string): RouteMatch | null {
-  for (const [key, handler] of Object.entries(routes)) {
-    const [m, pattern] = key.split(' ');
-    if (m !== method) continue;
-    const pp = pattern.split('/');
-    const sp = pathname.split('/');
-    if (pp.length !== sp.length) continue;
+  const routeTable: Record<string, (ctx: Ctx) => Promise<ApiResponse> | ApiResponse> = routes;
+  for (const [key, handler] of Object.entries(routeTable)) {
+    const separator = key.indexOf(' ');
+    const routeMethod = key.slice(0, separator);
+    const pattern = key.slice(separator + 1);
+    if (routeMethod !== method) continue;
+    const patternParts = pattern.split('/');
+    const pathParts = pathname.split('/');
+    if (patternParts.length !== pathParts.length) continue;
     const params: Record<string, string> = {};
-    let ok = true;
-    for (let i = 0; i < pp.length; i++) {
-      if (pp[i].startsWith(':')) params[pp[i].slice(1)] = decodeURIComponent(sp[i]);
-      else if (pp[i] !== sp[i]) {
-        ok = false;
+    let matched = true;
+    for (let index = 0; index < patternParts.length; index += 1) {
+      const part = patternParts[index];
+      if (part.startsWith(':')) {
+        try {
+          params[part.slice(1)] = decodeURIComponent(pathParts[index]);
+        } catch {
+          return null;
+        }
+      } else if (part !== pathParts[index]) {
+        matched = false;
         break;
       }
     }
-    if (ok) return { handler, params };
+    if (matched) return { handler, params };
   }
   return null;
+}
+
+function allowedOrigin(requestOrigin: string | undefined): string | null {
+  if (!requestOrigin) return null;
+  const configured = (process.env.PARINAAM_CORS_ORIGINS ?? 'http://localhost:8081,http://127.0.0.1:8081')
+    .split(',')
+    .map((value: string) => value.trim())
+    .filter(Boolean);
+  if (configured.includes('*')) return requestOrigin;
+  return configured.includes(requestOrigin) ? requestOrigin : null;
+}
+
+function baseHeaders(origin: string | null): Record<string, string> {
+  return {
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'no-referrer',
+    Vary: 'Origin',
+    ...(origin ? { 'Access-Control-Allow-Origin': origin } : {}),
+    'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,OPTIONS',
+    'Access-Control-Allow-Headers': 'Authorization, Content-Type, Idempotency-Key, Last-Event-ID',
+    'Access-Control-Expose-Headers': 'Content-Length, Content-Type, ETag, X-Content-SHA256, X-Request-ID',
+    'Access-Control-Max-Age': '600',
+  };
+}
+
+function trustedClientIp(request: IncomingMessage): string {
+  if (process.env.PARINAAM_TRUST_PROXY === 'true') {
+    const forwarded = request.headers['x-forwarded-for'];
+    const first = Array.isArray(forwarded) ? forwarded[0] : forwarded?.split(',')[0];
+    if (first?.trim()) return first.trim().slice(0, 128);
+  }
+  return request.socket.remoteAddress ?? 'unknown';
+}
+
+async function readBody(request: IncomingMessage, limit: number): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of request) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    total += buffer.byteLength;
+    if (total > limit) throw new ApiError(413, 'REQUEST_BODY_TOO_LARGE', `request body exceeds ${limit} bytes`);
+    chunks.push(buffer);
+  }
+  return Buffer.concat(chunks, total);
+}
+
+function parseJsonBody(bytes: Buffer): Record<string, unknown> {
+  if (bytes.byteLength === 0) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(bytes.toString('utf8')) as unknown;
+  } catch {
+    throw new ApiError(400, 'INVALID_JSON', 'request body must be valid JSON');
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new ApiError(400, 'JSON_OBJECT_REQUIRED', 'request body must be a JSON object');
+  }
+  return parsed as Record<string, unknown>;
+}
+
+function sendJson(
+  response: ServerResponse,
+  requestId: string,
+  origin: string | null,
+  status: number,
+  body: unknown
+): void {
+  const encoded = Buffer.from(JSON.stringify(body));
+  response.writeHead(status, {
+    ...baseHeaders(origin),
+    'Content-Type': 'application/json; charset=utf-8',
+    'Content-Length': encoded.byteLength,
+    'Cache-Control': 'no-store',
+    'X-Request-ID': requestId,
+  });
+  response.end(encoded);
+}
+
+function sendApiResponse(
+  response: ServerResponse,
+  requestId: string,
+  origin: string | null,
+  result: ApiResponse
+): void {
+  if (result.binary) {
+    response.writeHead(result.status, {
+      ...baseHeaders(origin),
+      'Content-Type': result.binary.contentType,
+      'Content-Length': result.binary.bytes.byteLength,
+      'Cache-Control': 'no-store',
+      ETag: `"sha256:${result.binary.sha256}"`,
+      'X-Content-SHA256': result.binary.sha256,
+      'X-Request-ID': requestId,
+    });
+    response.end(Buffer.from(result.binary.bytes));
+    return;
+  }
+  sendJson(response, requestId, origin, result.status, result.json ?? {});
+}
+
+function openSse(
+  request: IncomingMessage,
+  response: ServerResponse,
+  requestId: string,
+  origin: string | null,
+  officerCode: string
+): void {
+  if (subscriberCount() >= MAX_SSE_CLIENTS) {
+    throw new ApiError(503, 'TOO_MANY_STREAM_CLIENTS', 'live stream client limit reached', true);
+  }
+  response.writeHead(200, {
+    ...baseHeaders(origin),
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-store',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+    'X-Request-ID': requestId,
+  });
+  response.write(`retry: 3000\n\n`);
+  response.write(`event: hello\ndata: ${JSON.stringify({ request_id: requestId, officer_code: officerCode, at: new Date().toISOString() })}\n\n`);
+  const off = subscribe((event) => {
+    if (response.destroyed) {
+      off();
+      return;
+    }
+    if (response.writableLength > 1_048_576) {
+      response.end();
+      off();
+      return;
+    }
+    response.write(`id: ${event.id}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+  });
+  const ping = setInterval(() => {
+    if (!response.destroyed) response.write(': ping\n\n');
+  }, 25_000);
+  request.on('close', () => {
+    clearInterval(ping);
+    off();
+  });
+}
+
+async function bootstrapAdmin(db: ServerDb): Promise<void> {
+  const password = process.env.PARINAAM_API_ADMIN_PASSWORD;
+  if (!password) return;
+  if (password.length < 10) throw new Error('PARINAAM_API_ADMIN_PASSWORD must be at least 10 characters');
+  const existing = await db.store.get<{ id: number | string }>('SELECT id FROM officers WHERE username = ?', 'admin');
+  if (existing) return;
+  const credentials = await hashPassword(password);
+  await insertOfficer(db, 'admin', credentials.salt, credentials.hash, 'System Administrator', 'ADMIN', 'OFFICER-ADMIN', 'ACTIVE');
+  await db.audit('system', 'bootstrap-admin', 'admin', 'created from explicit PARINAAM_API_ADMIN_PASSWORD');
 }
 
 export async function createApiServer(target?: string): Promise<{
   server: http.Server;
   db: ServerDb;
 }> {
-  const db = await ServerDb.open(target ?? defaultDbPath());
+  const db = await ServerDb.open(target);
+  await bootstrapAdmin(db);
+  if (process.env.PARINAAM_SEED === '1') await seedDemo(db);
 
-  const server = http.createServer((req, res) => {
-    const send = (status: number, json: unknown): void => {
-      const body = JSON.stringify(json);
-      res.writeHead(status, {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-        'Access-Control-Allow-Headers': 'Authorization, Content-Type, Idempotency-Key',
-      });
-      res.end(body);
-    };
-
-    if (req.method === 'OPTIONS') {
-      res.writeHead(204, {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-        'Access-Control-Allow-Headers': 'Authorization, Content-Type, Idempotency-Key',
-        'Access-Control-Max-Age': '86400',
-      });
-      res.end();
-      return;
-    }
-
-    const url = new URL(req.url ?? '/', 'http://parinaam.local');
-
-    // SSE live feed (open): every ingest/status change is pushed as an event.
-    if (req.method === 'GET' && url.pathname === '/api/v1/stream') {
-      res.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        Connection: 'keep-alive',
-        'Access-Control-Allow-Origin': '*',
-      });
-      res.write(`retry: 3000\n\ndata: ${JSON.stringify({ type: 'hello', at: new Date().toISOString() })}\n\n`);
-      const off = subscribe((e) => res.write(`data: ${JSON.stringify(e)}\n\n`));
-      const ping = setInterval(() => res.write(': ping\n\n'), 25_000);
-      req.on('close', () => {
-        clearInterval(ping);
-        off();
-      });
-      return;
-    }
-
-    const m = matchRoute(req.method ?? 'GET', url.pathname);
-    if (!m) {
-      send(404, { error: 'no-such-route', hint: 'see server/README.md for /api/v1 routes' });
-      return;
-    }
-
-    const chunks: Buffer[] = [];
-    let total = 0;
-    let aborted = false;
-    req.on('data', (c: Buffer) => {
-      total += c.length;
-      if (total > MAX_BODY_BYTES) {
-        aborted = true;
-        send(413, { error: 'body too large (limit 1 MB)' });
-        req.destroy();
-      } else {
-        chunks.push(c);
-      }
-    });
-    req.on('end', () => {
-      if (aborted) return;
-      void (async () => {
-        let body: Record<string, unknown> | null = null;
-        if (chunks.length > 0) {
-          try {
-            const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-            if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-              send(400, { error: 'body must be a JSON object' });
-              return;
-            }
-            body = parsed as Record<string, unknown>;
-          } catch {
-            send(400, { error: 'invalid JSON body' });
-            return;
-          }
+  const server = http.createServer((request, response) => {
+    void (async () => {
+      const requestId = randomUUID();
+      let origin: string | null = null;
+      try {
+        origin = allowedOrigin(request.headers.origin);
+        if (request.method === 'OPTIONS') {
+          response.writeHead(origin ? 204 : 403, baseHeaders(origin));
+          response.end();
+          return;
         }
-        const header = req.headers.authorization;
-        const authHeader = Array.isArray(header) ? header[0] : header;
-        const ip = (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0] ?? req.socket.remoteAddress ?? 'unknown';
+
+        let url: URL;
+        try {
+          url = new URL(request.url ?? '/', 'http://parinaam.local');
+        } catch {
+          throw new ApiError(400, 'INVALID_URL', 'request URL is invalid');
+        }
+        const method = request.method ?? 'GET';
+        const routeKey = `${method} ${url.pathname}`;
+        const stream = method === 'GET' && url.pathname === '/api/v1/stream';
+        const matched = stream ? null : matchRoute(method, url.pathname);
+        if (!stream && !matched) throw new ApiError(404, 'ROUTE_NOT_FOUND', 'API route not found');
+
+        const authed = PUBLIC_ROUTES.has(routeKey) ? null : await authenticate(db, request.headers.authorization);
+        if (!PUBLIC_ROUTES.has(routeKey) && !authed) throw new ApiError(401, 'AUTH_REQUIRED', 'authentication required');
+
+        if (stream && authed) {
+          if (authed.role === 'JUNIOR') {
+            throw new ApiError(403, 'STREAM_ROLE_REQUIRED', 'the live stream is restricted to reviewer roles', false);
+          }
+          openSse(request, response, requestId, origin, authed.officerCode);
+          return;
+        }
+        if (!matched) throw new ApiError(404, 'ROUTE_NOT_FOUND', 'API route not found');
+
+        let body: Record<string, unknown> | null = null;
+        let rawBody: Uint8Array | null = null;
+        const contentType = (request.headers['content-type'] ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
+        if (method === 'PUT' && matched.params.uuid && url.pathname.endsWith('/evidence')) {
+          if (!['image/jpeg', 'image/png'].includes(contentType)) {
+            throw new ApiError(415, 'UNSUPPORTED_IMAGE_TYPE', 'Content-Type must be image/jpeg or image/png');
+          }
+          rawBody = await readBody(request, MAX_EVIDENCE_BYTES);
+        } else if (method === 'POST' || method === 'PATCH') {
+          const bytes = await readBody(request, JSON_BODY_LIMIT);
+          body = parseJsonBody(bytes);
+        } else if (request.headers['content-length'] && request.headers['content-length'] !== '0') {
+          throw new ApiError(400, 'UNEXPECTED_BODY', 'request body is not allowed for this method');
+        }
+
         const ctx: Ctx = {
           db,
-          officer: await authenticate(db, authHeader),
+          officer: authed,
           body,
+          rawBody,
+          contentType,
           query: url.searchParams,
-          params: m.params,
-          idempotencyKey: (req.headers['idempotency-key'] as string | undefined) ?? undefined,
-          ip,
+          params: matched.params,
+          ...(typeof request.headers['idempotency-key'] === 'string'
+            ? { idempotencyKey: request.headers['idempotency-key'] }
+            : {}),
+          ip: trustedClientIp(request),
+          requestId,
         };
-        try {
-          const out = await m.handler(ctx);
-          send((out as { status: number }).status ?? 500, (out as { json: unknown }).json);
-        } catch (err) {
-          void db.audit('server', 'internal-error', null, err instanceof Error ? err.message : String(err));
-          send(500, { error: 'internal', detail: err instanceof Error ? err.message : 'unknown' });
+        const result = await Promise.resolve(matched.handler(ctx));
+        sendApiResponse(response, requestId, origin, result);
+      } catch (error) {
+        if (response.headersSent) {
+          response.destroy();
+          return;
         }
-      })();
-    });
+        if (error instanceof ApiError) {
+          sendJson(response, requestId, origin, error.status, apiErrorBody(error, requestId));
+          return;
+        }
+        process.stderr.write(`[${requestId}] ${error instanceof Error ? error.name : 'Error'}: ${error instanceof Error ? error.message : 'unknown failure'}\n`);
+        const internal = new ApiError(500, 'INTERNAL_ERROR', 'internal server error', true);
+        sendJson(response, requestId, origin, 500, apiErrorBody(internal, requestId));
+      }
+    })();
   });
 
   return { server, db };
 }
 
-// Direct execution (npm run server) — not when imported by tests.
-const executedDirect =
-  typeof process !== 'undefined' && process.argv[1] !== undefined && process.argv[1].endsWith('main.ts');
-if (executedDirect) {
+async function runtime(): Promise<void> {
   const port = Number(process.env.PARINAAM_API_PORT ?? 8571);
-  void (async () => {
-    let created: { server: http.Server; db: ServerDb };
-    try {
-      created = await createApiServer();
-    } catch (err) {
-      process.stderr.write(`Parinaam API could not open its database: ${err instanceof Error ? err.message : String(err)}\n`);
-      process.exit(1);
-    }
-    const { server, db } = created;
-    server.on('error', (err: NodeJS.ErrnoException) => {
-      if (err.code === 'EADDRINUSE') {
-        process.stderr.write(`Parinaam API cannot bind :${port} — port in use. Set PARINAAM_API_PORT to another port.\n`);
-        process.exit(1);
-      }
-      throw err;
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) throw new Error('PARINAAM_API_PORT must be a valid TCP port');
+  const { server, db } = await createApiServer();
+  await new Promise<void>((resolve) => server.listen(port, resolve));
+  const address = server.address() as AddressInfo;
+  process.stdout.write(`Parinaam self-hosted API listening on port ${address.port} (${db.engine})\n`);
+
+  let closing = false;
+  const shutdown = (signal: string): void => {
+    if (closing) return;
+    closing = true;
+    process.stdout.write(`Received ${signal}; shutting down\n`);
+    server.close(() => {
+      void db.close().finally(() => process.exit(0));
     });
-    if (process.env.PARINAAM_SEED === '1') {
-      try {
-        const { seedDemoData } = await import('./seed.ts');
-        await seedDemoData(db);
-        process.stdout.write('Auto-seeded demo accounts and cases (PARINAAM_SEED=1)\n');
-      } catch (e) {
-        process.stderr.write(`Auto-seeding skipped/failed: ${e instanceof Error ? e.message : String(e)}\n`);
-      }
-    }
-    server.listen(port, () => {
-      const addr = server.address() as AddressInfo;
-      const where = db.engine === 'postgres' ? (process.env.DATABASE_URL ?? 'postgres') : defaultDbPath();
-      process.stdout.write(`Parinaam API v2 listening on :${addr.port} (engine: ${db.engine}, db: ${where})\n`);
-      process.stdout.write('Seeded officer: admin / <PARINAAM_API_ADMIN_PASSWORD ?? adminpass> · role SENIOR\n');
-    });
-    const shutdown = (): void => {
-      server.close();
-      void db.close();
-      process.exit(0);
-    };
-    process.on('SIGINT', shutdown);
-    process.on('SIGTERM', shutdown);
-  })();
+    const forceTimer = setTimeout(() => process.exit(1), 10_000) as unknown as { unref(): void };
+    forceTimer.unref();
+  };
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
 }
 
-export { login };
+if (process.argv[1]?.endsWith('/server/src/main.ts') || process.argv[1] === 'server/src/main.ts') {
+  runtime().catch((error: unknown) => {
+    process.stderr.write(`Parinaam API failed to start: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.exit(1);
+  });
+}
+
+export { login } from './auth.ts';

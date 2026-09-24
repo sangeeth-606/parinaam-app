@@ -1,26 +1,20 @@
 /**
- * Parinaam API — database layer (v2 phase D, Postgres-complete 2026-09).
+ * Public server database API.
  *
- * Storage is behind a minimal async SQL store (`SqlStore`) with two interchangeable
- * engines speaking the SAME queries:
- *   • node:sqlite — embedded file / :memory:  (default; hermetic tests, quick local runs)
- *   • PostgreSQL  — `PARINAAM_DB=postgres` + DATABASE_URL (docker compose service `db`)
- * The HTTP JSON contract on top is engine-independent; nothing else may know which
- * store is underneath. No cloud database is used or planned.
- *
- * Query-portability rules (both engines must accept every statement):
- *   • positional `?` placeholders (the PG store rewrites them to $n)
- *   • TEXT timestamps (ISO strings), not engine date types
- *   • ON CONFLICT DO UPDATE/NOTHING (never INSERT OR IGNORE)
- *   • field_test.seq via (SELECT COALESCE(MAX(seq),0)+1 …) — never implicit rowid
- *   • mixed-case aliases must be double-quoted (PG lowercases unquoted ones)
- *   • CAST(COUNT(*) AS INTEGER) so bigint rows never surface as strings
+ * Both supported engines are opened here, migrated transactionally, and exposed
+ * through the same asynchronous SqlStore contract. Password derivation is async
+ * scrypt; bearer/session token storage is handled by auth.ts and migrations.
  */
 
-import { DatabaseSync } from 'node:sqlite';
-import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
+import { join } from 'node:path';
+import { runMigrations } from './migrations.ts';
+import { SqliteStore } from './storage.ts';
+import type { SqlStore } from './storage.ts';
+
+export { MigrationError, LATEST_SCHEMA_VERSION, SCHEMA_MIGRATION_NAME, runMigrations } from './migrations.ts';
+export { SqliteStore } from './storage.ts';
+export type { SqlEngine, SqlRunResult, SqlStore } from './storage.ts';
 
 export const CASE_STATUSES = ['REPORTED', 'UNDER_REVIEW', 'REVIEWED', 'ESCALATED'] as const;
 export type CaseStatus = (typeof CASE_STATUSES)[number];
@@ -28,167 +22,175 @@ export type CaseStatus = (typeof CASE_STATUSES)[number];
 export const OFFICER_ROLES = ['JUNIOR', 'SENIOR', 'ADMIN', 'SUPERVISOR', 'JUDICIARY'] as const;
 export type OfficerRole = (typeof OFFICER_ROLES)[number];
 
+export const OFFICER_STATUSES = ['PENDING', 'ACTIVE', 'SUSPENDED'] as const;
+export type OfficerStatus = (typeof OFFICER_STATUSES)[number];
+
 export interface OfficerRow {
   id: number;
+  officer_code: string;
   username: string;
   display_name: string;
   role: OfficerRole;
+  status: OfficerStatus;
+  created_at: string;
+  approved_at: string | null;
+  approved_by: number | null;
+  last_login_at: string | null;
 }
 
-/** The minimal async SQL surface every engine adapter must satisfy. */
-export interface SqlStore {
-  readonly engine: 'node:sqlite' | 'postgres';
-  get<T = Record<string, unknown>>(sql: string, ...params: unknown[]): Promise<T | undefined>;
-  all<T = Record<string, unknown>>(sql: string, ...params: unknown[]): Promise<T[]>;
-  run(sql: string, ...params: unknown[]): Promise<void>;
-  close(): Promise<void>;
+export interface CreateOfficerInput {
+  username: string;
+  password: string;
+  displayName: string;
+  role: OfficerRole;
+  officerCode?: string;
+  status?: OfficerStatus;
+  approvedByOfficerId?: number | null;
+  createdAt?: string;
 }
 
-const SCHEMA_SQLITE = `
-CREATE TABLE IF NOT EXISTS officers (
-  id           INTEGER PRIMARY KEY AUTOINCREMENT,
-  username     TEXT NOT NULL UNIQUE,
-  pass_salt    TEXT NOT NULL,
-  pass_hash    TEXT NOT NULL,
-  display_name TEXT NOT NULL,
-  role         TEXT NOT NULL CHECK (role IN ('JUNIOR','SENIOR','ADMIN','SUPERVISOR','JUDICIARY')),
-  created_at   TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS sessions (
-  token      TEXT PRIMARY KEY,
-  officer_id INTEGER NOT NULL REFERENCES officers(id),
-  created_at TEXT NOT NULL,
-  expires_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS field_test (
-  seq                INTEGER NOT NULL,
-  record_uuid        TEXT PRIMARY KEY,
-  case_ref           TEXT NOT NULL,
-  package_no         TEXT NOT NULL,
-  operator_id        TEXT NOT NULL,
-  outcome            TEXT NOT NULL,
-  confidence         REAL NOT NULL,
-  created_at         TEXT NOT NULL,
-  received_at        TEXT NOT NULL,
-  payload_jcs        TEXT NOT NULL,
-  record_hash        TEXT NOT NULL,
-  prev_hash          TEXT NOT NULL,
-  chain_hash         TEXT NOT NULL,
-  device_attestation TEXT,
-  image_ref          TEXT,
-  image_sha256       TEXT,
-  body               TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_ft_case ON field_test (case_ref, created_at);
-
-CREATE TABLE IF NOT EXISTS idempotency (
-  key         TEXT PRIMARY KEY,
-  record_uuid TEXT NOT NULL,
-  created_at  TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS cases (
-  case_ref      TEXT PRIMARY KEY,
-  case_status   TEXT NOT NULL,
-  first_seen    TEXT NOT NULL,
-  last_seen     TEXT NOT NULL,
-  panchnama_ref TEXT
-);
-
-CREATE TABLE IF NOT EXISTS case_status_history (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  case_ref    TEXT NOT NULL,
-  from_status TEXT NOT NULL,
-  to_status   TEXT NOT NULL,
-  actor       TEXT NOT NULL,
-  at          TEXT NOT NULL,
-  note        TEXT
-);
-
-CREATE TABLE IF NOT EXISTS server_audit (
-  id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  actor      TEXT NOT NULL,
-  action     TEXT NOT NULL,
-  subject    TEXT,
-  at         TEXT NOT NULL,
-  detail     TEXT
-);
-`;
-
-class SqliteStore implements SqlStore {
-  readonly engine = 'node:sqlite' as const;
-  private handle: DatabaseSync;
-
-  constructor(path: string) {
-    if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
-    this.handle = new DatabaseSync(path);
-    this.handle.exec('PRAGMA journal_mode = WAL;');
-    this.handle.exec(SCHEMA_SQLITE);
-    try {
-      this.handle.exec('ALTER TABLE cases ADD COLUMN panchnama_ref TEXT;');
-    } catch {
-      /* already exists */
-    }
-    try {
-      this.handle.exec('ALTER TABLE field_test ADD COLUMN seq INTEGER;');
-    } catch {
-      /* already exists */
-    }
-    try {
-      const row = this.handle.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='officers'").get() as { sql: string } | undefined;
-      if (row && !row.sql.includes('SUPERVISOR')) {
-        this.handle.exec(`
-          PRAGMA foreign_keys = OFF;
-          DROP TABLE IF EXISTS officers_new;
-          CREATE TABLE officers_new (
-            id           INTEGER PRIMARY KEY AUTOINCREMENT,
-            username     TEXT NOT NULL UNIQUE,
-            pass_salt    TEXT NOT NULL,
-            pass_hash    TEXT NOT NULL,
-            display_name TEXT NOT NULL,
-            role         TEXT NOT NULL CHECK (role IN ('JUNIOR','SENIOR','ADMIN','SUPERVISOR','JUDICIARY')),
-            created_at   TEXT NOT NULL
-          );
-          INSERT INTO officers_new SELECT * FROM officers;
-          DROP TABLE officers;
-          ALTER TABLE officers_new RENAME TO officers;
-          PRAGMA foreign_keys = ON;
-        `);
-      }
-    } catch {
-      /* migration error / fresh table */
-    }
-  }
-
-  async get<T>(sql: string, ...params: unknown[]): Promise<T | undefined> {
-    return this.handle.prepare(sql).get(...(params as never[])) as T | undefined;
-  }
-  async all<T>(sql: string, ...params: unknown[]): Promise<T[]> {
-    return this.handle.prepare(sql).all(...(params as never[])) as T[];
-  }
-  async run(sql: string, ...params: unknown[]): Promise<void> {
-    this.handle.prepare(sql).run(...(params as never[]));
-  }
-  async close(): Promise<void> {
-    this.handle.close();
-  }
+export interface PasswordHash {
+  salt: string;
+  hash: string;
 }
 
-export function hashPassword(password: string, saltHex: string): string {
-  return scryptSync(password, Buffer.from(saltHex, 'hex'), 32).toString('hex');
+const PASSWORD_KEY_LENGTH = 32;
+const PASSWORD_SALT_BYTES = 16;
+const SCRYPT_OPTIONS = {
+  N: 16_384,
+  r: 8,
+  p: 1,
+  maxmem: 64 * 1024 * 1024,
+} as const;
+const OFFICER_CODE_RE = /^[A-Z0-9][A-Z0-9._-]{2,63}$/;
+
+function requireNonEmpty(value: string, field: string): string {
+  const normalized = value.trim();
+  if (!normalized) throw new Error(`${field} is required`);
+  return normalized;
 }
 
-export function verifyPassword(password: string, saltHex: string, expectedHex: string): boolean {
-  const got = Buffer.from(hashPassword(password, saltHex), 'hex');
-  const want = Buffer.from(expectedHex, 'hex');
-  return got.length === want.length && timingSafeEqual(got, want);
+function requireOfficerRole(role: OfficerRole): OfficerRole {
+  if (!(OFFICER_ROLES as readonly string[]).includes(role)) throw new Error(`unsupported officer role: ${role}`);
+  return role;
 }
 
-/** Random hex salt — shared by the admin seed, officer inserts and the seed script. */
+function requireOfficerStatus(status: OfficerStatus): OfficerStatus {
+  if (!(OFFICER_STATUSES as readonly string[]).includes(status)) {
+    throw new Error(`unsupported officer status: ${status}`);
+  }
+  return status;
+}
+
+function requireOfficerCode(code: string): string {
+  const normalized = code.trim().toUpperCase();
+  if (!OFFICER_CODE_RE.test(normalized)) {
+    throw new Error('officerCode must be 3-64 uppercase letters, digits, dots, underscores, or hyphens');
+  }
+  return normalized;
+}
+
+function saltFromHex(saltHex: string): Buffer {
+  if (!/^[0-9a-f]{32,128}$/i.test(saltHex)) throw new Error('password salt must be 16-64 bytes of hex');
+  return Buffer.from(saltHex, 'hex');
+}
+
+function deriveScrypt(password: string, salt: Buffer): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    scrypt(password, salt, PASSWORD_KEY_LENGTH, SCRYPT_OPTIONS, (error, derivedKey) => {
+      if (error) reject(error);
+      else resolve(derivedKey);
+    });
+  });
+}
+
 export function newSalt(): string {
-  return randomBytes(16).toString('hex');
+  return randomBytes(PASSWORD_SALT_BYTES).toString('hex');
+}
+
+export async function hashPassword(password: string): Promise<PasswordHash>;
+export async function hashPassword(password: string, saltHex: string): Promise<string>;
+export async function hashPassword(password: string, saltHex?: string): Promise<PasswordHash | string> {
+  if (saltHex === undefined) {
+    const salt = newSalt();
+    const hash = (await deriveScrypt(password, Buffer.from(salt, 'hex'))).toString('hex');
+    return { salt, hash };
+  }
+  return (await deriveScrypt(password, saltFromHex(saltHex))).toString('hex');
+}
+
+export async function verifyPassword(password: string, saltHex: string, expectedHex: string): Promise<boolean> {
+  if (!/^[0-9a-f]{64,256}$/i.test(expectedHex)) return false;
+  let actual: Buffer;
+  let expected: Buffer;
+  try {
+    actual = await deriveScrypt(password, saltFromHex(saltHex));
+    expected = Buffer.from(expectedHex, 'hex');
+  } catch {
+    return false;
+  }
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
+
+function randomOfficerCode(): string {
+  return `OFFICER-${randomBytes(8).toString('hex').toUpperCase()}`;
+}
+
+function rowFromDatabase(row: Record<string, unknown>): OfficerRow {
+  const id = Number(row.id);
+  if (!Number.isSafeInteger(id) || id <= 0) throw new Error('database returned an invalid officer id');
+  return {
+    id,
+    officer_code: String(row.officer_code),
+    username: String(row.username),
+    display_name: String(row.display_name),
+    role: String(row.role) as OfficerRole,
+    status: String(row.status) as OfficerStatus,
+    created_at: String(row.created_at),
+    approved_at: row.approved_at === null || row.approved_at === undefined ? null : String(row.approved_at),
+    approved_by: row.approved_by === null || row.approved_by === undefined ? null : Number(row.approved_by),
+    last_login_at: row.last_login_at === null || row.last_login_at === undefined ? null : String(row.last_login_at),
+  };
+}
+
+/**
+ * Low-level account insert used by the explicit demo seed. Callers supply an
+ * already-derived random salt/hash; normal application code should prefer
+ * ServerDb.createOfficer so status and approval metadata are derived safely.
+ */
+export async function insertOfficer(
+  db: ServerDb,
+  username: string,
+  passSalt: string,
+  passHash: string,
+  displayName: string,
+  role: OfficerRole,
+  officerCode: string,
+  status: OfficerStatus,
+): Promise<void> {
+  const normalizedUsername = requireNonEmpty(username, 'username');
+  const normalizedDisplayName = requireNonEmpty(displayName, 'displayName');
+  const normalizedCode = requireOfficerCode(officerCode);
+  const normalizedRole = requireOfficerRole(role);
+  const normalizedStatus = requireOfficerStatus(status);
+  saltFromHex(passSalt);
+  if (!/^[0-9a-f]{64,256}$/i.test(passHash)) throw new Error('password hash must be 32-128 bytes of hex');
+  const now = new Date().toISOString();
+  await db.store.run(
+    `INSERT INTO officers
+       (officer_code, username, pass_salt, pass_hash, display_name, role, status,
+        created_at, approved_at, approved_by, last_login_at)
+     VALUES (?,?,?,?,?,?,?,?,?,NULL,NULL)`,
+    normalizedCode,
+    normalizedUsername,
+    passSalt,
+    passHash,
+    normalizedDisplayName,
+    normalizedRole,
+    normalizedStatus,
+    now,
+    normalizedStatus === 'ACTIVE' ? now : null,
+  );
 }
 
 export class ServerDb {
@@ -198,51 +200,230 @@ export class ServerDb {
     this.store = store;
   }
 
-  /**
-   * Open + migrate + ensure the admin credential exists.
-   * target: ':memory:' or a sqlite file path; for Postgres pass 'postgres'
-   * (or set PARINAAM_DB=postgres) and the URL from DATABASE_URL is used.
-   */
   static async open(target?: string): Promise<ServerDb> {
-    const wantPostgres =
-      target === 'postgres' || process.env.PARINAAM_DB === 'postgres' ||
-      (target !== undefined && target.startsWith('postgres://'));
+    const postgresTarget = target === 'postgres' || /^postgres(?:ql)?:\/\//i.test(target ?? '');
+    const usePostgres = target === undefined
+      ? process.env.PARINAAM_DB === 'postgres'
+      : postgresTarget;
     let store: SqlStore;
-    if (wantPostgres) {
+    if (usePostgres) {
       const { PgStore } = await import('./pg-store.ts');
-      store = await PgStore.connect(target !== undefined && target.startsWith('postgres://') ? target : process.env.DATABASE_URL);
+      const explicitUrl = target !== undefined && /^postgres(?:ql)?:\/\//i.test(target) ? target : undefined;
+      store = await PgStore.connect(explicitUrl ?? process.env.DATABASE_URL);
     } else {
       store = new SqliteStore(target ?? defaultDbPath());
     }
-    const db = new ServerDb(store);
-    await db.seedOfficer();
-    return db;
+
+    try {
+      await runMigrations(store);
+      const db = new ServerDb(store);
+      const resolvedSqliteTarget = target ?? defaultDbPath();
+      const explicitBootstrapPassword =
+        process.env.PARINAAM_BOOTSTRAP_ADMIN_PASSWORD ?? process.env.PARINAAM_API_ADMIN_PASSWORD;
+      if (resolvedSqliteTarget === ':memory:') {
+        await db.bootstrapAdminIfEmpty(process.env.PARINAAM_API_ADMIN_PASSWORD ?? 'adminpass');
+      } else if (explicitBootstrapPassword) {
+        await db.bootstrapAdminIfEmpty(explicitBootstrapPassword);
+      }
+      return db;
+    } catch (error) {
+      await store.close();
+      throw error;
+    }
   }
 
-  get engine(): 'node:sqlite' | 'postgres' {
+  get engine(): SqlStore['engine'] {
     return this.store.engine;
   }
 
-  /** Seeded demo credential (v2 directive): username admin / password adminpass. */
-  private async seedOfficer(): Promise<void> {
-    const existing = await this.store.get<{ id: number }>('SELECT id FROM officers LIMIT 1');
-    if (existing) return;
-    await this.insertOfficer('admin', process.env.PARINAAM_API_ADMIN_PASSWORD ?? 'adminpass', 'Station House Officer (demo)', 'SENIOR');
+  async createOfficer(input: CreateOfficerInput): Promise<OfficerRow> {
+    const username = requireNonEmpty(input.username, 'username');
+    const displayName = requireNonEmpty(input.displayName, 'displayName');
+    const role = requireOfficerRole(input.role);
+    const status = requireOfficerStatus(input.status ?? 'PENDING');
+    const officerCode = requireOfficerCode(input.officerCode ?? randomOfficerCode());
+    const createdAt = input.createdAt ?? new Date().toISOString();
+    const credentials = await hashPassword(input.password);
+    await this.store.run(
+      `INSERT INTO officers
+         (officer_code, username, pass_salt, pass_hash, display_name, role, status,
+          created_at, approved_at, approved_by, last_login_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,NULL)`,
+      officerCode,
+      username,
+      credentials.salt,
+      credentials.hash,
+      displayName,
+      role,
+      status,
+      createdAt,
+      status === 'ACTIVE' ? createdAt : null,
+      input.approvedByOfficerId ?? null,
+    );
+    const created = await this.getOfficerByCode(officerCode);
+    if (!created) throw new Error('officer insert completed without a readable row');
+    return created;
   }
 
+  /** Compatibility helper for existing callers; new account onboarding defaults to PENDING via createOfficer. */
   async insertOfficer(username: string, password: string, displayName: string, role: OfficerRole): Promise<void> {
-    const salt = newSalt();
-    await this.store.run(
-      `INSERT INTO officers (username, pass_salt, pass_hash, display_name, role, created_at)
-       VALUES (?,?,?,?,?,?) ON CONFLICT (username) DO NOTHING`,
-      username, salt, hashPassword(password, salt), displayName, role, new Date().toISOString()
+    await this.createOfficer({ username, password, displayName, role, status: 'ACTIVE' });
+  }
+
+  async bootstrapAdminIfEmpty(password: string, displayName = 'System Administrator'): Promise<OfficerRow | null> {
+    const existing = await this.store.get<{ id: number | string }>('SELECT id FROM officers ORDER BY id LIMIT 1');
+    if (existing) return null;
+    return this.bootstrapAdmin(password, displayName);
+  }
+
+  async bootstrapAdmin(password: string, displayName = 'System Administrator'): Promise<OfficerRow> {
+    const credentials = await hashPassword(password);
+    const now = new Date().toISOString();
+    const id = await this.store.transaction(async (tx) => {
+      const existing = await tx.get<{ id: number | string }>('SELECT id FROM officers ORDER BY id LIMIT 1');
+      if (existing) throw new Error('bootstrap refused: the officers table is not empty');
+      const result = await tx.run(
+        `INSERT INTO officers
+           (officer_code, username, pass_salt, pass_hash, display_name, role, status,
+            created_at, approved_at, approved_by, last_login_at)
+         VALUES ('OFFICER-ADMIN','admin',?,?,?,'ADMIN','ACTIVE',?,?,NULL,NULL)`,
+        credentials.salt,
+        credentials.hash,
+        requireNonEmpty(displayName, 'displayName'),
+        now,
+        now,
+      );
+      const row = await tx.get<{ id: number | string }>(
+        'SELECT id FROM officers WHERE officer_code = ?',
+        'OFFICER-ADMIN',
+      );
+      if (!row) throw new Error('bootstrap admin insert completed without a readable row');
+      await tx.run('UPDATE officers SET approved_by = ? WHERE id = ?', Number(row.id), Number(row.id));
+      if (result.rowCount !== 1) throw new Error('bootstrap admin insert affected an unexpected row count');
+      return Number(row.id);
+    });
+    const row = await this.getOfficerById(id);
+    if (!row) throw new Error('bootstrap admin completed without a readable row');
+    return row;
+  }
+
+  async getOfficerById(id: number): Promise<OfficerRow | null> {
+    const row = await this.store.get<Record<string, unknown>>('SELECT * FROM officers WHERE id = ?', id);
+    return row ? rowFromDatabase(row) : null;
+  }
+
+  async getOfficerByUsername(username: string): Promise<OfficerRow | null> {
+    const row = await this.store.get<Record<string, unknown>>(
+      'SELECT * FROM officers WHERE username = ?',
+      requireNonEmpty(username, 'username'),
     );
+    return row ? rowFromDatabase(row) : null;
+  }
+
+  async getOfficerByCode(officerCode: string): Promise<OfficerRow | null> {
+    const row = await this.store.get<Record<string, unknown>>(
+      'SELECT * FROM officers WHERE officer_code = ?',
+      requireOfficerCode(officerCode),
+    );
+    return row ? rowFromDatabase(row) : null;
+  }
+
+  async listOfficers(): Promise<OfficerRow[]> {
+    const rows = await this.store.all<Record<string, unknown>>('SELECT * FROM officers ORDER BY id ASC');
+    return rows.map(rowFromDatabase);
+  }
+
+  async approveOfficer(officerId: number, approverId: number, note?: string): Promise<OfficerRow> {
+    await this.setOfficerStatus(officerId, 'ACTIVE', approverId, note);
+    const row = await this.getOfficerById(officerId);
+    if (!row) throw new Error('approved officer not found');
+    return row;
+  }
+
+  async suspendOfficer(officerId: number, actorId: number, note?: string): Promise<OfficerRow> {
+    await this.setOfficerStatus(officerId, 'SUSPENDED', actorId, note);
+    const row = await this.getOfficerById(officerId);
+    if (!row) throw new Error('suspended officer not found');
+    return row;
+  }
+
+  async setOfficerStatus(
+    officerId: number,
+    status: OfficerStatus,
+    actorOfficerId: number,
+    note?: string,
+  ): Promise<void> {
+    requireOfficerStatus(status);
+    const now = new Date().toISOString();
+    await this.store.transaction(async (tx) => {
+      const target = await tx.get<{ username: string }>('SELECT username FROM officers WHERE id = ?', officerId);
+      const actor = await tx.get<{ username: string }>('SELECT username FROM officers WHERE id = ?', actorOfficerId);
+      if (!target || !actor) throw new Error('officer or approving actor was not found');
+      if (status === 'ACTIVE') {
+        await tx.run(
+          'UPDATE officers SET status = ?, approved_at = ?, approved_by = ? WHERE id = ?',
+          status,
+          now,
+          actorOfficerId,
+          officerId,
+        );
+      } else {
+        await tx.run('UPDATE officers SET status = ? WHERE id = ?', status, officerId);
+      }
+      if (status !== 'ACTIVE') await tx.run('DELETE FROM sessions WHERE officer_id = ?', officerId);
+      await tx.run(
+        `INSERT INTO server_audit (officer_code, actor, action, subject, at, detail)
+         VALUES ((SELECT officer_code FROM officers WHERE id = ?),?,?,?,?,?)`,
+        actorOfficerId,
+        actor.username,
+        `officer-${status.toLowerCase()}`,
+        String(officerId),
+        now,
+        note ?? null,
+      );
+    });
+  }
+
+  async setOfficerPassword(officerId: number, password: string, actorOfficerId: number): Promise<void> {
+    const credentials = await hashPassword(password);
+    const now = new Date().toISOString();
+    await this.store.transaction(async (tx) => {
+      const target = await tx.get<{ username: string }>('SELECT username FROM officers WHERE id = ?', officerId);
+      const actor = await tx.get<{ username: string; officer_code: string }>(
+        'SELECT username, officer_code FROM officers WHERE id = ?',
+        actorOfficerId,
+      );
+      if (!target || !actor) throw new Error('officer or password-change actor was not found');
+      await tx.run(
+        'UPDATE officers SET pass_salt = ?, pass_hash = ? WHERE id = ?',
+        credentials.salt,
+        credentials.hash,
+        officerId,
+      );
+      await tx.run('DELETE FROM sessions WHERE officer_id = ?', officerId);
+      await tx.run(
+        `INSERT INTO server_audit (officer_code, actor, action, subject, at, detail)
+         VALUES (?,?,?,?,?,?)`,
+        actor.officer_code,
+        actor.username,
+        'officer-password-changed',
+        String(officerId),
+        now,
+        null,
+      );
+    });
   }
 
   async audit(actor: string, action: string, subject: string | null, detail?: string): Promise<void> {
     await this.store.run(
-      'INSERT INTO server_audit (actor, action, subject, at, detail) VALUES (?,?,?,?,?)',
-      actor, action, subject, new Date().toISOString(), detail ?? null
+      `INSERT INTO server_audit (officer_code, actor, action, subject, at, detail)
+       VALUES ((SELECT officer_code FROM officers WHERE username = ?),?,?,?,?,?)`,
+      actor,
+      actor,
+      action,
+      subject,
+      new Date().toISOString(),
+      detail ?? null,
     );
   }
 
