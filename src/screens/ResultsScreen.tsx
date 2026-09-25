@@ -45,7 +45,6 @@ import {
   ReadingRow,
   StateBanner,
   BannerPill,
-  LightKineticsChart,
   LightSwatch,
   OutcomeTag,
   GradeBadge,
@@ -71,23 +70,28 @@ const round2safe = (v: number) => Math.round(v * 100) / 100;
 
 export const ResultsScreen: React.FC = () => {
   const navigation = useNavigation<Nav>();
-  const { setup, burst, decision, residual, kinetics, record, setSeal, setRecord, setStep, reset } =
+  const { setup, burst, decision, residual, record, setSeal, setRecord, setStep, reset } =
     useSessionStore();
   const appendRecord = useLedgerStore((s) => s.appendRecord);
   const officer = useAuthStore((s) => s.officer);
   const operator = officer?.id ?? 'UNAUTHENTICATED';
   const packages = useLedgerStore((s) => s.records).filter((r) => r.case_ref === setup.caseRef);
+  const engineLab = burst?.engineResult?.normalizedColor?.lab;
+  const measuredLab = engineLab
+    ? { l: engineLab.L, a: engineLab.a, b: engineLab.b }
+    : null;
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [sealing, setSealing] = useState(false);
   const [sealImageNote, setSealImageNote] = useState<string | null>(null);
+  const [sealError, setSealError] = useState<string | null>(null);
 
   // Frozen at mount: the device clock reading quoted to the officer is the one
   // that will be written into the payload (honesty: no drifting timestamp).
   const nowIso = useMemo(() => new Date().toISOString(), []);
 
   /* ---------- Honest empty state: arrived with no completed analysis ---------- */
-  if (!decision || !residual || !burst) {
+  if (!decision || !residual || !burst || !measuredLab) {
     return (
       <View style={styles.screen}>
         <StatusBar barStyle="dark-content" />
@@ -120,8 +124,8 @@ export const ResultsScreen: React.FC = () => {
           />
           <View style={styles.card}>
             <Text style={styles.cardSubtext}>
-              Run the guided capture first. The wizard records setup, captures the reagent burst,
-              runs the colourimetric pipeline, and only then produces a tenderable outcome.
+              Run the guided capture first. The wizard records setup, captures one real camera photo,
+              sends it to the self-hosted camera-engine, and only then produces a presumptive outcome.
             </Text>
             <TouchableOpacity
               style={styles.primaryBtn}
@@ -134,7 +138,10 @@ export const ResultsScreen: React.FC = () => {
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.secondaryBtn}
-              onPress={() => navigation.navigate('Home')}
+              onPress={() => {
+                reset();
+                navigation.navigate('Home');
+              }}
               accessibilityRole="button"
               accessibilityLabel="Return to duty screen"
             >
@@ -149,31 +156,45 @@ export const ResultsScreen: React.FC = () => {
   /* ---------- Derived readings ---------- */
   const kind = decision.outcome.kind;
   const abstained = kind === 'INCONCLUSIVE';
+  const engineResult = burst.engineResult;
+  const engineDeltaE = engineResult?.classification.bestDeltaE00 ?? null;
   const deltaE =
     'deltaE' in decision.outcome
       ? round2safe(decision.outcome.deltaE)
-      : round2safe(kinetics && kinetics.length ? kinetics[kinetics.length - 1].delta_e : 0);
+      : engineDeltaE === null
+        ? null
+        : round2safe(engineDeltaE);
+  const deltaEText = deltaE === null ? 'N/A' : deltaE.toFixed(2);
+  const sealBlockedReason =
+    deltaE === null
+      ? 'Sealing is blocked until the engine supplies a finite ΔE00 distance.'
+      : !burst.photoPath
+        ? 'Sealing is blocked until the captured camera URI is available.'
+        : null;
   const sealed = record !== null;
 
 
   const sealNow = async () => {
     setSealing(true);
+    setSealError(null);
     try {
+      if (deltaE === null) throw new Error('No finite ΔE00 distance is available for this reading.');
       const uuid = makeRecordUuid();
-      // v2-F: camera bytes (real device builds) become hashed evidence BEFORE sealing;
-      // the simulator honestly yields null + reason — never a stand-in digest.
       const ev = await saveEvidenceImage(burst.photoPath ? { uuid, uri: burst.photoPath } : { uuid });
-      // v2: geotag is best-effort — denied/no-fix/timeout honestly yields null (never a placeholder).
-      const geo = await acquireGeoTag();
-      let imageRef: string | null = null;
-      let imageSha256: string | null = null;
-      if (ev.saved) {
-        imageRef = ev.saved.ref;
-        imageSha256 = ev.saved.sha256;
-        setSealImageNote(null);
-      } else {
-        setSealImageNote(ev.reason);
+      // The engine hash is over the exact uploaded photo. Re-hash the durable
+      // copy before sealing; a mismatch means the record would not describe the
+      // bytes that were analysed.
+      if (engineResult && (!ev.saved || ev.saved.sha256 !== engineResult.image.sha256)) {
+        throw new Error(
+          ev.saved
+            ? `Evidence hash mismatch (engine ${engineResult.image.sha256.slice(0, 12)}…; saved ${ev.saved.sha256.slice(0, 12)}…).`
+            : `The camera photo could not be persisted as evidence: ${ev.reason}`,
+        );
       }
+      const geo = await acquireGeoTag();
+      const imageRef = ev.saved?.ref ?? null;
+      const imageSha256 = ev.saved?.sha256 ?? null;
+      setSealImageNote(ev.saved ? null : ev.reason);
       const created = await appendRecord({
         imageRef,
         imageSha256,
@@ -187,26 +208,23 @@ export const ResultsScreen: React.FC = () => {
         kit_make: setup.kitMake || undefined,
         kit_lot_no: setup.kitLotNo || undefined,
         lab: {
-          l: Math.round(burst.meanObservation[0] * 100) / 100,
-          a: Math.round(burst.meanObservation[1] * 100) / 100,
-          b: Math.round(burst.meanObservation[2] * 100) / 100,
+          l: Math.round(measuredLab.l * 100) / 100,
+          a: Math.round(measuredLab.a * 100) / 100,
+          b: Math.round(measuredLab.b * 100) / 100,
         },
         residual,
         outcome: decision.outcome.kind,
         confidence: decision.confidence,
-        deltaE:
-          'deltaE' in decision.outcome
-            ? round2safe(decision.outcome.deltaE)
-            : round2safe(kinetics && kinetics.length ? kinetics[kinetics.length - 1].delta_e : 0),
+        deltaE,
         conformalSet: decision.conformalSet,
         abstentionReason: decision.abstentionReason ?? null,
-        created_at: new Date().toISOString(),
+        created_at: nowIso,
         operator,
         operatorName: officer?.name ?? 'Unknown Officer',
         officerRole: officer?.role ?? 'ADMIN',
-        kinetics: kinetics ?? undefined,
         gps: geo ?? undefined,
-        isDemo: false,
+        isDemo: Boolean(engineResult && (engineResult.profile.demoMode || engineResult.profile.status !== 'VALIDATED')),
+        engineResult,
       });
       setRecord(created);
       // G-D1/G-D3: seal updates the case context so the next lap pre-fills seamlessly.
@@ -226,6 +244,8 @@ export const ResultsScreen: React.FC = () => {
         sealState: created.sealState,
       });
       setConfirmOpen(false);
+    } catch (error) {
+      setSealError(error instanceof Error ? error.message : 'The record could not be sealed.');
     } finally {
       setSealing(false);
     }
@@ -269,6 +289,22 @@ export const ResultsScreen: React.FC = () => {
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
 
 
+        {engineResult && engineResult.profile.status !== 'VALIDATED' ? (
+          <View style={styles.card}>
+            <Text style={styles.cardEyebrow}>PROFILE STATUS · UNVALIDATED</Text>
+            <Text style={styles.cardHeading}>
+              {engineResult.profile.status === 'PENDING_VALIDATION'
+                ? 'Printed mock profile — pending validation'
+                : 'Profile is not laboratory validated'}
+            </Text>
+            <Text style={styles.cardSubtext}>
+              {engineResult.profile.demoMode
+                ? 'This event was produced in explicit SIH demo mode. It is visibly marked as demo/unvalidated and must not be treated as chemical identification or laboratory confirmation.'
+                : 'The camera-engine did not authorize a validated classification. Any retained event remains an unvalidated measurement.'}
+            </Text>
+          </View>
+        ) : null}
+
         {/* ============ PRIMARY OUTCOME STATE (tri-modal: color + icon + text) ============ */}
         {kind === 'CONSISTENT_WITH_REAGENT_POSITIVE' ? (
           <StateBanner
@@ -289,9 +325,9 @@ export const ResultsScreen: React.FC = () => {
                 value={abstained ? '—' : `${Math.round(decision.confidence * 100)}%`}
                 tint={T.successText}
               />
-              <BannerPill label="ΔE00 DISTANCE" value={deltaE.toFixed(2)} tint={T.successText} />
+              <BannerPill label="ΔE00 DISTANCE" value={deltaEText} tint={T.successText} />
               <BannerPill label="RESIDUAL GATE" value={residual.grade} tint={T.successText} />
-              <BannerPill label="FRAMES" value={`${burst.frames.length}`} tint={T.successText} />
+              <BannerPill label="PHOTO" value="1" tint={T.successText} />
             </View>
           </StateBanner>
         ) : kind === 'CONSISTENT_WITH_REAGENT_NEGATIVE' ? (
@@ -314,9 +350,9 @@ export const ResultsScreen: React.FC = () => {
                 value={abstained ? '—' : `${Math.round(decision.confidence * 100)}%`}
                 tint={T.textPrimary}
               />
-              <BannerPill label="ΔE00 DISTANCE" value={deltaE.toFixed(2)} tint={T.textPrimary} />
+              <BannerPill label="ΔE00 DISTANCE" value={deltaEText} tint={T.textPrimary} />
               <BannerPill label="RESIDUAL GATE" value={residual.grade} tint={T.textPrimary} />
-              <BannerPill label="FRAMES" value={`${burst.frames.length}`} tint={T.textPrimary} />
+              <BannerPill label="PHOTO" value="1" tint={T.textPrimary} />
             </View>
           </StateBanner>
         ) : (
@@ -334,9 +370,9 @@ export const ResultsScreen: React.FC = () => {
             </Text>
             <View style={styles.pillRow}>
               <BannerPill label="ABSTENTION" value={decision.abstentionReason?.toUpperCase() ?? 'RECORDED'} tint={T.marginalText} />
-              <BannerPill label="ΔE00 DISTANCE" value={deltaE.toFixed(2)} tint={T.marginalText} />
+              <BannerPill label="ΔE00 DISTANCE" value={deltaEText} tint={T.marginalText} />
               <BannerPill label="RESIDUAL GATE" value={residual.grade} tint={T.marginalText} />
-              <BannerPill label="FRAMES" value={`${burst.frames.length}`} tint={T.marginalText} />
+              <BannerPill label="PHOTO" value="1" tint={T.marginalText} />
             </View>
           </StateBanner>
         )}
@@ -373,27 +409,29 @@ export const ResultsScreen: React.FC = () => {
         {/* ============ MEASUREMENT REGISTER ============ */}
         <View style={styles.card}>
           <Text style={styles.cardEyebrow}>MEASUREMENT REGISTER</Text>
-          <Text style={styles.cardHeading}>Corrected CIELAB — Burst Aggregate</Text>
+          <Text style={styles.cardHeading}>Corrected CIELAB — Camera-engine photo</Text>
           <Text style={styles.cardSubtext}>
-            White-balanced (grey-ramp spline), von Kries adapted, camera-profile corrected.
-            Decision is a transparent ΔE00/Mahalanobis distance — not a black-box classifier.
+            The image was analysed by the Dockerized camera-engine using the printed card's
+            ArUco geometry, 16-patch calibration, CIELAB correction, and CIEDE2000 distance.
+            One live camera photo; no burst average, covariance proxy, or reaction-time series is substituted.
           </Text>
 
           <View style={styles.labBlock}>
             <View style={styles.swatchBox}>
-              <LightSwatch lab={{ l: burst.meanObservation[0], a: burst.meanObservation[1], b: burst.meanObservation[2] }} size={50} />
+              <LightSwatch lab={measuredLab} size={50} />
             </View>
             <View style={styles.labStats}>
-              <ReadingRow label="L* (lightness)" value={burst.meanObservation[0].toFixed(2)} />
-              <ReadingRow label="a* (green ↔ red)" value={signed(burst.meanObservation[1])} />
-              <ReadingRow label="b* (blue ↔ yellow)" value={signed(burst.meanObservation[2])} />
-              <ReadingRow label="Burst frames" value={`${burst.frames.length} aggregated`} />
+              <ReadingRow label="L* (lightness)" value={measuredLab.l.toFixed(2)} />
+              <ReadingRow label="a* (green ↔ red)" value={signed(measuredLab.a)} />
+              <ReadingRow label="b* (blue ↔ yellow)" value={signed(measuredLab.b)} />
+              <ReadingRow label="Photo captured" value="1 · camera URI" />
+              <ReadingRow label="Engine profile" value={engineResult ? `${engineResult.profile.kitProfileId} · ${engineResult.profile.status}` : 'N/A'} />
               <ReadingRow
                 label="Evidence image"
                 value={
                   record?.imageSha256
                     ? `ATTACHED · sha256 ${record.imageSha256.slice(0, 12)}… (${record.imageRef})`
-                    : `NOT AVAILABLE — ${sealImageNote ?? 'simulated acquisition: no camera bytes reach this build (device pass attaches them)'}`
+                    : `NOT AVAILABLE — ${sealImageNote ?? 'no durable camera bytes are attached'}`
                 }
               />
             </View>
@@ -416,32 +454,42 @@ export const ResultsScreen: React.FC = () => {
 
         {/* ============ CONFORMAL SET ============ */}
         <View style={styles.card}>
-          <Text style={styles.cardEyebrow}>STATISTICAL SCOPE</Text>
-          <Text style={styles.cardHeading}>Conformal Set — What This Reading Is Consistent With</Text>
+          <Text style={styles.cardEyebrow}>DECISION SCOPE</Text>
+          <Text style={styles.cardHeading}>Engine Decision — Legal Outcome</Text>
           <View style={styles.chipRow}>
             {decision.conformalSet.length > 0 ? (
               decision.conformalSet.map((c) => (
-                <View key={c} style={[styles.outcomeTag, c === 'POSITIVE' ? styles.outcomeTagPositive : styles.outcomeTagNegative]}>
+                <View
+                  key={c}
+                  style={[
+                    styles.outcomeTag,
+                    c === 'CONSISTENT_WITH_REAGENT_POSITIVE'
+                      ? styles.outcomeTagPositive
+                      : c === 'CONSISTENT_WITH_REAGENT_NEGATIVE'
+                        ? styles.outcomeTagNegative
+                        : styles.outcomeTagInconclusive,
+                  ]}
+                >
                   <Icon
-                    name={c === 'POSITIVE' ? 'check' : 'minus'}
+                    name={c === 'CONSISTENT_WITH_REAGENT_POSITIVE' ? 'check' : c === 'CONSISTENT_WITH_REAGENT_NEGATIVE' ? 'minus' : 'alert'}
                     size={13}
-                    color={c === 'POSITIVE' ? T.successText : T.textSecondary}
+                    color={c === 'CONSISTENT_WITH_REAGENT_POSITIVE' ? T.successText : T.textSecondary}
                     strokeWidth={2.5}
                   />
                   <Text
                     style={[
                       styles.outcomeTagText,
-                      { color: c === 'POSITIVE' ? T.successText : T.textSecondary },
+                      { color: c === 'CONSISTENT_WITH_REAGENT_POSITIVE' ? T.successText : T.textSecondary },
                     ]}
                   >
-                    {c}
+                    {c === 'CONSISTENT_WITH_REAGENT_POSITIVE' ? 'POSITIVE' : c === 'CONSISTENT_WITH_REAGENT_NEGATIVE' ? 'NEGATIVE' : c}
                   </Text>
                 </View>
               ))
             ) : (
               <View style={[styles.outcomeTag, styles.outcomeTagInconclusive]}>
                 <Icon name="alert" size={13} color={T.marginalText} strokeWidth={2.5} />
-                <Text style={[styles.outcomeTagText, { color: T.marginalText }]}>EMPTY SET — χ² NOVELTY GUARD FIRED</Text>
+                <Text style={[styles.outcomeTagText, { color: T.marginalText }]}>NO CLOSE ENGINE MATCH</Text>
               </View>
             )}
           </View>
@@ -451,15 +499,7 @@ export const ResultsScreen: React.FC = () => {
           </Text>
         </View>
 
-        {/* ============ REACTION KINETICS ============ */}
-        {kinetics && kinetics.length > 1 ? (
-          <View style={styles.card}>
-            <Text style={styles.cardEyebrow}>REACTION KINETICS — PHASE 6</Text>
-            <Text style={styles.cardHeading}>ΔE00 Over Time</Text>
-            <Text style={styles.cardSubtext}>30 s window reconstructed from burst frame timestamps.</Text>
-            <LightKineticsChart points={kinetics} />
-          </View>
-        ) : null}
+        {/* No reaction-time series is inferred from a single camera photo. */}
 
         {/* ============ SEALING STATE ============ */}
         {sealed ? (
@@ -557,7 +597,10 @@ export const ResultsScreen: React.FC = () => {
 
             <TouchableOpacity
               style={styles.returnDutyBtn}
-              onPress={() => navigation.navigate('Home')}
+              onPress={() => {
+                reset();
+                navigation.navigate('Home');
+              }}
               accessibilityRole="button"
               accessibilityLabel="Return to duty screen"
             >
@@ -574,18 +617,26 @@ export const ResultsScreen: React.FC = () => {
               payload (RFC 8785) and links it with SHA-256 to the previous record. The ledger is
               append-only: sealed readings can never be edited or deleted.
             </Text>
+            {sealBlockedReason ? <Text style={styles.setNote}>{sealBlockedReason}</Text> : null}
             <TouchableOpacity
-              style={styles.primaryBtn}
+              style={[styles.primaryBtn, sealBlockedReason && styles.primaryBtnDisabled]}
               onPress={() => setConfirmOpen(true)}
+              disabled={Boolean(sealBlockedReason)}
               accessibilityRole="button"
               accessibilityLabel="Seal this reading and add it to the ledger"
+              accessibilityState={{ disabled: Boolean(sealBlockedReason) }}
             >
               <Icon name="shield" size={20} color="#FFFFFF" strokeWidth={2.5} />
-              <Text style={styles.primaryBtnText}>SEAL & ADD TO LEDGER</Text>
+              <Text style={styles.primaryBtnText}>
+                {sealBlockedReason ? 'SEAL UNAVAILABLE — ENGINE INCONCLUSIVE' : 'SEAL & ADD TO LEDGER'}
+              </Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.secondaryBtn, styles.mt10]}
-              onPress={() => navigation.navigate('Home')}
+              onPress={() => {
+                reset();
+                navigation.navigate('Home');
+              }}
               accessibilityRole="button"
               accessibilityLabel="Return to duty without sealing"
             >
@@ -638,10 +689,13 @@ export const ResultsScreen: React.FC = () => {
                     case_ref: setup.caseRef,
                     package_no: setup.packageNo,
                     reagent: setup.reagent,
-                    corrected_lab: burst.meanObservation,
+                    corrected_lab: measuredLab,
                     calibration_residual: residual,
                     outcome: decision.outcome.kind,
                     confidence: decision.confidence,
+                    engine_profile: engineResult?.profile.kitProfileId ?? null,
+                    engine_status: engineResult?.profile.status ?? null,
+                    image_sha256: engineResult?.image.sha256 ?? null,
                     operator_id: operator,
                     created_at: nowIso,
                   },
@@ -651,6 +705,7 @@ export const ResultsScreen: React.FC = () => {
               </Text>
             </View>
 
+            {sealError ? <Text style={styles.setNote}>{sealError}</Text> : null}
             <TouchableOpacity
               style={[styles.primaryBtn, sealing && styles.primaryBtnDisabled]}
               onPress={() => void sealNow()}

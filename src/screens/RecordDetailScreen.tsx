@@ -307,7 +307,7 @@ export const RecordDetailScreen: React.FC<{ route: DetailRoute }> = ({ route }) 
               value={
                 record.imageSha256
                   ? `ATTACHED · sha256 ${record.imageSha256.slice(0, 16)}… · ${record.imageRef ?? 'stored'}`
-                  : 'NOT AVAILABLE — simulated acquisition build (device builds attach the hashed camera frame)'
+                  : 'NOT AVAILABLE — no durable photo was attached to this record'
               }
               wide
             />
@@ -361,10 +361,10 @@ export const RecordDetailScreen: React.FC<{ route: DetailRoute }> = ({ route }) 
         <View style={styles.card}>
           <Text style={styles.cardEyebrow}>MEASUREMENT REGISTER — WHAT WAS SEEN</Text>
           <View style={styles.cardHeaderRow}>
-            <Text style={styles.cardHeading}>Corrected CIELAB — Sealed Burst Aggregate</Text>
+            <Text style={styles.cardHeading}>Corrected CIELAB — Sealed camera-engine measurement</Text>
             <GradeBadge grade={record.residual.grade} />
           </View>
-          <Text style={styles.cardSubtext}>{GRADE_COPY[record.residual.grade].note} — decision is transparent ΔE00/Mahalanobis distance, not a black-box classifier.</Text>
+          <Text style={styles.cardSubtext}>{GRADE_COPY[record.residual.grade].note} — decision is transparent CIEDE2000 distance, not a black-box classifier.</Text>
           <View style={styles.labBlock}>
             <View style={styles.swatchBox}>
               <LightSwatch lab={record.lab} size={50} />
@@ -375,27 +375,64 @@ export const RecordDetailScreen: React.FC<{ route: DetailRoute }> = ({ route }) 
               <ReadingRow label="b* (blue ↔ yellow)" value={signed(record.lab.b)} />
               <ReadingRow label="Mean residual" value={`${record.residual.meanDeltaE.toFixed(2)} ΔE00`} />
               <ReadingRow label="Max residual" value={`${record.residual.maxDeltaE.toFixed(2)} ΔE00`} />
+              <ReadingRow
+                label="Engine profile"
+                value={record.engineResult ? `${record.engineResult.profile.kitProfileId} · ${record.engineResult.profile.status}` : 'not recorded'}
+              />
+              <ReadingRow
+                label="Engine outcome"
+                value={record.engineResult?.classification.outcome ?? 'not recorded'}
+              />
             </View>
           </View>
-          <Text style={[styles.cardEyebrow, styles.mtTop]}>CONFORMAL SET</Text>
+          <Text style={[styles.cardEyebrow, styles.mtTop]}>ENGINE CANDIDATE SET</Text>
           <View style={styles.chipRow}>
             {record.conformalSet.length > 0 ? (
               record.conformalSet.map((c) => (
-                <View key={c} style={[styles.tag, c === 'POSITIVE' ? styles.tagPositive : styles.tagNegative]}>
-                  <Icon name={c === 'POSITIVE' ? 'check' : 'minus'} size={13} color={c === 'POSITIVE' ? T.successText : T.textSecondary} strokeWidth={2.5} />
-                  <Text style={[styles.tagText, { color: c === 'POSITIVE' ? T.successText : T.textSecondary }]}>{c}</Text>
+                <View
+                  key={c}
+                  style={[
+                    styles.tag,
+                    c === 'POSITIVE' || c === 'CONSISTENT_WITH_REAGENT_POSITIVE'
+                      ? styles.tagPositive
+                      : styles.tagNegative,
+                  ]}
+                >
+                  <Icon
+                    name={c === 'POSITIVE' || c === 'CONSISTENT_WITH_REAGENT_POSITIVE' ? 'check' : 'minus'}
+                    size={13}
+                    color={
+                      c === 'POSITIVE' || c === 'CONSISTENT_WITH_REAGENT_POSITIVE'
+                        ? T.successText
+                        : T.textSecondary
+                    }
+                    strokeWidth={2.5}
+                  />
+                  <Text
+                    style={[
+                      styles.tagText,
+                      {
+                        color:
+                          c === 'POSITIVE' || c === 'CONSISTENT_WITH_REAGENT_POSITIVE'
+                            ? T.successText
+                            : T.textSecondary,
+                      },
+                    ]}
+                  >
+                    {c}
+                  </Text>
                 </View>
               ))
             ) : (
               <View style={[styles.tag, styles.tagWarning]}>
                 <Icon name="alert" size={13} color={T.marginalText} strokeWidth={2.5} />
-                <Text style={[styles.tagText, { color: T.marginalText }]}>EMPTY SET — χ² NOVELTY GUARD FIRED</Text>
+                <Text style={[styles.tagText, { color: T.marginalText }]}>NO CANDIDATE MATCH</Text>
               </View>
             )}
           </View>
-          {record.kinetics && record.kinetics.length > 1 ? (
+          {!record.engineResult && record.kinetics && record.kinetics.length > 1 ? (
             <>
-              <Text style={[styles.cardEyebrow, styles.mtTop]}>REACTION KINETICS — ΔE(t), 30 s WINDOW</Text>
+              <Text style={[styles.cardEyebrow, styles.mtTop]}>LEGACY REACTION KINETICS — ΔE(t), 30 s WINDOW</Text>
               <LightKineticsChart points={record.kinetics} />
             </>
           ) : null}

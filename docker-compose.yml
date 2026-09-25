@@ -8,6 +8,8 @@
 #   POSTGRES_PORT   host port for the DB        (default 55433, loopback-only)
 #   API_PORT        host port for the API       (default 8571)
 #   API_BIND        host interface for the API  (default 127.0.0.1; 0.0.0.0 to expose on LAN)
+#   ENGINE_PORT     host port for the camera engine (default 8572)
+#   ENGINE_BIND     host interface for the camera engine (default 127.0.0.1)
 # All container ports are fixed internally; only the host-side mapping is configurable.
 
 services:
@@ -69,6 +71,62 @@ services:
       timeout: 3s
       retries: 5
       start_period: 10s
+    networks: [parinaam]
+
+  # -------------------------------------------------------------- camera-engine image service
+  # Runs only the reviewed Python/OpenCV image path in its own image. It has no DB,
+  # no API credentials, no runtime downloads, and never writes a result to disk.
+  camera-engine:
+    image: parinaam-camera-engine:local
+    build:
+      context: ./camera-engine
+      dockerfile: service/Dockerfile
+    restart: unless-stopped
+    environment:
+      CAMERA_ENGINE_GEOMETRY: /app/config/card_v1_geometry.yaml
+      # Keep 0 in production. Set 1 only for the explicitly labelled printed-mock SIH demo.
+      CAMERA_ENGINE_DEMO_MODE: ${CAMERA_ENGINE_DEMO_MODE:-0}
+      ENGINE_PORT: 8572
+    ports:
+      - "${ENGINE_BIND:-127.0.0.1}:${ENGINE_PORT:-8572}:8572"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1G
+          pids: 128
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8572/readyz', timeout=2).read()"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+    networks: [parinaam]
+
+  # -------------------------------------------------------------- camera-engine unit tests
+  camera-engine-test:
+    image: parinaam-camera-engine:local
+    build:
+      context: ./camera-engine
+      dockerfile: service/Dockerfile
+    profiles: ["test"]
+    environment:
+      CAMERA_ENGINE_GEOMETRY: /app/config/card_v1_geometry.yaml
+      CAMERA_ENGINE_DEMO_MODE: ${CAMERA_ENGINE_DEMO_MODE:-0}
+    command: ["python", "-m", "unittest", "discover", "-s", "/app/service", "-p", "test_*.py"]
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
     networks: [parinaam]
 
   # -------------------------------------------------------------- demo data seed (one-shot)

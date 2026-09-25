@@ -80,7 +80,7 @@ export async function saveEvidenceImage(
   deps?: EvidenceFsDeps
 ): Promise<EvidenceSaveResult> {
   if (!input.uuid) return { saved: null, reason: 'no record uuid supplied' };
-  if (!input.uri && !input.base64) return { saved: null, reason: 'no camera bytes supplied (simulated acquisition)' };
+  if (!input.uri && !input.base64) return { saved: null, reason: 'no camera bytes supplied for this record' };
 
   const fsDeps = deps ?? (await defaultDeps());
   if (!fsDeps) {

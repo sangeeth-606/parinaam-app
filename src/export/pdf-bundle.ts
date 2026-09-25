@@ -210,8 +210,8 @@ export class CourtPdfBundleGenerator {
     <table>
       <tr><th>Reagent Kit Used</th><td>${record.reagent.toUpperCase()} Field Spot Test Pouch</td></tr>
       <tr><th>Presumptive Outcome</th><td><strong style="font-size:11pt; color:#0b3d91;">${record.outcome}</strong></td></tr>
-      <tr><th>Statistical Confidence</th><td>${(record.confidence * 100).toFixed(1)}% (Mondrian Conformal Coverage 95%)</td></tr>
-      <tr><th>Conformal Candidate Set</th><td>${record.conformal_set}</td></tr>
+      <tr><th>Measurement confidence</th><td>${(record.confidence * 100).toFixed(1)}% (uncalibrated unless the profile is validated)</td></tr>
+      <tr><th>Engine candidate set</th><td>${record.conformal_set}</td></tr>
       <tr><th>Calibration Residual</th><td>${record.calib_residual_mean.toFixed(2)} ΔE00 (${record.calib_grade})</td></tr>
       <tr><th>Normalized CIELAB (L*, a*, b*)</th><td>L*=${record.corrected_lab_l.toFixed(2)}, a*=${record.corrected_lab_a.toFixed(2)}, b*=${record.corrected_lab_b.toFixed(2)}</td></tr>
     </table>

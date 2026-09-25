@@ -15,6 +15,7 @@
 
 import { create } from 'zustand';
 import type { LabValue, CalibrationResidual } from '../types/contracts';
+import type { CameraEngineResult } from '../capture/camera-engine-contract.ts';
 import type {
   AbstentionReason,
   KineticPoint,
@@ -34,6 +35,7 @@ import {
   initLedgerDb,
   ledgerDbMeta,
   persistRecord,
+  persistEngineResult,
   queueForSync,
   markSyncedDb,
   resetLedgerFile,
@@ -68,6 +70,7 @@ export interface LedgerRecord {
   gps?: { lat: number; lon: number; accuracyM?: number; mocked: boolean };
   imageRef?: string | null;
   imageSha256?: string | null;
+  engineResult?: CameraEngineResult;
   // Chain + seal (real digests):
   payloadJcs: string;
   payloadSha256: string;
@@ -238,6 +241,7 @@ export const useLedgerStore = create<LedgerState>((set, get) => ({
     // Persist for real (phase C): write-through + outbox queue row + audit entry.
     try {
       await persistRecord(record);
+      if (record.engineResult) await persistEngineResult(record.record_uuid, record.engineResult);
       await queueForSync(record.record_uuid, record.record_uuid);
     } catch {
       // The file write failed — surface via persistence facts on next read; the in-memory

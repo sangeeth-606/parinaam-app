@@ -1,22 +1,23 @@
 /**
  * Analysis Pipeline — orchestration used by the New Test wizard.
  *
- * Runs the REAL engines (BurstManager aggregates → DecisionEngine (Mahalanobis +
- * conformal) → canonical JSON → hash chain → attestation attempt). Nothing here
- * re-implements decision math; this module only sequences engines and records the
- * ACHIEVED seal state honestly (constraint 10).
+ * Legacy sealing helpers retained for compatibility. The production wizard does
+ * not use a burst/QDA/kinetics path: CameraView sends one real photo to the
+ * self-hosted camera-engine, and ResultsScreen persists its explicit result.
+ * The legacy measurement helpers below fail closed rather than manufacturing
+ * observations.
  */
 
 import type { LabValue, CalibrationResidual, DecisionResult } from '../types/contracts';
 import type { CalibrationGrade, KineticPoint } from '../types/domain';
-import { DecisionEngine } from '../classify/decision-engine.ts';
+import type { DecisionEngine } from '../classify/decision-engine.ts';
 import { canonicalizeJson } from '../crypto/canonical-json.ts';
 import { calculateChainHash } from '../crypto/hash-chain.ts';
 import { SealingService } from '../crypto/sealer.ts';
 
-/** Master calibration residual gate (spec 03-phase-2 Task 2.8). */
+/** Legacy grade helper; the canonical camera-engine gate is 5.0 ΔE00. */
 export const RESIDUAL_GOOD_MAX = 2.5;
-export const RESIDUAL_REJECT_ABOVE = 4.0;
+export const RESIDUAL_REJECT_ABOVE = 5.0;
 
 export type GateGrade = CalibrationGrade | 'REJECT';
 
@@ -26,29 +27,17 @@ export function gradeResidual(meanDeltaE: number): GateGrade {
   return 'REJECT';
 }
 
-/**
- * Honest proxy residual for the simulated acquisition path: spread of the burst's
- * (a*, b*) measurement covariance projected to a ΔE00-like magnitude. Real device
- * builds replace the input with the 24-patch LOO residual from the colour pipeline.
- */
-export function residualFromBurstCovariance(cov2x2: number[][]): CalibrationResidual {
-  const varA = cov2x2[0]?.[0] ?? 0;
-  const varB = cov2x2[1]?.[1] ?? 0;
-  const meanDeltaE = Math.min(6, Math.sqrt(varA + varB));
-  return {
-    meanDeltaE: round2(meanDeltaE),
-    maxDeltaE: round2(meanDeltaE * 1.8 + 0.4),
-    grade: gradeResidual(meanDeltaE),
-  };
+/** Legacy compatibility hook; production records must carry engine residuals. */
+export function residualFromBurstCovariance(_cov2x2: number[][]): CalibrationResidual {
+  throw new Error('Burst covariance residuals are disabled; use camera-engine calibration.');
 }
 
 export function classifyReading(
-  lab: LabValue,
-  covariance: number[][],
-  reagent: Parameters<DecisionEngine['classify']>[2]
+  _lab: LabValue,
+  _covariance: number[][],
+  _reagent: Parameters<DecisionEngine['classify']>[2]
 ): Promise<DecisionResult> {
-  const engine = new DecisionEngine();
-  return engine.classify(lab, covariance, reagent);
+  return Promise.reject(new Error('Legacy QDA classification is disabled; use the camera-engine adapter.'));
 }
 
 /* ----------------------------- sealing ----------------------------- */
@@ -105,27 +94,15 @@ export async function buildSealedRecord(
 
 /* ----------------------------- kinetics ----------------------------- */
 
-/** Deterministic-ish sigmoid reaction trajectory for the 30 s ΔE(t) plot (M6.1). */
+/** Legacy compatibility hook; a single still photo has no kinetic series. */
 export function synthesizeKinetics(
-  plateauDeltaE: number,
-  durationMs: number,
-  t50Ms: number,
-  sampleIntervalMs = 500,
-  seed = 7
+  _plateauDeltaE: number,
+  _durationMs: number,
+  _t50Ms: number,
+  _sampleIntervalMs = 500,
+  _seed = 7
 ): KineticPoint[] {
-  const points: KineticPoint[] = [{ t_ms: 0, delta_e: 0 }];
-  let rnd = seed;
-  const next = () => {
-    rnd = (rnd * 9301 + 49297) % 233280;
-    return rnd / 233280;
-  };
-  const k = 8.2 / t50Ms; // logistic steepness ≈ 4 decades at t50
-  for (let t = sampleIntervalMs; t <= durationMs; t += sampleIntervalMs) {
-    const base = plateauDeltaE / (1 + Math.exp(-k * (t - t50Ms)));
-    const jitter = (next() - 0.5) * 0.12;
-    points.push({ t_ms: t, delta_e: Math.max(0, round2(base + jitter)) });
-  }
-  return points;
+  throw new Error('Synthetic kinetics are disabled; capture a real time series explicitly.');
 }
 
 /* ----------------------------- misc ----------------------------- */

@@ -18,10 +18,30 @@ import { openSyncSqlite } from '../sync/db-shim.ts';
 import { getServerCredentials } from '../sync/server-credentials.ts';
 import { pendingCountDb, pendingEntriesDb, appendAuditDb, getAppStateDb, setAppStateDb } from '../db/ledger-repository.ts';
 import { useLedgerStore } from '../state/ledger-store.ts';
+import { createCameraEngineClient, DEFAULT_CAMERA_ENGINE_URL } from '../capture/camera-engine-client.ts';
 
-export const DEFAULT_SERVER_URL = 'http://10.0.2.2:8571'; // Android emulator → host
+/** The local-stack launcher supplies a LAN URL; direct Metro runs keep the Android-emulator default. */
+export const DEFAULT_SERVER_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://10.0.2.2:8571';
+export const CAMERA_ENGINE_URL_PREF = 'camera_engine_url';
 const SERVER_URL_PREF = 'sync_server_url';
 const LOOP_MS = 60_000;
+
+function isLocalOnlyUrl(value: string): boolean {
+  return /^https?:\/\/(?:10\.0\.2\.2|127\.0\.0\.1|localhost)(?::\d+)?(?:\/|$)/i.test(value);
+}
+
+/**
+ * The launcher supplies a fresh LAN URL for physical-device runs. Migrate only
+ * the known emulator/loopback defaults; an explicit user-entered LAN endpoint
+ * remains untouched.
+ */
+function selectLauncherDefault(saved: string | null, fallback: string): string {
+  if (saved && saved.startsWith('http') && isLocalOnlyUrl(saved) && !isLocalOnlyUrl(fallback)) {
+    return fallback;
+  }
+  return saved && saved.startsWith('http') ? saved : fallback;
+}
+
 
 export interface CaseStatusEntry {
   status: string;
@@ -41,6 +61,8 @@ export interface SyncSummary {
 interface SyncState {
   ready: boolean;
   serverUrl: string;
+  cameraEngineUrl: string;
+  cameraEngineReachability: 'unknown' | 'up' | 'down';
   reachability: 'unknown' | 'up' | 'down';
   busy: boolean;
   needsLogin: boolean;
@@ -50,7 +72,9 @@ interface SyncState {
   statusFetchedAt: string | null;
   init: () => Promise<void>;
   setServerUrl: (url: string) => Promise<void>;
+  setCameraEngineUrl: (url: string) => Promise<void>;
   testConnection: () => Promise<boolean>;
+  testCameraEngine: () => Promise<boolean>;
   syncNow: () => Promise<SyncSummary>;
   refreshCases: () => Promise<void>;
 }
@@ -80,6 +104,8 @@ let tokenCached: (() => string | null) | null = null;
 export const useSyncStore = create<SyncState>((set, get) => ({
   ready: false,
   serverUrl: DEFAULT_SERVER_URL,
+  cameraEngineUrl: DEFAULT_CAMERA_ENGINE_URL,
+  cameraEngineReachability: 'unknown',
   reachability: 'unknown',
   busy: false,
   needsLogin: false,
@@ -89,10 +115,29 @@ export const useSyncStore = create<SyncState>((set, get) => ({
   statusFetchedAt: null,
 
   init: async () => {
-    const saved = await getAppStateDb(SERVER_URL_PREF);
-    const url = saved && saved.startsWith('http') ? saved : DEFAULT_SERVER_URL;
+    const [savedServer, savedEngine] = await Promise.all([
+      getAppStateDb(SERVER_URL_PREF),
+      getAppStateDb(CAMERA_ENGINE_URL_PREF),
+    ]);
+    const serverUrl = selectLauncherDefault(savedServer, DEFAULT_SERVER_URL);
+    let cameraEngineUrl = DEFAULT_CAMERA_ENGINE_URL;
+    if (savedEngine && savedEngine.startsWith('http')) {
+      try {
+        createCameraEngineClient({ baseUrl: savedEngine });
+        cameraEngineUrl = selectLauncherDefault(savedEngine, DEFAULT_CAMERA_ENGINE_URL);
+      } catch {
+        // A stale/corrupt preference falls back to the documented local default.
+      }
+    }
+    if (serverUrl !== savedServer) await setAppStateDb(SERVER_URL_PREF, serverUrl);
+    if (cameraEngineUrl !== savedEngine) await setAppStateDb(CAMERA_ENGINE_URL_PREF, cameraEngineUrl);
     enginePromise = null;
-    set({ serverUrl: url, ready: true, pendingCount: await pendingCountDb() });
+    set({
+      serverUrl,
+      cameraEngineUrl,
+      ready: true,
+      pendingCount: await pendingCountDb(),
+    });
   },
 
   setServerUrl: async (url) => {
@@ -102,10 +147,30 @@ export const useSyncStore = create<SyncState>((set, get) => ({
     await setAppStateDb(SERVER_URL_PREF, clean);
   },
 
+  setCameraEngineUrl: async (url) => {
+    const clean = url.trim().replace(/\/$/, '');
+    // Validate before persistence; a malformed local URL must not poison the
+    // capture screen or be mistaken for a reachable service.
+    createCameraEngineClient({ baseUrl: clean });
+    set({ cameraEngineUrl: clean, cameraEngineReachability: 'unknown' });
+    await setAppStateDb(CAMERA_ENGINE_URL_PREF, clean);
+  },
+
   testConnection: async () => {
     const res = await probeHealth(get().serverUrl);
     set({ reachability: res.ok ? 'up' : 'down' });
     return res.ok;
+  },
+
+  testCameraEngine: async () => {
+    try {
+      await createCameraEngineClient({ baseUrl: get().cameraEngineUrl }).health();
+      set({ cameraEngineReachability: 'up' });
+      return true;
+    } catch {
+      set({ cameraEngineReachability: 'down' });
+      return false;
+    }
   },
 
   syncNow: async () => {

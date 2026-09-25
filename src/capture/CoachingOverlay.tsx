@@ -5,15 +5,16 @@ import { colors, fontWeight } from '../theme';
 
 interface CoachingOverlayProps {
   qualityResult: DetailedQualityResult | null;
-  burstProgress?: { current: number; total: number };
+  photoProgress?: { current: number; total: number };
 }
 
 export const CoachingOverlay: React.FC<CoachingOverlayProps> = ({
   qualityResult,
-  burstProgress,
+  photoProgress,
 }) => {
+  const hasQuality = qualityResult !== null;
   const isPassing = qualityResult?.passed ?? false;
-  const message = qualityResult?.primaryCoachingMessage ?? (isPassing ? 'Card locked — capturing burst' : 'Position card in frame');
+  const message = qualityResult?.primaryCoachingMessage ?? (hasQuality ? (isPassing ? 'Card locked — capture ready' : 'Reposition the card and light') : 'Position the card, then capture one photo');
 
   return (
     <View style={styles.overlayContainer} pointerEvents="none">
@@ -21,13 +22,13 @@ export const CoachingOverlay: React.FC<CoachingOverlayProps> = ({
       <View
         style={[
           styles.coachingBanner,
-          isPassing ? styles.bannerPassing : styles.bannerWarning,
+          hasQuality ? (isPassing ? styles.bannerPassing : styles.bannerWarning) : styles.bannerNeutral,
         ]}
       >
         <Text style={styles.coachingText}>{message}</Text>
-        {burstProgress && burstProgress.total > 0 && (
-          <Text style={styles.burstText}>
-            Burst: {burstProgress.current}/{burstProgress.total} frames
+        {photoProgress && photoProgress.total > 0 && (
+          <Text style={styles.photoText}>
+            Photo: {photoProgress.current}/{photoProgress.total}
           </Text>
         )}
       </View>
@@ -47,16 +48,16 @@ export const CoachingOverlay: React.FC<CoachingOverlayProps> = ({
 
       {/* Bottom Quality Status Chips */}
       <View style={styles.chipsRow}>
-        <View style={[styles.chip, qualityResult?.report.isBlurry === false ? styles.chipOk : styles.chipAlert]}>
+        <View style={[styles.chip, !hasQuality ? styles.chipNeutral : qualityResult?.report.isBlurry === false ? styles.chipOk : styles.chipAlert]}>
           <Text style={styles.chipText}>SHARPNESS</Text>
         </View>
-        <View style={[styles.chip, qualityResult?.report.exposureOk ? styles.chipOk : styles.chipAlert]}>
+        <View style={[styles.chip, !hasQuality ? styles.chipNeutral : qualityResult?.report.exposureOk ? styles.chipOk : styles.chipAlert]}>
           <Text style={styles.chipText}>EXPOSURE</Text>
         </View>
-        <View style={[styles.chip, qualityResult?.report.hasGlare === false ? styles.chipOk : styles.chipAlert]}>
+        <View style={[styles.chip, !hasQuality ? styles.chipNeutral : qualityResult?.report.hasGlare === false ? styles.chipOk : styles.chipAlert]}>
           <Text style={styles.chipText}>NO GLARE</Text>
         </View>
-        <View style={[styles.chip, qualityResult?.framing.framingOk ? styles.chipOk : styles.chipAlert]}>
+        <View style={[styles.chip, !hasQuality ? styles.chipNeutral : qualityResult?.framing.framingOk ? styles.chipOk : styles.chipAlert]}>
           <Text style={styles.chipText}>DISTANCE</Text>
         </View>
       </View>
@@ -80,6 +81,9 @@ const styles = StyleSheet.create({
   bannerWarning: {
     backgroundColor: 'rgba(217, 119, 6, 0.92)', // statutory amber — coaching HUD surface
   },
+  bannerNeutral: {
+    backgroundColor: 'rgba(71, 85, 105, 0.92)',
+  },
   bannerPassing: {
     backgroundColor: 'rgba(16, 185, 129, 0.92)', // Emerald-500
   },
@@ -89,7 +93,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     textAlign: 'center',
   },
-  burstText: {
+  photoText: {
     color: colors.textSecondary,
     fontSize: 12,
     fontWeight: fontWeight.medium,
@@ -163,6 +167,9 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     paddingHorizontal: 10,
     borderRadius: 12,
+  },
+  chipNeutral: {
+    backgroundColor: 'rgba(100, 116, 139, 0.85)',
   },
   chipOk: {
     backgroundColor: 'rgba(16, 185, 129, 0.85)',

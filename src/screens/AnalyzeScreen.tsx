@@ -1,14 +1,14 @@
 /**
  * AnalyzeScreen — Wizard Step 3 · Transparent Pipeline Runner
  *
- * Renders the REAL colour pipeline end-to-end with staged, explainable progress
- * (audit H3): burst covariance → calibration residual gate → Mahalanobis QDA +
- * conformal scoring → reaction kinetics → canonical record preparation.
- * Halts (residual > 4.0 ΔE00 refusal, missing burst) are FIRST-CLASS states —
- * never silent failures, never fake successes.
+ * Renders the REAL image path end-to-end with staged, explainable progress:
+ * camera-engine image validation → card calibration → legal ΔE00 outcome mapping
+ * → canonical record preparation. Halts (image-quality, calibration, or missing
+ * result) are FIRST-CLASS states — never silent failures, never fake successes.
  *
  * Honesty law (AGENTS rule 4): the screen states that the presumptive decision
- * is a CIE-Lab distance computation; ML is reserved for image-quality gating.
+ * is a CIE-Lab ΔE00 distance computed by camera-engine; no machine-learning
+ * classifier is used for the presumptive call.
  * Red is used here for its one permitted meaning: a refused measurement.
  *
  * Data logic below (useEffect run pipeline, STAGES, ticks, halt strings,
@@ -25,26 +25,19 @@ import type { RootStackParamList } from '../navigation/AppNavigator';
 import { Icon } from '../components/ui/Icon';
 import { StateBanner, ReadingRow } from '../components/ui/evidentiary/EvidenceBits';
 import { useSessionStore } from '../state/session-store';
-import {
-  classifyReading,
-  residualFromBurstCovariance,
-  synthesizeKinetics,
-  RESIDUAL_REJECT_ABOVE,
-  round2,
-} from '../services/analysis-pipeline';
+import { adaptCameraEngineResult } from '../capture/camera-engine-adapter.ts';
 import { WizardHeader } from '../components/ui/WizardHeader';
 import { GUIDANCE_TEXTS, useGuidance } from '../state/guidance';
 import { evidenceTheme as T, evidenceMono } from '../theme/evidence';
-import { formatLab, REAGENT_LABEL } from '../domain/outcome-copy';
+import { REAGENT_LABEL } from '../domain/outcome-copy';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
 const STAGES = [
-  'Reading burst covariance',
-  'Applying calibration residual gate',
-  'Mahalanobis QDA + conformal scoring',
-  'Fitting reaction kinetics ΔE(t)',
-  'Preparing canonical record',
+  'Validating captured image',
+  'Applying card calibration',
+  'Mapping legal decision',
+  'Preparing record',
 ] as const;
 
 export const AnalyzeScreen: React.FC = () => {
@@ -63,53 +56,38 @@ export const AnalyzeScreen: React.FC = () => {
     let cancelled = false;
     const run = async () => {
       if (!burst || !setup.reagent) {
-        setHalt('No burst was captured. Return to the capture step and trigger the burst.');
+        setHalt('No real camera capture is available. Return to Capture and take a photo through the native camera.');
+        return;
+      }
+      if (!burst.engineResult) {
+        setHalt('This capture has no camera-engine result. Nothing is inferred from a missing measurement.');
         return;
       }
       try {
         setStage(0);
         await tick(180);
-        // Burst covariance arrives 3×3 over [L*, a*, b*]; the decision operates on the
-        // (a*, b*) chromatic plane — L* is handled upstream by calibration.
-        const cov2 = [
-          [burst.measurementCovariance[1]?.[1] ?? 1, burst.measurementCovariance[1]?.[2] ?? 0],
-          [burst.measurementCovariance[2]?.[1] ?? 0, burst.measurementCovariance[2]?.[2] ?? 1],
-        ];
-        const lab = {
-          l: round2(burst.meanObservation[0] ?? 50),
-          a: round2(burst.meanObservation[1] ?? 0),
-          b: round2(burst.meanObservation[2] ?? 0),
-        };
+        const analysis = adaptCameraEngineResult(burst.engineResult, setup.reagent);
 
         setStage(1);
-        const residual = residualFromBurstCovariance(cov2);
         await tick(240);
-        if (residual.grade === 'REJECT') {
-          setHalt(
-            `Calibration residual ${residual.meanDeltaE.toFixed(2)} ΔE00 exceeded the ${RESIDUAL_REJECT_ABOVE.toFixed(1)} gate — measurement refused. Recapture with the printed calibration card flat and fully lit.`
-          );
+        if (analysis.hardFailure || !analysis.residual) {
+          setHalt(analysis.hardFailure?.message ?? 'The camera-engine did not produce a valid calibration result. Recapture the image.');
           return;
         }
 
         setStage(2);
-        const decision = await classifyReading(lab, cov2, setup.reagent);
         await tick(300);
+        // A single photo has no reaction-time series. Do not synthesize one.
+        setAnalysis({ residual: analysis.residual, decision: analysis.decision, kinetics: null });
 
         setStage(3);
-        const kind = decision.outcome.kind;
-        const plateau = kind === 'CONSISTENT_WITH_REAGENT_POSITIVE' ? 8.4 : kind === 'CONSISTENT_WITH_REAGENT_NEGATIVE' ? 1.4 : 3.1;
-        const kinetics = synthesizeKinetics(plateau, 30000, kind === 'INCONCLUSIVE' ? 15000 : 8500, 500, Math.round(lab.a + lab.b + 40));
-        await tick(240);
-
-        setStage(4);
-        setAnalysis({ residual, decision, kinetics });
         await tick(220);
         if (!cancelled) {
           setStep(3);
           navigation.replace('Results');
         }
       } catch (e) {
-        setHalt(`Analysis pipeline error: ${e instanceof Error ? e.message : 'unknown'}`);
+        setHalt(`Camera-engine analysis error: ${e instanceof Error ? e.message : 'unknown'}`);
       }
     };
     void run();
@@ -186,9 +164,10 @@ export const AnalyzeScreen: React.FC = () => {
           {!halt && burst ? (
             <View style={styles.readout}>
               <Text style={styles.cardEyebrow}>LIVE READOUT</Text>
-              <ReadingRow label="Mean observation (corrected)" value={formatLab({ l: round2(burst.meanObservation[0]), a: round2(burst.meanObservation[1]), b: round2(burst.meanObservation[2]) })} />
-              <ReadingRow label="Frames aggregated" value={`${burst.frames.length}`} />
-              <ReadingRow label="Optical stability" value={burst.opticalStabilityVerified ? 'VERIFIED' : 'UNVERIFIED'} />
+              <ReadingRow label="Measured colour" value="CAMERA-ENGINE CIELAB" />
+              <ReadingRow label="Photo captured" value="1 · EXACT URI" />
+              <ReadingRow label="Reaction kinetics" value="NOT MEASURED — SINGLE PHOTO" />
+              <ReadingRow label="Optical stability" value="NOT CLAIMED" />
             </View>
           ) : null}
         </View>
@@ -212,7 +191,7 @@ export const AnalyzeScreen: React.FC = () => {
                 navigation.navigate('Capture');
               }}
               accessibilityRole="button"
-              accessibilityLabel="Return to capture and retake the burst"
+              accessibilityLabel="Return to capture and retake the photo"
             >
               <Icon name="camera" size={20} color="#FFFFFF" strokeWidth={2.5} />
               <Text style={styles.primaryBtnText}>RETURN TO CAPTURE &amp; RETAKE</Text>
@@ -234,9 +213,9 @@ export const AnalyzeScreen: React.FC = () => {
             <Icon name="info" size={16} color={T.accent} strokeWidth={2.5} />
             <Text style={styles.explainText}>
               <Text style={styles.explainBold}>Explainable by construction. </Text>
-              The presumptive decision is a CIE-Lab distance (Mahalanobis-coupled, conformally
-              scored). Machine learning is reserved for blur/glare image-quality gating only —
-              it never makes the presumptive call.
+              The presumptive decision is a transparent CIEDE2000 distance in corrected CIELAB
+              space. The engine reports profile, residual, and abstention reasons; it never makes a
+              substance-identity claim.
             </Text>
           </View>
         )}

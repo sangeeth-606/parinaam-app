@@ -1,6 +1,6 @@
 /**
- * SettingsScreen — Operator identity, coaching language (Phase 6 EN/HI/PA), demo
- * controls, and an honest About block naming what the simulator does and does not do.
+ * SettingsScreen — Operator identity, coaching language, local engine connection,
+ * and an honest About block naming measured evidence and unvalidated demo data.
  *
  * Rule-10 compliance (AGENTS.md): the device section states only the ACHIEVED seal
  * fact — whether the latest record carries a keystore signature — and never infers a
@@ -45,13 +45,19 @@ const ABOUT_ITEMS: { icon: IconName; label: string; description: string }[] = [
     icon: 'info',
     label: 'What is real in this build',
     description:
-      'Mahalanobis QDA + conformal abstention, RFC 8785 canonicalization, SHA-256 chain, Rule 10(2) bunching engine, statutory export texts.',
+      'CIELAB ΔE00 classification, RFC 8785 canonicalization, SHA-256 chain, Rule 10(2) bunching engine, statutory export texts.',
   },
   {
     icon: 'camera',
-    label: 'What is simulated',
+    label: 'What the camera path does',
     description:
-      'The camera burst, GPS and keystore availability show an honest badge or null attestation wherever the simulator cannot reproduce device behaviour. Network sync is REAL against the in-repo API (Settings → SYNC); evidence images attach on device builds.',
+      'The native camera captures one photo. The self-hosted Docker camera-engine performs ArUco geometry, CIELAB correction, and CIEDE2000 analysis; a failed service never becomes a fabricated result.',
+  },
+  {
+    icon: 'info',
+    label: 'What remains unvalidated',
+    description:
+      'The printed cannabinoid profile is PENDING_VALIDATION and scanner-derived. Demo mode is visibly marked unvalidated and is not laboratory confirmation.',
   },
   {
     icon: 'shield',
@@ -78,7 +84,11 @@ export const SettingsScreen: React.FC = () => {
   const lastSync = useSyncStore((x) => x.lastSync);
   const needsLogin = useSyncStore((x) => x.needsLogin);
   const serverUrl = useSyncStore((x) => x.serverUrl);
+  const cameraEngineUrl = useSyncStore((x) => x.cameraEngineUrl);
+  const cameraEngineReachability = useSyncStore((x) => x.cameraEngineReachability);
   const [urlDraft, setUrlDraft] = useState(serverUrl);
+  const [engineUrlDraft, setEngineUrlDraft] = useState(cameraEngineUrl);
+  const [engineNote, setEngineNote] = useState<string | null>(null);
   const [syncNote, setSyncNote] = useState<string | null>(null);
   const [syncBusy, setSyncBusy] = useState(false);
   const urlRef = useRef<ComponentRef<typeof TextInput>>(null);
@@ -86,6 +96,20 @@ export const SettingsScreen: React.FC = () => {
     urlRef.current?.blur();
     if (urlDraft.trim()) await useSyncStore.getState().setServerUrl(urlDraft);
     setSyncNote('URL SAVED');
+  };
+  const commitEngineUrl = async (): Promise<boolean> => {
+    try {
+      if (!engineUrlDraft.trim()) {
+        setEngineNote('ENTER AN ENGINE URL');
+        return false;
+      }
+      await useSyncStore.getState().setCameraEngineUrl(engineUrlDraft);
+      setEngineNote('ENGINE URL SAVED');
+      return true;
+    } catch (error) {
+      setEngineNote(error instanceof Error ? `INVALID URL — ${error.message}` : 'INVALID ENGINE URL');
+      return false;
+    }
   };
 
   const latest = records[records.length - 1];
@@ -189,6 +213,52 @@ export const SettingsScreen: React.FC = () => {
             {'\n'}This build caches the sign-in credential on-device (expo-secure-store) so
             background sync can hold an API session — a prototype shortcut replaced by device-bound
             tokens at the backend hardening pass.
+          </Text>
+        </View>
+
+        {/* ============ CAMERA ENGINE · LOCAL SERVICE ============ */}
+        <View style={styles.card}>
+          <Text style={styles.cardEyebrow}>CAMERA ENGINE · SELF-HOSTED</Text>
+          <Text style={styles.cardHeading}>Image processing runs in the local Docker service</Text>
+          <Text style={styles.syncState}>
+            {cameraEngineReachability === 'up'
+              ? 'ENGINE READY'
+              : cameraEngineReachability === 'down'
+                ? 'ENGINE UNREACHABLE — CAPTURE WILL RETAIN THE PHOTO AND ASK FOR RETRY'
+                : 'ENGINE NOT PROBED YET'}
+          </Text>
+          <TextInput
+            style={styles.urlInput}
+            value={engineUrlDraft}
+            onChangeText={setEngineUrlDraft}
+            autoCapitalize="none"
+            autoCorrect={false}
+            placeholder="http://10.0.2.2:8572"
+            placeholderTextColor={T.textMuted}
+            accessibilityLabel="Camera engine local service URL"
+            onSubmitEditing={() => void commitEngineUrl()}
+          />
+          <View style={styles.syncBtnRow}>
+            <TouchableOpacity style={styles.syncBtn} onPress={() => void commitEngineUrl()} accessibilityRole="button">
+              <Text style={styles.syncBtnText}>SAVE ENGINE URL</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.syncBtn}
+              onPress={() => void (async () => {
+                if (!(await commitEngineUrl())) return;
+                const ok = await useSyncStore.getState().testCameraEngine();
+                setEngineNote(ok ? 'ENGINE READY — LOCAL ANALYSIS AVAILABLE' : 'NO ANSWER — CHECK DOCKER / LAN URL');
+              })()}
+              accessibilityRole="button"
+              accessibilityLabel="Test the local camera engine connection"
+            >
+              <Text style={styles.syncBtnText}>TEST ENGINE</Text>
+            </TouchableOpacity>
+          </View>
+          {engineNote ? <Text style={styles.syncNote} accessibilityLiveRegion="polite">{engineNote}</Text> : null}
+          <Text style={styles.sealNote}>
+            Android emulator: use 10.0.2.2. A physical phone needs the host LAN address, or an
+            explicit USB/ADB reverse setup. This URL is independent of the Parinaam API URL.
           </Text>
         </View>
 

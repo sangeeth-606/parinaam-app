@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { MIGRATION_V1_SQL } from '../../src/db/migrations.ts';
+import { MIGRATION_APP_V1, MIGRATION_APP_V3 } from '../../src/db/app-migrations.ts';
 
 describe('Database Schema & Append-Only Triggers (Acceptance Test 3)', () => {
   function setupTestDb(): DatabaseSync {
@@ -87,6 +88,37 @@ describe('Database Schema & Append-Only Triggers (Acceptance Test 3)', () => {
       (err: Error) => {
         return /test_record table is append-only: DELETE disallowed/i.test(err.message);
       }
+    );
+  });
+
+  it('keeps the camera-engine projection append-only after its v3 migration', () => {
+    const db = new DatabaseSync(':memory:');
+    db.exec(MIGRATION_APP_V1);
+    db.exec(MIGRATION_APP_V3);
+    // The projection's FK is exercised by the production adapter; this test
+    // isolates its UPDATE/DELETE triggers without duplicating the full field
+    // record fixture.
+    db.exec('PRAGMA foreign_keys = OFF');
+    db.prepare(`
+      INSERT INTO camera_engine_result
+        (record_uuid, schema_version, image_sha256, result_json, result_sha256, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      'engine-1',
+      'parinaam-camera-engine-v1',
+      'a'.repeat(64),
+      '{}',
+      'b'.repeat(64),
+      '2026-09-24T00:00:00.000Z',
+    );
+
+    assert.throws(
+      () => db.prepare("UPDATE camera_engine_result SET result_json = '{}' WHERE record_uuid = 'engine-1'").run(),
+      (err: Error) => /camera_engine_result is append-only: UPDATE disallowed/i.test(err.message),
+    );
+    assert.throws(
+      () => db.prepare("DELETE FROM camera_engine_result WHERE record_uuid = 'engine-1'").run(),
+      (err: Error) => /camera_engine_result is append-only: DELETE disallowed/i.test(err.message),
     );
   });
 });

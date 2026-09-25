@@ -1,124 +1,178 @@
 /**
- * Parinaam — VisionCamera Viewfinder Component
- * Conforms to spec/02-phase-1-guided-capture.md Task 1.1 and AGENTS.md Hard Constraints:
- * 1. Strictly NO gallery import (camera is the only ingest pathway).
- * 2. Locks AE, AWB, and AF once card is acquired.
- * 3. Disables computational photography (HDR, Night mode).
+ * Real camera acquisition for the officer app.
+ *
+ * The only ingest path is the native camera. The captured URI is sent to the
+ * Dockerized camera-engine adapter; no gallery picker, random observation, or
+ * synthetic frame is used here.
  */
 
-import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, View, Text } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { StyleSheet, Text, View } from 'react-native';
+import {
+  CameraView as NativeCameraView,
+  useCameraPermissions,
+  type CameraCapturedPicture,
+} from 'expo-camera';
 import { CoachingOverlay } from './CoachingOverlay';
 import { Button } from '../components/ui/Button';
 import { Icon } from '../components/ui/Icon';
 import { colors, type, radius, space, badgeTones } from '../theme';
-import { DetailedQualityResult } from './quality-gates';
-import { BurstManager, BurstAcquisitionResult } from './burst-manager';
-import { CaptureFrame } from '../types/contracts';
+import { createCameraEngineClient } from './camera-engine-client.ts';
+import type { CameraEngineResult } from './camera-engine-contract.ts';
+import type { BurstAcquisitionResult } from './burst-manager.ts';
+import type { CaptureFrame } from '../types/contracts.ts';
+import { useSessionStore } from '../state/session-store';
+import { useSyncStore } from '../state/sync-store';
 
 interface CameraViewProps {
   onBurstCaptured: (burst: BurstAcquisitionResult) => void;
   onCancel: () => void;
 }
 
-export const CameraView: React.FC<CameraViewProps> = ({
-  onBurstCaptured,
-  onCancel,
-}) => {
-  const [qualityResult, setQualityResult] = useState<DetailedQualityResult | null>(null);
-  const [burstCount, setBurstCount] = useState<number>(0);
-  const burstManagerRef = useRef<BurstManager>(new BurstManager(8));
+function numberField(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
 
-  // Simulate viewfinder quality gating & burst for testing environment
-  useEffect(() => {
-    // Initial simulated quality state
-    setQualityResult({
-      passed: true,
-      report: {
-        isBlurry: false,
-        laplacianVariance: 145.2,
-        hasGlare: false,
-        glareFraction: 0.005,
-        exposureOk: true,
-        meanLuminance: 142.0,
-      },
-      framing: {
-        framingOk: true,
-        occupancyFraction: 0.62,
-        centerOffsetFraction: 0.03,
-        skewDegrees: 2.1,
-      },
-      primaryCoachingMessage: null,
-    });
-  }, []);
-
-  const handleSimulateBurst = () => {
-    const burst = burstManagerRef.current;
-    burst.reset();
-
-    for (let i = 1; i <= 8; i++) {
-      const dummyFrame: CaptureFrame = {
-        uri: `file:///data/user/0/in.gov.ncb.parinaam/cache/frame_${Date.now()}_${i}.jpg`,
-        width: 1920,
-        height: 1080,
-        timestamp: Date.now() + i * 50,
-        quality: {
-          isBlurry: false,
-          laplacianVariance: 140.0 + Math.random() * 10,
-          hasGlare: false,
-          glareFraction: 0.004,
-          exposureOk: true,
-          meanLuminance: 140.0 + Math.random() * 5,
-        },
-      };
-
-      burst.addFrame({
-        frame: dummyFrame,
-        opticalParams: {
-          iso: 100,
-          exposureDurationSec: 0.02,
-          whiteBalanceKelvin: 5500,
-        },
-        colorObservation: [
-          18.5 + (Math.random() - 0.5) * 0.4,
-          34.2 + (Math.random() - 0.5) * 0.4,
-          -12.0 + (Math.random() - 0.5) * 0.4,
-        ],
-      });
-    }
-
-    setBurstCount(burst.getFrameCount());
-    const finalized = burst.finalize();
-    onBurstCaptured(finalized);
+function qualityFromEngine(result: CameraEngineResult) {
+  const diagnostics = result.quality.diagnostics;
+  const blur = numberField(diagnostics.blur_laplacian_variance, 0);
+  const meanLuminance = numberField(diagnostics.mean_luminance, 0);
+  const glare = numberField(diagnostics.glare_fraction, 0);
+  const failed = new Set(result.quality.failureCodes);
+  return {
+    isBlurry: failed.has('EXCESSIVE_BLUR'),
+    laplacianVariance: blur,
+    hasGlare: failed.has('ROI_GLARE') || failed.has('GLOBAL_GLARE'),
+    glareFraction: glare,
+    exposureOk: !failed.has('UNDerexposure'.toUpperCase()) && !failed.has('OVEREXPOSURE'),
+    meanLuminance,
   };
+}
+
+function frameFromPicture(picture: CameraCapturedPicture, quality: ReturnType<typeof qualityFromEngine>): CaptureFrame {
+  return {
+    uri: picture.uri,
+    width: picture.width,
+    height: picture.height,
+    timestamp: Date.now(),
+    quality,
+  };
+}
+
+export const CameraView: React.FC<CameraViewProps> = ({ onBurstCaptured, onCancel }) => {
+  const [permission, requestPermission] = useCameraPermissions();
+  const [cameraReady, setCameraReady] = useState(false);
+  const [capturing, setCapturing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [lastCaptureUri, setLastCaptureUri] = useState<string | null>(null);
+  const cameraRef = useRef<NativeCameraView>(null);
+  const setup = useSessionStore((state) => state.setup);
+  const engineUrl = useSyncStore((state) => state.cameraEngineUrl);
+  const client = useMemo(() => createCameraEngineClient({ baseUrl: engineUrl }), [engineUrl]);
+
+  useEffect(() => {
+    if (permission === null) void requestPermission();
+  }, [permission, requestPermission]);
+
+  const capture = async () => {
+    if (!permission?.granted) {
+      setError('Camera permission is required. Parinaam never imports an existing image.');
+      return;
+    }
+    if (!cameraReady || !cameraRef.current || capturing) return;
+    setCapturing(true);
+    setError(null);
+    let capturedUri: string | null = null;
+    try {
+      const capturedPicture = await cameraRef.current.takePictureAsync({
+        quality: 0.92,
+        exif: true,
+        skipProcessing: false,
+        shutterSound: false,
+      });
+      if (!capturedPicture?.uri) throw new Error('Camera returned no image URI.');
+      capturedUri = capturedPicture.uri;
+      setLastCaptureUri(capturedPicture.uri);
+      const result = await client.analyzeImage({
+        uri: capturedPicture.uri,
+        mimeType: capturedPicture.format === 'png' ? 'image/png' : 'image/jpeg',
+        reagent: setup.reagent ?? 'duquenois_levine',
+      });
+      const quality = qualityFromEngine(result);
+      const frame = frameFromPicture(capturedPicture, quality);
+      const burst: BurstAcquisitionResult = {
+        frames: [frame],
+        photoPath: capturedPicture.uri,
+        aggregateReport: quality,
+        // A still image has no burst covariance and no reaction-time series.
+        // Leave covariance empty rather than inserting a synthetic identity.
+        measurementCovariance: [],
+        // The engine result is the sole source of the measured Lab value.
+        meanObservation: [],
+        opticalStabilityVerified: false,
+        engineResult: result,
+      };
+      onBurstCaptured(burst);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : 'The camera-engine could not process this capture.';
+      setError(
+        capturedUri
+          ? `Photo retained for retry; processing unavailable: ${message}`
+          : `Capture/processing failed: ${message}`,
+      );
+    } finally {
+      setCapturing(false);
+    }
+  };
+
+  if (!permission?.granted) {
+    return (
+      <View style={styles.permissionScreen}>
+        <Icon name="camera" size={42} color={colors.brand} strokeWidth={2.2} />
+        <Text style={styles.permissionTitle}>Camera access required</Text>
+        <Text style={styles.permissionText}>
+          Parinaam captures the printed card directly on this device. Gallery and file imports are deliberately disabled.
+        </Text>
+        <Button label="Request camera access" size="lg" icon="camera" onPress={() => void requestPermission()} />
+        <Button label="Cancel capture" variant="ghost" size="md" onPress={onCancel} />
+        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
       <View style={styles.viewfinderSurface}>
-        {/* Optical lock status */}
-        <View style={styles.lockBadge}>
-          <Icon name="lock" size={12} color={colors.brand} strokeWidth={2.2} />
-          <Text style={styles.lockBadgeText}>Optical parameters locked (AE / AWB / AF)</Text>
-        </View>
-
-        {/* Honest simulator boundary — audit P2 */}
-        <View style={styles.simBadge}>
-          <Text style={styles.simBadgeText}>Simulated acquisition — device build uses VisionCamera 5</Text>
-        </View>
-
-        <CoachingOverlay
-          qualityResult={qualityResult}
-          burstProgress={{ current: burstCount, total: 8 }}
+        <NativeCameraView
+          ref={cameraRef}
+          style={StyleSheet.absoluteFill}
+          facing="back"
+          mode="picture"
+          flash="off"
+          autofocus="on"
+          animateShutter
+          onCameraReady={() => setCameraReady(true)}
+          onMountError={(event) => setError(event.message)}
         />
+        <View style={styles.lockBadge}>
+          <Icon name="camera" size={12} color={colors.brand} strokeWidth={2.2} />
+          <Text style={styles.lockBadgeText}>REAL CAMERA · LOCAL ENGINE PROCESSING</Text>
+        </View>
+        <CoachingOverlay qualityResult={null} />
+        {!cameraReady ? <Text style={styles.readyText}>Starting camera…</Text> : null}
       </View>
 
       <View style={styles.controls}>
+        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+        {lastCaptureUri ? <Text style={styles.retryText}>The last photo is retained locally; recapture or retry when the engine is available.</Text> : null}
         <Button
-          label="Trigger burst capture"
+          label={capturing ? 'Processing image…' : 'Capture and analyse'}
           size="lg"
           icon="camera"
-          onPress={handleSimulateBurst}
-          accessibilityLabel="Trigger 8-frame burst capture"
+          loading={capturing}
+          disabled={!cameraReady}
+          onPress={() => void capture()}
+          accessibilityLabel="Capture one camera photo and analyse it with the local camera engine"
         />
         <Button label="Cancel capture" variant="ghost" size="md" onPress={onCancel} />
       </View>
@@ -163,18 +217,24 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
     color: colors.brand,
   },
-  simBadge: {
+  readyText: {
     position: 'absolute',
-    top: 52,
+    bottom: space.md,
     alignSelf: 'center',
-    zIndex: 10,
-    backgroundColor: colors.hudGlass,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.xs,
-    paddingHorizontal: space.sm + 2,
-    paddingVertical: 3,
+    color: colors.textPrimary,
+    ...type.micro,
   },
-  simBadgeText: { ...type.micro, fontSize: 9, color: colors.textSecondary },
   controls: { gap: space.sm },
+  permissionScreen: {
+    flex: 1,
+    padding: space.xl,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: space.md,
+    backgroundColor: colors.canvas,
+  },
+  permissionTitle: { ...type.headline, color: colors.textPrimary, textAlign: 'center' },
+  permissionText: { ...type.body, color: colors.textSecondary, textAlign: 'center' },
+  errorText: { ...type.caption, color: colors.fail, textAlign: 'center' },
+  retryText: { ...type.micro, color: colors.textSecondary, textAlign: 'center' },
 });

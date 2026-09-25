@@ -1,0 +1,149 @@
+﻿# Parinaam Reference Card v1 — MVP Placeholder Batch Profile
+# STATUS: PENDING_VALIDATION
+# PHYSICAL EXPERIMENT REQUIRED: replace all reference_lab values with
+# spectrophotometer measurements (D50, 2deg, 45/0 geometry) after first print run.
+
+reference_card_id: "parinaam_card_v1"
+reference_card_version: "1"
+manufacturing_batch: "mvp_placeholder_batch_000"
+status: "PENDING_VALIDATION"
+issue_date: "2026-09-13"
+revalidation_date: "2027-09-13"
+calibration_profile_id: "card_v1_batch_000_placeholder"
+source: "MVP placeholder, not spectrophotometrically validated"
+
+card_dimensions_mm:
+  width: 100.0
+  height: 70.0
+
+# ArUco: DICT_4X4_50, 8x8mm markers
+# Positions = top-left corner of marker in card-local mm (origin=card TL, x=right, y=down)
+fiducial_layout:
+  - fiducial_id: "ArUco_TL"
+    aruco_dict: "DICT_4X4_50"
+    aruco_marker_id: 0
+    position_mm: {x: 2.0, y: 2.0}
+    size_mm: 8.0
+  - fiducial_id: "ArUco_TR"
+    aruco_dict: "DICT_4X4_50"
+    aruco_marker_id: 1
+    position_mm: {x: 90.0, y: 2.0}
+    size_mm: 8.0
+  - fiducial_id: "ArUco_BL"
+    aruco_dict: "DICT_4X4_50"
+    aruco_marker_id: 2
+    position_mm: {x: 2.0, y: 57.0}
+    size_mm: 8.0
+  - fiducial_id: "ArUco_BR"
+    aruco_dict: "DICT_4X4_50"
+    aruco_marker_id: 3
+    position_mm: {x: 90.0, y: 57.0}
+    size_mm: 8.0
+
+data_matrix:
+  position_mm: {x: 68.0, y: 57.0}
+  size_mm: {width: 20.0, height: 8.0}
+  encodes: "reference_card_id|reference_card_version|manufacturing_batch"
+
+# 4x4 patch grid. Grid TL origin = (12,12)mm. Pitch = 14mm (12mm patch + 2mm gutter).
+# Columns at x=12,26,40,54mm  |  Rows at y=12,26,40,54mm
+patch_layout:
+  # P01-P06: Achromatic ramp (white -> black)
+  - patch_id: "P01"
+    family: "achromatic"
+    role: "white"
+    design_rect_mm: {x: 12.0, y: 12.0, w: 12.0, h: 12.0}
+    reference_lab: {L: 95.00, a: 0.00, b: 0.00}
+    source: "Standard white approximation — PHYSICAL EXPERIMENT REQUIRED"
+  - patch_id: "P02"
+    family: "achromatic"
+    role: "light_gray"
+    design_rect_mm: {x: 26.0, y: 12.0, w: 12.0, h: 12.0}
+    reference_lab: {L: 80.00, a: 0.00, b: 0.00}
+    source: "MVP placeholder — PHYSICAL EXPERIMENT REQUIRED"
+  - patch_id: "P03"
+    family: "achromatic"
+    role: "mid_light_gray"
+    design_rect_mm: {x: 40.0, y: 12.0, w: 12.0, h: 12.0}
+    reference_lab: {L: 65.00, a: 0.00, b: 0.00}
+    source: "MVP placeholder — PHYSICAL EXPERIMENT REQUIRED"
+  - patch_id: "P04"
+    family: "achromatic"
+    role: "mid_gray_18pct"
+    design_rect_mm: {x: 54.0, y: 12.0, w: 12.0, h: 12.0}
+    reference_lab: {L: 50.00, a: 0.00, b: 0.00}
+    source: "Approx 18% gray — PHYSICAL EXPERIMENT REQUIRED"
+  - patch_id: "P05"
+    family: "achromatic"
+    role: "dark_gray"
+    design_rect_mm: {x: 12.0, y: 26.0, w: 12.0, h: 12.0}
+    reference_lab: {L: 30.00, a: 0.00, b: 0.00}
+    source: "MVP placeholder — PHYSICAL EXPERIMENT REQUIRED"
+  - patch_id: "P06"
+    family: "achromatic"
+    role: "black"
+    design_rect_mm: {x: 26.0, y: 26.0, w: 12.0, h: 12.0}
+    reference_lab: {L: 10.00, a: 0.00, b: 0.00}
+    source: "Standard black approximation — PHYSICAL EXPERIMENT REQUIRED"
+  # P07-P12: Primary + Secondary chromatic (sRGB primaries, computed D50 Lab)
+  - patch_id: "P07"
+    family: "chromatic"
+    role: "red"
+    design_rect_mm: {x: 40.0, y: 26.0, w: 12.0, h: 12.0}
+    reference_lab: {L: 53.39, a: 80.09, b: 67.20}
+    source: "sRGB red (255,0,0) computed in D50 Lab — PHYSICAL EXPERIMENT REQUIRED after print"
+  - patch_id: "P08"
+    family: "chromatic"
+    role: "green"
+    design_rect_mm: {x: 54.0, y: 26.0, w: 12.0, h: 12.0}
+    reference_lab: {L: 87.73, a: -86.18, b: 83.18}
+    source: "sRGB green (0,255,0) computed in D50 Lab — PHYSICAL EXPERIMENT REQUIRED after print"
+  - patch_id: "P09"
+    family: "chromatic"
+    role: "blue"
+    design_rect_mm: {x: 12.0, y: 40.0, w: 12.0, h: 12.0}
+    reference_lab: {L: 32.30, a: 79.19, b: -107.86}
+    source: "sRGB blue (0,0,255) computed in D50 Lab — PHYSICAL EXPERIMENT REQUIRED after print"
+  - patch_id: "P10"
+    family: "chromatic"
+    role: "cyan"
+    design_rect_mm: {x: 26.0, y: 40.0, w: 12.0, h: 12.0}
+    reference_lab: {L: 91.11, a: -48.09, b: -14.13}
+    source: "sRGB cyan (0,255,255) computed in D50 Lab — PHYSICAL EXPERIMENT REQUIRED after print"
+  - patch_id: "P11"
+    family: "chromatic"
+    role: "magenta"
+    design_rect_mm: {x: 40.0, y: 40.0, w: 12.0, h: 12.0}
+    reference_lab: {L: 60.32, a: 98.24, b: -60.84}
+    source: "sRGB magenta (255,0,255) computed in D50 Lab — PHYSICAL EXPERIMENT REQUIRED after print"
+  - patch_id: "P12"
+    family: "chromatic"
+    role: "yellow"
+    design_rect_mm: {x: 54.0, y: 40.0, w: 12.0, h: 12.0}
+    reference_lab: {L: 97.14, a: -21.56, b: 94.48}
+    source: "sRGB yellow (255,255,0) computed in D50 Lab — PHYSICAL EXPERIMENT REQUIRED after print"
+  # P13-P16: Reagent-adjacent anchors — DOMAIN-EXPERT VALIDATION REQUIRED
+  - patch_id: "P13"
+    family: "reagent_adjacent"
+    role: "violet_purple_anchor"
+    design_rect_mm: {x: 12.0, y: 54.0, w: 12.0, h: 12.0}
+    reference_lab: {L: 40.00, a: 30.00, b: -45.00}
+    source: "MVP placeholder hue family only — DOMAIN-EXPERT VALIDATION REQUIRED"
+  - patch_id: "P14"
+    family: "reagent_adjacent"
+    role: "blue_anchor"
+    design_rect_mm: {x: 26.0, y: 54.0, w: 12.0, h: 12.0}
+    reference_lab: {L: 35.00, a: 10.00, b: -60.00}
+    source: "MVP placeholder hue family only — DOMAIN-EXPERT VALIDATION REQUIRED"
+  - patch_id: "P15"
+    family: "reagent_adjacent"
+    role: "teal_anchor"
+    design_rect_mm: {x: 40.0, y: 54.0, w: 12.0, h: 12.0}
+    reference_lab: {L: 55.00, a: -35.00, b: -20.00}
+    source: "MVP placeholder hue family only — DOMAIN-EXPERT VALIDATION REQUIRED"
+  - patch_id: "P16"
+    family: "reagent_adjacent"
+    role: "amber_anchor"
+    design_rect_mm: {x: 54.0, y: 54.0, w: 12.0, h: 12.0}
+    reference_lab: {L: 60.00, a: 25.00, b: 50.00}
+    source: "MVP placeholder hue family only — DOMAIN-EXPERT VALIDATION REQUIRED"

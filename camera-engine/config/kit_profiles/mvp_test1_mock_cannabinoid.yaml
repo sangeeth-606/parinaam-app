@@ -1,0 +1,53 @@
+﻿# Parinaam Kit Profile — MVP Test 1: Mock Printed-Patch Cannabinoid
+# STATUS: PENDING_VALIDATION
+# A PENDING_VALIDATION kit profile MUST NEVER produce POSITIVE/NEGATIVE.
+# The engine enforces this structurally — classifier only accepts ValidatedKitProfile.
+#
+# PENDING items (fill in after printing + measuring swatches):
+#   1. roi_card_relative — null until card layout + swatch guide finalized
+#   2. reference_lab values — measure swatches with spectrophotometer
+#   3. tolerance_radius_de00 — tune after physical experiments
+#   4. min_confidence_to_classify — tune at agreed risk-coverage operating point
+
+kit_profile_id: "mvp_test1_mock_cannabinoid"
+manufacturer: "N/A — MVP mock, not a real manufactured kit"
+kit_name: "MVP Test 1 — Printed Patch Mock"
+model: "v1"
+test_name: "Marijuana/Hashish presumptive (Duquenois-Levine family) — MOCK for MVP demo, not a real chemical test"
+test_type: "PRINTED_PATCH_MOCK"
+kit_profile_version: 1
+effective_date: "2026-09-13"
+supersedes: null
+status: "PENDING_VALIDATION"
+
+reference_mapping:
+  reference_card_id: "parinaam_card_v1"
+  color_space: "CIELAB_D50"
+
+test_geometry:
+  locator_method: "HOMOGRAPHY_OFFSET"
+  # NULL until card layout + swatch placement guide finalized.
+  # When set: approx 15-20mm square swatch at a fixed position beside the card.
+  # Example (NOT validated): {x: 68.0, y: 20.0, width: 20.0, height: 20.0}
+  roi_card_relative: null  # TODO: PHYSICAL EXPERIMENT REQUIRED
+
+expected_result_colors:
+  - outcome_label: "POSITIVE_CANNABINOID"
+    reference_lab: {L: null, a: null, b: null}  # PHYSICAL EXPERIMENT REQUIRED
+    tolerance_radius_de00: 9.0
+    source: "MVP printed mock patch v1, violet/purple hue family — not a certified reagent value"
+  - outcome_label: "NEGATIVE"
+    reference_lab: {L: null, a: null, b: null}  # PHYSICAL EXPERIMENT REQUIRED
+    tolerance_radius_de00: 9.0
+    source: "MVP printed mock patch v1, pale tan/beige — not real reagent chemistry"
+  - outcome_label: "INCONCLUSIVE_DEMO"
+    reference_lab: {L: null, a: null, b: null}  # PHYSICAL EXPERIMENT REQUIRED
+    tolerance_radius_de00: 9.0
+    source: "MVP printed mock patch v1, intentionally between POSITIVE and NEGATIVE in Lab — abstention demo only"
+
+validity_rules:
+  kit_expiry_check: false
+  batch_specific: false
+  min_confidence_to_classify: 0.40  # PHYSICAL EXPERIMENT REQUIRED
+
+model_version: "mvp-v1"

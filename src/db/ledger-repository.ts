@@ -11,6 +11,9 @@ import type { DbAdapter, DbOpenResult, OpenOptions } from './driver.ts';
 import type { LabValue, CalibrationResidual } from '../types/contracts';
 import type { AbstentionReason, KineticPoint, PresumptiveOutcomeKind, ReagentType } from '../types/domain';
 import type { LedgerRecord } from '../state/ledger-store';
+import type { CameraEngineResult } from '../capture/camera-engine-contract.ts';
+import { parseCameraEngineResult, serializeCameraEngineResult } from '../capture/camera-engine-contract.ts';
+import { sha256Hex } from '../crypto/sha256.ts';
 import { MIGRATION_APP_FTS, applyVersionedAppMigrations } from './app-migrations.ts';
 import { openAppDatabase } from './driver.ts';
 
@@ -68,7 +71,19 @@ interface FieldTestRow {
 let activeAdapter: DbAdapter | null = null;
 let activeMeta: LedgerDbMeta | null = null;
 
-function rowToRecord(row: FieldTestRow, syncStatus: LedgerRecord['syncStatus']): LedgerRecord {
+interface CameraEngineResultRow {
+  record_uuid: string;
+  schema_version: string;
+  image_sha256: string;
+  result_json: string;
+  result_sha256: string;
+}
+
+function rowToRecord(
+  row: FieldTestRow,
+  syncStatus: LedgerRecord['syncStatus'],
+  engineResult?: CameraEngineResult,
+): LedgerRecord {
   const lab: LabValue = { l: row.corrected_lab_l, a: row.corrected_lab_a, b: row.corrected_lab_b };
   const residual: CalibrationResidual = {
     meanDeltaE: row.calib_residual_mean,
@@ -106,6 +121,7 @@ function rowToRecord(row: FieldTestRow, syncStatus: LedgerRecord['syncStatus']):
         : undefined,
     imageRef: row.image_ref ?? null,
     imageSha256: row.image_sha256 ?? null,
+    engineResult,
     payloadJcs: row.payload_jcs,
     payloadSha256: row.payload_sha256,
     prevHash: row.prev_hash,
@@ -144,6 +160,20 @@ export async function initLedgerDb(opts?: OpenOptions): Promise<{ records: Ledge
     error: opened.error,
   };
   const rows = await adapter.all<FieldTestRow>('SELECT * FROM field_test ORDER BY seq ASC');
+  const engineRows = await adapter.all<CameraEngineResultRow>('SELECT * FROM camera_engine_result');
+  const engineByUuid = new Map<string, CameraEngineResult>();
+  for (const engineRow of engineRows) {
+    try {
+      const parsed = parseCameraEngineResult(JSON.parse(engineRow.result_json) as unknown);
+      const resultHash = await sha256Hex(engineRow.result_json);
+      if (parsed.image.sha256 === engineRow.image_sha256 && resultHash === engineRow.result_sha256) {
+        engineByUuid.set(engineRow.record_uuid, parsed);
+      }
+    } catch {
+      // A malformed optional diagnostic projection is not allowed to corrupt
+      // the independently hash-chained field_test rows.
+    }
+  }
   const states = await adapter.all<{ record_uuid: string; state: LedgerRecord['syncStatus'] }>(
     'SELECT record_uuid, state FROM record_sync_state'
   );
@@ -152,7 +182,8 @@ export async function initLedgerDb(opts?: OpenOptions): Promise<{ records: Ledge
     records: rows.map((row) =>
       rowToRecord(
         row,
-        stateByUuid.get(row.record_uuid) ?? (row.is_demo === 1 ? 'demo-seed' : 'queued')
+        stateByUuid.get(row.record_uuid) ?? (row.is_demo === 1 ? 'demo-seed' : 'queued'),
+        engineByUuid.get(row.record_uuid)
       )
     ),
     meta: activeMeta,
@@ -237,6 +268,28 @@ export async function persistRecord(rec: LedgerRecord): Promise<boolean> {
     return true;
   }
   return false;
+}
+
+export async function persistEngineResult(
+  recordUuid: string,
+  result: CameraEngineResult,
+): Promise<boolean> {
+  const a = activeAdapter;
+  if (!a || a.kind === 'none') return false;
+  const resultJson = JSON.stringify(serializeCameraEngineResult(result));
+  const resultSha256 = await sha256Hex(resultJson);
+  const res = await a.run(
+    `INSERT OR IGNORE INTO camera_engine_result (
+       record_uuid, schema_version, image_sha256, result_json, result_sha256, created_at
+     ) VALUES (?,?,?,?,?,?)`,
+    recordUuid,
+    result.schemaVersion,
+    result.image.sha256,
+    resultJson,
+    resultSha256,
+    new Date().toISOString()
+  );
+  return res.changes > 0;
 }
 
 export async function nextSeq(): Promise<number> {

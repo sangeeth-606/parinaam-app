@@ -281,7 +281,7 @@ export const HomeScreen: React.FC = () => {
                 <Icon name="flask" size={22} color={T.textSecondary} strokeWidth={2.2} />
                 <Text style={styles.emptyTitle}>No test events recorded</Text>
                 <Text style={styles.emptyText}>
-                  Start the first presumptive field test — readings appear here with their ΔE₀₀ kinetics and chain digests.
+                  Start the first presumptive field test — readings appear here with their camera-engine ΔE₀₀ and chain digests.
                 </Text>
               </View>
             ) : (

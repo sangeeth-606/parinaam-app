@@ -27,7 +27,8 @@ import { computeBradfordAdaptationMatrix, applyChromaticAdaptation } from './whi
 import { fitMonotonicToneCurve } from './linearize.ts';
 import type { GreyRampMeasurement } from './linearize.ts';
 
-// Master residual gate thresholds
+// Legacy TS colour-module gates retained for historical unit tests. The
+// production Docker camera-engine uses the canonical provisional 5.0 mean gate.
 export const RESIDUAL_GOOD_CEIL = 2.5;
 export const RESIDUAL_DEGRADED_CEIL = 4.0;
 export const RESIDUAL_MAX_GOOD_CEIL = 6.0;
@@ -164,33 +165,10 @@ export class ColourPipelineService implements ColourModule {
     _homography: HomographyMatrix,
     _cardRef: CardIdentity
   ): Promise<{ reagentLab: LabValue; residual: CalibrationResidual }> {
-    // Dynamic import of reference values
-    const refData = await import('./reference-values.json', { with: { type: 'json' } });
-    const patches = refData.default.patches;
-
-    // Simulate standard baseline patch observation responses
-    const simulatedObservations: CardPatchObservation[] = patches.map((patch: { id: string; l: number; a: number; b: number }) => {
-      const gtLab: LabValue = { l: patch.l, a: patch.a, b: patch.b };
-      const idealLinear = labToLinearRgb(gtLab);
-      return {
-        id: patch.id,
-        measuredRgb: [
-          Math.min(245, Math.max(10, Math.round(idealLinear.r * 255))),
-          Math.min(245, Math.max(10, Math.round(idealLinear.g * 255))),
-          Math.min(245, Math.max(10, Math.round(idealLinear.b * 255))),
-        ],
-        groundTruthLab: gtLab,
-      };
-    });
-
-    const result = this.calibrateObservations(
-      simulatedObservations,
-      [140, 45, 120] // Example Marquis reagent color
-    );
-
-    return {
-      reagentLab: result.calibratedReagentLab,
-      residual: result.residual,
-    };
+    // Historical callers must not receive synthetic patch observations or a
+    // fabricated reagent colour. The production camera path uses the Docker
+    // camera-engine; retain this explicit failure so an old route cannot
+    // silently manufacture a result.
+    throw new Error('Synthetic colour calibration is disabled; use the camera-engine service.');
   }
 }

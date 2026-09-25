@@ -48,25 +48,89 @@ tests/                       unit, contract, SQLite, API, and E2E tests
 scripts/                     local build and verification helpers
 ```
 
-The untracked `camera-engine/` workspace is outside this repository's change
-set and is not required to run the API.
+The `camera-engine/` workspace is an existing nested source repository. The
+officer app now consumes its Docker service through `docker-compose.yml`; the
+authoritative integration, provenance, and physical-validation notes live in
+[`docs/camera-engine-integration.md`](docs/camera-engine-integration.md) and
+[`camera-engine/service/README.md`](camera-engine/service/README.md). Keep the
+nested repository's own history and backup fixtures intact when packaging the
+app.
 
 ## Requirements
 
 - Node.js 22+ and npm
 - Android Studio/SDK and a development build for the officer app
-- Docker Compose v2 for the PostgreSQL deployment
+- A Mac with Xcode and an Apple signing setup for a physical iOS development build
+- Docker Compose v2 for the self-hosted local stack
 
-Expo Go is not sufficient for the native camera and device modules. The app is
-built as a custom development client.
+Expo Go is not sufficient for the native camera and device modules. The normal
+app launcher therefore starts the complete local self-hosted stack first, waits
+for the API and camera-engine health checks, and then starts Metro. The engine is
+still Dockerized; an iOS app cannot start a Linux Docker daemon itself, so the
+launcher is the single process boundary rather than a second manual step.
+
+## One-command local app
+
+Install dependencies once:
+
+```bash
+npm ci
+```
+
+For a physical iPhone using Expo Go on the same trusted Wi-Fi, run:
+
+```bash
+npm run app:go
+```
+
+That one command starts `db`, `server`, and `camera-engine`, waits for both
+services to become healthy, sets the laptop LAN URLs for the app, and starts
+Metro with a direct Expo Go QR code. Keep the terminal open. On first use,
+allow the two local service ports through the host firewall if UFW is active:
+
+```bash
+sudo ufw allow from 192.168.1.0/24 to any port 8571 proto tcp
+sudo ufw allow from 192.168.1.0/24 to any port 8572 proto tcp
+```
+
+The launcher prints the exact API and camera-engine URLs. Do not start
+`camera-engine` separately. `npm run start:lan:go` is the equivalent command
+kept for the previous workflow.
+
+For the custom native development build (recommended for camera validation),
+use:
+
+```bash
+npm run app
+# or: npm run start:lan
+```
+
+This performs the same stack startup and then targets the installed Parinaam
+development client. A physical iOS development build must be compiled and
+signed on a Mac/Xcode host; the Linux host used for the backend cannot compile
+or install the iOS app itself.
+
+The low-level `npm run start:metro` command starts Metro only. It is useful for
+debugging the bundler, but it does **not** start the self-hosted engine and is
+not the normal app command.
 
 ## App development
 
 ```bash
-npm ci
 npx expo prebuild
 npx expo run:android
 ```
+
+If the host cannot discover the LAN, the same launcher can use Expo's tunnel
+when a valid ngrok credential is available:
+
+```bash
+npm run start:tunnel
+```
+
+`npm run start:tunnel` still starts the self-hosted stack first. The tunnel only
+publishes Metro; it does not publish the camera-engine or API ports. The tunnel
+instructions are documented in the [Expo CLI reference](https://docs.expo.dev/more/expo-cli/#tunnel).
 
 The local demo build displays its demo credentials in the login screen. The
 local app-side demo account is intentionally separate from the server's
@@ -86,6 +150,11 @@ An optional PostgreSQL integration test is described in
 [`server/README.md`](server/README.md).
 
 ## Self-hosted API with PostgreSQL
+
+For normal app use, `npm run app`/`npm run app:go` is the supported entry
+point and starts this stack together with the camera engine. The commands below
+are for isolated service administration, diagnostics, or deployments where the
+API is started without Metro.
 
 From the repository root:
 

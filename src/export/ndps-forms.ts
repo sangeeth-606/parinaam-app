@@ -172,7 +172,7 @@ TEST MEMO FOR TRANSMITTING SAMPLES TO FORENSIC SCIENCE LABORATORY
 3. PRELIMINARY FIELD SPOT-TEST REPORT (FOR INFORMATION ONLY):
    - Preliminary Test Method : Field Colorimetric Pouch (Reagent: ${record.reagent.toUpperCase()})
    - Preliminary Indication  : ${record.outcome}
-   - Confidence / Conformal  : ${(record.confidence * 100).toFixed(1)}% / ${record.conformal_set}
+   - Confidence / Candidate Set: ${(record.confidence * 100).toFixed(1)}% / ${record.conformal_set}
    - Digital Evidence UUID   : ${record.record_uuid}
    - Payload SHA-256 Digest  : ${record.payload_sha256}
 

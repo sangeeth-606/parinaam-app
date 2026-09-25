@@ -1,0 +1,11 @@
+﻿# Parinaam Color Engine — Python Reference Implementation
+# For: research, threshold tuning, golden-value generation (§33)
+# NOT a runtime dependency of the shipped mobile app.
+numpy>=1.26
+scipy>=1.12
+opencv-contrib-python>=4.8.0  # includes aruco module
+scikit-learn>=1.4              # isotonic regression for confidence calibration (§24), deferred
+pytest>=8.0
+pyyaml>=6.0
+# Optional: colour-science for cross-checking XYZ/Lab math
+# colour-science>=0.4  # install separately if needed: pip install colour-science

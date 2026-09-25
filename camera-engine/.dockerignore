@@ -1,0 +1,22 @@
+# Keep the service image small and reproducible.  The Docker context is
+# ./camera-engine, so this does not weaken the root API image's exclusions.
+service/__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+mobile/
+config/
+!config/
+config/*
+!config/quality_gate_thresholds.yaml
+docs/
+pics-used-backup/
+*.png
+# The rectified card is a small, non-identifying regression fixture used to
+# prove that a card-only image cannot be classified.
+!card_rectified_view.png
+*.jpg
+*.jpeg
+*.webp

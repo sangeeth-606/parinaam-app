@@ -1,0 +1,1910 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Parinaam — presumptive field test record</title>
+    <script src="assets/vendor/gsap.min.js"></script>
+    <style>
+      /* ============================================================
+         Parinaam brag — palette + type
+         Dark "Field Instrument" chrome (scenes 1-2) -> light WCAG-AAA
+         "evidence review" paper (scenes 3-5). Tokens come verbatim
+         from src/theme/palette.ts, src/theme/theme.ts and
+         src/theme/evidence.ts. Do not invent colours.
+         ============================================================ */
+      :root {
+        /* dark chrome */
+        --chrome-canvas: #0a101d;
+        --chrome-sunken: #060b16;
+        --chrome-raised: #18243a;
+        --chrome-t1: #eef3f9;
+        --chrome-t2: #a6b4c8;
+        --chrome-t3: #74869d;
+        --chrome-accent: #38bdf8;
+        --chrome-ok: #34d399;
+        --hairline-1: rgba(255, 255, 255, 0.05);
+        --hairline-2: rgba(255, 255, 255, 0.09);
+        --hairline-3: rgba(255, 255, 255, 0.18);
+        --colorimeter-panel: #101014;
+        --colorimeter-hairline: #2a2a31;
+        --hud-amber: rgba(180, 83, 9, 0.96);
+        /* light evidentiary paper */
+        --paper-canvas: #f8fafc;
+        --paper-card: #ffffff;
+        --paper-subtle: #f1f5f9;
+        --paper-border: #cbd5e1;
+        --paper-border-strong: #94a3b8;
+        --paper-t1: #0f172a;
+        --paper-t2: #334155;
+        --paper-t3: #475569;
+        --paper-accent: #1e3a8a;
+        --ok-surface: #f0fdf4;
+        --ok-border: #16a34a;
+        --ok-text: #14532d;
+        --danger-surface: #fef2f2;
+        --danger-border: #dc2626;
+        --danger-text: #7f1d1d;
+        --danger-icon: #b91c1c;
+        --terminal: #0f172a;
+        --terminal-text: #f8fafc;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: #0a101d;
+      }
+
+      body {
+        font-family: Oswald, sans-serif;
+        color: #eef3f9;
+      }
+
+      #root {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: var(--chrome-canvas);
+      }
+
+      /* Persistent light ground that rises behind scenes 3-5. Not a clip,
+         so it is always laid out; its opacity is timeline-owned. */
+      #paper {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        background: var(--paper-canvas);
+        opacity: 0;
+      }
+
+      .clip {
+        position: absolute;
+        inset: 0;
+      }
+
+      .eyebrow {
+        font-family: "IBM Plex Mono", monospace;
+        font-weight: 700;
+        font-size: 22px;
+        letter-spacing: 3.4px;
+        text-transform: uppercase;
+      }
+
+      .meta {
+        font-family: "IBM Plex Mono", monospace;
+        font-weight: 400;
+        font-size: 22px;
+        letter-spacing: 1.6px;
+        text-transform: uppercase;
+      }
+
+      .rule {
+        display: block;
+        height: 2px;
+        transform-origin: left center;
+      }
+
+      /* ---------- SCENE 1 — the refusal ---------- */
+      #s1-inner {
+        position: absolute;
+        inset: 0;
+      }
+
+      #s1-patches {
+        filter: saturate(0.24) contrast(0.96);
+      }
+
+      #s1-ghost {
+        position: absolute;
+        left: 4px;
+        top: 132px;
+        font-family: Oswald, sans-serif;
+        font-weight: 700;
+        font-size: 276px;
+        line-height: 1;
+        letter-spacing: 4px;
+        color: #eef3f9;
+        opacity: 0.05;
+        white-space: nowrap;
+      }
+
+      #s1-glow {
+        position: absolute;
+        right: -140px;
+        top: 90px;
+        width: 1300px;
+        height: 900px;
+        border-radius: 50%;
+        background: radial-gradient(
+          closest-side,
+          rgba(56, 189, 248, 0.28),
+          rgba(56, 189, 248, 0.08) 58%,
+          rgba(56, 189, 248, 0) 100%
+        );
+        opacity: 0.55;
+      }
+
+      #s1-left {
+        position: absolute;
+        left: 104px;
+        top: 0;
+        bottom: 0;
+        width: 900px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: flex-start;
+      }
+
+      #s1-overline {
+        color: var(--chrome-t3);
+        margin-bottom: 18px;
+      }
+
+      #s1-rule {
+        width: 168px;
+        background: var(--chrome-accent);
+        margin-bottom: 30px;
+      }
+
+      .display {
+        margin: 0;
+        font-family: Oswald, sans-serif;
+        font-weight: 400;
+        font-size: 100px;
+        line-height: 1.04;
+        letter-spacing: -0.6px;
+        color: var(--chrome-t1);
+      }
+
+      .display span {
+        display: block;
+      }
+
+      #s1-sub {
+        margin: 32px 0 0 0;
+        font-family: Oswald, sans-serif;
+        font-weight: 400;
+        font-size: 46px;
+        line-height: 1.2;
+        color: var(--chrome-accent);
+      }
+
+      #s1-right {
+        position: absolute;
+        right: 104px;
+        top: 0;
+        bottom: 0;
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+      }
+
+      .cardwrap {
+        position: relative;
+      }
+
+      .patchcard {
+        padding: 22px;
+        background: var(--colorimeter-panel);
+        border: 2px solid var(--colorimeter-hairline);
+      }
+
+      .patches {
+        display: grid;
+        grid-template-columns: repeat(6, 110px);
+        grid-auto-rows: 110px;
+        gap: 12px;
+      }
+
+      .patches i {
+        display: block;
+      }
+
+      .reticle {
+        position: absolute;
+        inset: -46px;
+      }
+
+      .reticle .brk {
+        position: absolute;
+        width: 54px;
+        height: 54px;
+        border: 3px solid var(--chrome-accent);
+      }
+
+      .reticle .tl {
+        top: 0;
+        left: 0;
+        border-right: 0;
+        border-bottom: 0;
+      }
+
+      .reticle .tr {
+        top: 0;
+        right: 0;
+        border-left: 0;
+        border-bottom: 0;
+      }
+
+      .reticle .bl {
+        bottom: 0;
+        left: 0;
+        border-right: 0;
+        border-top: 0;
+      }
+
+      .reticle .br {
+        bottom: 0;
+        right: 0;
+        border-left: 0;
+        border-top: 0;
+      }
+
+      .reticle .cross {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 40px;
+        height: 40px;
+        margin: -20px 0 0 -20px;
+      }
+
+      .reticle .cross::before,
+      .reticle .cross::after {
+        content: "";
+        position: absolute;
+        background: var(--chrome-accent);
+      }
+
+      .reticle .cross::before {
+        left: 0;
+        top: 19px;
+        width: 40px;
+        height: 2px;
+      }
+
+      .reticle .cross::after {
+        left: 19px;
+        top: 0;
+        width: 2px;
+        height: 40px;
+      }
+
+      /* ---------- SCENE 3 — seal the record ---------- */
+      #s3-inner {
+        position: absolute;
+        inset: 0;
+      }
+
+      #s3-lift {
+        position: absolute;
+        left: -60px;
+        top: 60px;
+        width: 1180px;
+        height: 960px;
+        border-radius: 50%;
+        background: radial-gradient(
+          closest-side,
+          rgba(30, 58, 138, 0.16),
+          rgba(56, 189, 248, 0.05) 58%,
+          rgba(30, 58, 138, 0) 100%
+        );
+        opacity: 0.75;
+      }
+
+      .s3-bgrule {
+        position: absolute;
+        left: 0;
+        right: 0;
+        height: 2px;
+        background: rgba(30, 58, 138, 0.14);
+        transform-origin: left center;
+      }
+
+      #s3-rule-a {
+        top: 190px;
+      }
+
+      #s3-rule-b {
+        top: 890px;
+      }
+
+      #s3-left {
+        position: absolute;
+        left: 104px;
+        top: 0;
+        bottom: 0;
+        display: flex;
+        align-items: center;
+      }
+
+      #s3-card {
+        width: 940px;
+        min-height: 506px;
+        padding: 40px 44px;
+        background: var(--paper-card);
+        border: 2px solid var(--paper-border);
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+      }
+
+      #s3-railcard {
+        width: 720px;
+        min-height: 506px;
+        padding: 40px 44px;
+        background: var(--paper-card);
+        border: 2px solid var(--paper-border);
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+      }
+
+      #s3-eyebrow {
+        color: var(--paper-accent);
+        margin-bottom: 20px;
+      }
+
+      #s3-reading {
+        margin: 0;
+        font-family: Oswald, sans-serif;
+        font-weight: 400;
+        font-size: 52px;
+        line-height: 1.06;
+        letter-spacing: -0.3px;
+        color: var(--paper-t1);
+      }
+
+      #s3-reading span {
+        display: block;
+      }
+
+      #s3-rule {
+        background: var(--paper-border);
+        height: 2px;
+        margin: 26px 0 22px 0;
+      }
+
+      #s3-constant {
+        font-family: "IBM Plex Mono", monospace;
+        font-weight: 400;
+        font-size: 26px;
+        letter-spacing: 1.4px;
+        color: var(--paper-t3);
+        margin-bottom: 24px;
+      }
+
+      #s3-terminal {
+        background: var(--terminal);
+        padding: 22px 26px;
+      }
+
+      .tfield {
+        display: flex;
+        align-items: baseline;
+        gap: 18px;
+      }
+
+      .tfield .k {
+        font-family: "IBM Plex Mono", monospace;
+        font-weight: 400;
+        font-size: 24px;
+        letter-spacing: 1.6px;
+        color: #94a3b8;
+        text-transform: uppercase;
+        flex: 0 0 auto;
+      }
+
+      .tfield .v {
+        font-family: "IBM Plex Mono", monospace;
+        font-weight: 700;
+        font-size: 26px;
+        letter-spacing: 1.4px;
+        color: var(--terminal-text);
+      }
+
+      #s3-micro {
+        margin-top: 22px;
+        font-family: "IBM Plex Mono", monospace;
+        font-weight: 700;
+        font-size: 20px;
+        letter-spacing: 2.6px;
+        color: var(--paper-t3);
+        text-transform: uppercase;
+      }
+
+      #s3-rail {
+        position: absolute;
+        left: 1096px;
+        right: 104px;
+        top: 0;
+        bottom: 0;
+        display: flex;
+        align-items: center;
+      }
+
+      #s3-rail-eyebrow {
+        color: var(--paper-accent);
+      }
+
+      .rail {
+        position: relative;
+        height: 4px;
+        background: var(--paper-border);
+        margin: 0 22px;
+      }
+
+      .rail .nodes {
+        position: absolute;
+        left: -26px;
+        right: -26px;
+        top: -24px;
+        display: flex;
+        justify-content: space-between;
+      }
+
+      .node {
+        width: 52px;
+        height: 52px;
+        border-radius: 50%;
+        background: var(--paper-card);
+        border: 5px solid var(--paper-border-strong);
+      }
+
+      .node.live {
+        background: var(--ok-border);
+        border-color: var(--ok-border);
+      }
+
+      .rail-labels {
+        display: flex;
+        justify-content: space-between;
+        margin: 26px 0 0 0;
+      }
+
+      .rail-labels span {
+        width: 78px;
+        text-align: center;
+        font-family: "IBM Plex Mono", monospace;
+        font-weight: 700;
+        font-size: 20px;
+        letter-spacing: 1.4px;
+        color: var(--paper-t3);
+      }
+
+      #s3-rule-c {
+        background: var(--paper-border);
+        height: 2px;
+        margin: 0;
+      }
+
+      .fline {
+        font-family: "IBM Plex Mono", monospace;
+        font-weight: 400;
+        font-size: 21px;
+        line-height: 1.55;
+        letter-spacing: 0.4px;
+        color: var(--paper-t2);
+      }
+
+      .fline + .fline {
+        color: var(--paper-t1);
+        font-weight: 700;
+      }
+
+      #s3-rail-note {
+        font-family: "IBM Plex Mono", monospace;
+        font-weight: 400;
+        font-size: 20px;
+        letter-spacing: 2.2px;
+        color: var(--paper-t3);
+        text-transform: uppercase;
+      }
+
+      /* ---------- SCENE 2 — capture and calibrate ---------- */
+      #s2-inner {
+        position: absolute;
+        inset: 0;
+      }
+
+      #s2-glow {
+        position: absolute;
+        left: -160px;
+        top: 110px;
+        width: 1180px;
+        height: 860px;
+        border-radius: 50%;
+        background: radial-gradient(
+          closest-side,
+          rgba(56, 189, 248, 0.24),
+          rgba(56, 189, 248, 0.07) 58%,
+          rgba(56, 189, 248, 0) 100%
+        );
+        opacity: 0.5;
+      }
+
+      #s2-left {
+        position: absolute;
+        left: 104px;
+        top: 0;
+        bottom: 0;
+        display: flex;
+        align-items: center;
+        justify-content: flex-start;
+      }
+
+      #s2-cardwrap {
+        position: relative;
+      }
+
+      .patches.p2 {
+        grid-template-columns: repeat(6, 110px);
+      }
+
+      #s2-banner {
+        position: absolute;
+        left: 104px;
+        bottom: 78px;
+        width: 720px;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 18px 26px;
+        background: var(--hud-amber);
+        border-left: 6px solid #fbbf24;
+      }
+
+      #s2-banner .dot {
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: #ffffff;
+        flex: 0 0 auto;
+      }
+
+      #s2-banner span.tx {
+        font-family: "IBM Plex Mono", monospace;
+        font-weight: 700;
+        font-size: 26px;
+        letter-spacing: 1px;
+        color: #ffffff;
+      }
+
+      #s2-right {
+        position: absolute;
+        left: 960px;
+        right: 104px;
+        top: 0;
+        bottom: 0;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: stretch;
+      }
+
+      #s2-eyebrow {
+        color: var(--chrome-t3);
+        margin-bottom: 22px;
+      }
+
+      .chip {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        padding: 20px 24px;
+        background: var(--chrome-raised);
+        border: 2px solid var(--hairline-2);
+        margin-bottom: 14px;
+      }
+
+      .chip .idx {
+        font-family: "IBM Plex Mono", monospace;
+        font-weight: 400;
+        font-size: 20px;
+        /* slate 400 lifted one step: the raw tertiary token only reaches
+           4.17:1 on the raised surface, this clears WCAG AA at 5.0:1 */
+        color: #7b8ca2;
+      }
+
+      .chip .tx {
+        font-family: "IBM Plex Mono", monospace;
+        font-weight: 400;
+        font-size: 28px;
+        letter-spacing: 2px;
+        color: var(--chrome-t2);
+        text-transform: uppercase;
+      }
+
+      #s2-stamp {
+        margin-top: 16px;
+        display: inline-flex;
+        align-items: center;
+        gap: 18px;
+        align-self: flex-start;
+        padding: 18px 26px;
+        background: rgba(6, 78, 59, 0.72);
+        border: 3px solid var(--chrome-ok);
+      }
+
+      #s2-stamp .glyph {
+        font-family: "IBM Plex Mono", monospace;
+        font-weight: 700;
+        font-size: 30px;
+        color: #6ee7b7;
+      }
+
+      #s2-stamp .tx {
+        font-family: "IBM Plex Mono", monospace;
+        font-weight: 700;
+        font-size: 30px;
+        letter-spacing: 2px;
+        color: #6ee7b7;
+      }
+
+      #s2-loo {
+        margin-top: 14px;
+        font-family: "IBM Plex Mono", monospace;
+        font-weight: 400;
+        font-size: 22px;
+        letter-spacing: 2.2px;
+        color: var(--chrome-t3);
+        text-transform: uppercase;
+      }
+      /* ---------- SCENE 4 — break it, watch it fail ---------- */
+      #s4-main {
+        position: absolute;
+        inset: 0;
+      }
+
+      #s4-head {
+        position: absolute;
+        left: 104px;
+        top: 66px;
+        right: 104px;
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+      }
+
+      #s4-headline {
+        font-family: Oswald, sans-serif;
+        font-weight: 400;
+        font-size: 44px;
+        letter-spacing: -0.2px;
+        color: var(--paper-t1);
+      }
+
+      #s4-caption {
+        position: absolute;
+        right: 104px;
+        top: 64px;
+        width: 400px;
+        height: 46px;
+        font-family: "IBM Plex Mono", monospace;
+        font-weight: 700;
+        font-size: 22px;
+        letter-spacing: 2.6px;
+        text-transform: uppercase;
+      }
+
+      #cap-ok,
+      #cap-bad {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        text-align: center;
+        padding: 8px 14px;
+        border: 2px solid var(--ok-border);
+        background: var(--ok-surface);
+        color: var(--ok-text);
+      }
+
+      #cap-bad {
+        border-color: var(--danger-border);
+        background: var(--danger-surface);
+        color: var(--danger-text);
+        opacity: 0;
+      }
+
+      .pillwrap {
+        position: relative;
+        display: inline-block;
+        width: 128px;
+        height: 44px;
+      }
+
+      .pillwrap .pill {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        justify-content: center;
+      }
+
+      #r3-badpill {
+        opacity: 0;
+      }
+
+      #s4-main {
+        position: absolute;
+        inset: 0;
+      }
+
+      #s4-table {
+        position: absolute;
+        left: 104px;
+        right: 104px;
+        top: 136px;
+        background: var(--paper-card);
+        border: 2px solid var(--paper-border);
+      }
+
+      .trow {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+        padding: 0 22px;
+        height: 68px;
+        border-bottom: 2px solid var(--paper-subtle);
+      }
+
+      .trow.head {
+        height: 44px;
+        background: var(--paper-subtle);
+      }
+
+      #s4-table .trow:last-child {
+        border-bottom: 0;
+      }
+
+      .trow.head span {
+        font-family: "IBM Plex Mono", monospace;
+        font-weight: 700;
+        font-size: 16px;
+        letter-spacing: 2.4px;
+        color: var(--paper-t3);
+        text-transform: uppercase;
+      }
+
+      .c-seq {
+        flex: 0 0 78px;
+      }
+
+      .c-id {
+        flex: 1 1 auto;
+      }
+
+      .c-hash {
+        flex: 0 0 380px;
+        position: relative;
+        height: 30px;
+      }
+
+      .c-state {
+        flex: 0 0 168px;
+        display: flex;
+        justify-content: flex-end;
+      }
+
+      .trow .seq,
+      .trow .id,
+      .trow .hash {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 1.4px;
+        color: var(--paper-t1);
+      }
+
+      .trow .seq {
+        font-weight: 700;
+        color: var(--paper-t3);
+      }
+
+      .trow .id {
+        font-weight: 700;
+      }
+
+      .trow .hash {
+        font-weight: 400;
+        color: var(--paper-t2);
+      }
+
+      .trow .sub {
+        display: block;
+        height: 24px;
+        line-height: 24px;
+        margin-top: 5px;
+        font-family: "IBM Plex Mono", monospace;
+        font-weight: 700;
+        font-size: 17px;
+        letter-spacing: 1.2px;
+        color: var(--danger-icon);
+        text-transform: uppercase;
+        opacity: 0;
+      }
+
+      .c-hash a {
+        position: absolute;
+        left: 0;
+        top: 0;
+        display: none;
+        font-family: "IBM Plex Mono", monospace;
+        font-weight: 400;
+        font-size: 22px;
+        letter-spacing: 1.4px;
+        color: var(--paper-t2);
+      }
+
+      .c-hash a.on {
+        display: block;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 16px;
+        border: 2px solid var(--ok-border);
+        background: var(--ok-surface);
+      }
+
+      .pill .gl {
+        font-family: "IBM Plex Mono", monospace;
+        font-weight: 700;
+        font-size: 20px;
+        color: var(--ok-border);
+      }
+
+      /* ---------- SCENE 4 — break it, watch it fail ---------- */
+      #s4-actions {
+        position: absolute;
+        left: 104px;
+        top: 552px;
+        display: flex;
+        gap: 40px;
+      }
+
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        height: 72px;
+        background: var(--paper-card);
+        border: 3px solid var(--paper-accent);
+        font-family: "IBM Plex Mono", monospace;
+        font-weight: 700;
+        font-size: 24px;
+        letter-spacing: 2.4px;
+        color: var(--paper-accent);
+        text-transform: uppercase;
+        transform-origin: center;
+      }
+
+      #s4-tamper {
+        position: relative;
+        width: 430px;
+        border-color: var(--danger-border);
+        color: var(--danger-text);
+      }
+
+      #s4-tamper-a,
+      #s4-tamper-b {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 0;
+        bottom: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      #s4-tamper-b {
+        opacity: 0;
+      }
+
+      #s4-restore {
+        width: 306px;
+      }
+
+      #s4-hint {
+        position: absolute;
+        left: 104px;
+        top: 644px;
+        right: 104px;
+        font-family: "IBM Plex Mono", monospace;
+        font-weight: 400;
+        font-size: 20px;
+        letter-spacing: 2px;
+        color: var(--paper-t3);
+        text-transform: uppercase;
+      }
+
+      #s4-cursor {
+        position: absolute;
+        left: 338px;
+        top: 592px;
+        width: 44px;
+        height: 44px;
+      }
+
+      #s4-banner {
+        position: absolute;
+        left: 104px;
+        right: 104px;
+        top: 690px;
+        padding: 34px 44px;
+        background: var(--danger-surface);
+        border: 3px solid var(--danger-border);
+        opacity: 0;
+        transform-origin: center top;
+      }
+
+      #s4-banner .beye {
+        font-family: "IBM Plex Mono", monospace;
+        font-weight: 700;
+        font-size: 22px;
+        letter-spacing: 3.2px;
+        color: var(--danger-icon);
+        text-transform: uppercase;
+      }
+
+      #s4-banner .btitle {
+        margin-top: 14px;
+        font-family: Oswald, sans-serif;
+        font-weight: 400;
+        font-size: 60px;
+        line-height: 1.04;
+        letter-spacing: -0.4px;
+        color: var(--danger-text);
+      }
+
+      #s4-banner .bcite {
+        margin-top: 16px;
+        font-family: "IBM Plex Mono", monospace;
+        font-weight: 700;
+        font-size: 26px;
+        letter-spacing: 2.2px;
+        color: var(--danger-icon);
+        text-transform: uppercase;
+      }
+
+      #s4-banner .bbody {
+        margin-top: 16px;
+        font-family: Oswald, sans-serif;
+        font-weight: 400;
+        font-size: 34px;
+        line-height: 1.2;
+        color: var(--danger-text);
+      }
+
+      #s4-banner .bnote {
+        margin-top: 14px;
+        font-family: "IBM Plex Mono", monospace;
+        font-weight: 400;
+        font-size: 20px;
+        letter-spacing: 2.6px;
+        color: var(--danger-icon);
+        text-transform: uppercase;
+      }
+
+      /* ---------- SCENE 5 — the honest boundary ---------- */
+      #s5-ghost {
+        position: absolute;
+        left: 250px;
+        top: 210px;
+        width: 1420px;
+        height: 660px;
+        opacity: 0.17;
+        display: grid;
+        grid-template-columns: repeat(8, 1fr);
+        grid-auto-rows: 1fr;
+        gap: 22px;
+      }
+
+      #s5-ghost i {
+        display: block;
+        border: 2px solid var(--paper-accent);
+      }
+
+      #s5-lift {
+        position: absolute;
+        left: 300px;
+        top: 60px;
+        width: 1320px;
+        height: 960px;
+        border-radius: 50%;
+        background: radial-gradient(
+          closest-side,
+          rgba(30, 58, 138, 0.15),
+          rgba(30, 58, 138, 0.04) 60%,
+          rgba(30, 58, 138, 0) 100%
+        );
+        opacity: 0.7;
+      }
+
+      #s5-inner {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+      }
+
+      #s5-mark {
+        margin: 0;
+        font-family: Oswald, sans-serif;
+        font-weight: 700;
+        font-size: 180px;
+        line-height: 1;
+        letter-spacing: 4px;
+        color: var(--paper-t1);
+      }
+
+      #s5-toprule {
+        width: 1240px;
+        height: 3px;
+        background: var(--paper-accent);
+        transform-origin: center;
+      }
+
+      #s5-label {
+        margin-top: 30px;
+        font-family: "IBM Plex Mono", monospace;
+        font-weight: 700;
+        font-size: 26px;
+        letter-spacing: 4.4px;
+        color: var(--paper-accent);
+        text-transform: uppercase;
+      }
+
+      #s5-chips {
+        margin-top: 42px;
+        display: flex;
+        gap: 22px;
+      }
+
+      .chipx {
+        padding: 14px 26px;
+        background: var(--paper-subtle);
+        border: 2px solid var(--paper-border);
+        font-family: "IBM Plex Mono", monospace;
+        font-weight: 700;
+        font-size: 22px;
+        letter-spacing: 2.6px;
+        color: var(--paper-t2);
+        text-transform: uppercase;
+      }
+
+      #s5-botrule {
+        position: absolute;
+        left: 340px;
+        right: 340px;
+        bottom: 112px;
+        height: 2px;
+        background: var(--paper-border);
+        transform-origin: center;
+      }
+
+      .pill .tx {
+        font-family: "IBM Plex Mono", monospace;
+        font-weight: 700;
+        font-size: 20px;
+        letter-spacing: 2px;
+        color: var(--ok-text);
+        text-transform: uppercase;
+      }
+
+      .pill.broken {
+        border-color: var(--danger-border);
+        background: var(--danger-surface);
+      }
+
+      .pill.broken .gl,
+      .pill.broken .tx {
+        color: var(--danger-text);
+      }
+
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="parinaam-brag"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="21.3"
+    >
+      <div id="paper" data-layout-ignore="true"></div>
+
+      <!-- ============================ SCENE 1 ============================ -->
+      <section
+        id="s1"
+        class="clip"
+        data-start="0"
+        data-duration="3.5"
+        data-track-index="1"
+        style="z-index: 10"
+      >
+        <div id="s1-inner">
+          <div id="s1-ghost" data-layout-ignore="true">PRESUMPTIVE</div>
+          <div id="s1-glow" data-layout-ignore="true"></div>
+
+          <div id="s1-left">
+            <div id="s1-overline" class="eyebrow">Presumptive field test record</div>
+            <span id="s1-rule" class="rule"></span>
+            <h1 class="display">
+              <span id="s1-l1">It refuses</span>
+              <span id="s1-l2">to name the</span>
+              <span id="s1-l3">substance.</span>
+            </h1>
+            <p id="s1-sub">Only what the reagent did.</p>
+          </div>
+
+          <div id="s1-right">
+            <div class="cardwrap" id="s1-cardwrap">
+              <div class="patchcard">
+                <div class="patches" id="s1-patches">
+                  <i style="background: #735244"></i>
+                  <i style="background: #c29682"></i>
+                  <i style="background: #627a9d"></i>
+                  <i style="background: #576c43"></i>
+                  <i style="background: #8580b1"></i>
+                  <i style="background: #67bdaa"></i>
+                  <i style="background: #d67e2c"></i>
+                  <i style="background: #505ba6"></i>
+                  <i style="background: #c15a63"></i>
+                  <i style="background: #5e3c6c"></i>
+                  <i style="background: #9dbc40"></i>
+                  <i style="background: #e0a32e"></i>
+                  <i style="background: #383d96"></i>
+                  <i style="background: #469449"></i>
+                  <i style="background: #af363c"></i>
+                  <i style="background: #e7c71f"></i>
+                  <i style="background: #bb5695"></i>
+                  <i style="background: #0885a1"></i>
+                  <i style="background: #f3f3f2"></i>
+                  <i style="background: #c8c8c8"></i>
+                  <i style="background: #a0a0a0"></i>
+                  <i style="background: #7a7a7a"></i>
+                  <i style="background: #555555"></i>
+                  <i style="background: #343434"></i>
+                </div>
+              </div>
+              <div class="reticle" id="s1-reticle" data-layout-ignore="true">
+                <span class="brk tl"></span>
+                <span class="brk tr"></span>
+                <span class="brk bl"></span>
+                <span class="brk br"></span>
+                <span class="cross" id="s1-cross"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================ SCENE 2 ============================ -->
+      <section
+        id="s2"
+        class="clip"
+        data-start="3.2"
+        data-duration="5.6"
+        data-track-index="2"
+        style="z-index: 20"
+      >
+        <div id="s2-inner">
+          <div id="s2-glow" data-layout-ignore="true"></div>
+
+          <div id="s2-left">
+            <div class="cardwrap" id="s2-cardwrap">
+              <div class="patchcard">
+                <div class="patches" id="s2-patches">
+                  <i style="background: #735244"></i>
+                  <i style="background: #c29682"></i>
+                  <i style="background: #627a9d"></i>
+                  <i style="background: #576c43"></i>
+                  <i style="background: #8580b1"></i>
+                  <i style="background: #67bdaa"></i>
+                  <i style="background: #d67e2c"></i>
+                  <i style="background: #505ba6"></i>
+                  <i style="background: #c15a63"></i>
+                  <i style="background: #5e3c6c"></i>
+                  <i style="background: #9dbc40"></i>
+                  <i style="background: #e0a32e"></i>
+                  <i style="background: #383d96"></i>
+                  <i style="background: #469449"></i>
+                  <i style="background: #af363c"></i>
+                  <i style="background: #e7c71f"></i>
+                  <i style="background: #bb5695"></i>
+                  <i style="background: #0885a1"></i>
+                  <i style="background: #f3f3f2"></i>
+                  <i style="background: #c8c8c8"></i>
+                  <i style="background: #a0a0a0"></i>
+                  <i style="background: #7a7a7a"></i>
+                  <i style="background: #555555"></i>
+                  <i style="background: #343434"></i>
+                </div>
+              </div>
+              <div class="reticle" id="s2-reticle" data-layout-ignore="true">
+                <span class="brk tl"></span>
+                <span class="brk tr"></span>
+                <span class="brk bl"></span>
+                <span class="brk br"></span>
+                <span class="cross" id="s2-cross"></span>
+              </div>
+            </div>
+          </div>
+
+          <div id="s2-banner">
+            <span class="dot"></span>
+            <span class="tx">Card locked — capture ready</span>
+          </div>
+
+          <div id="s2-right">
+            <div id="s2-eyebrow" class="eyebrow">Capture · calibrate</div>
+            <div class="chip" id="ch1">
+              <span class="idx">01</span><span class="tx">sRGB → linear</span>
+            </div>
+            <div class="chip" id="ch2">
+              <span class="idx">02</span><span class="tx">Bradford adapt</span>
+            </div>
+            <div class="chip" id="ch3">
+              <span class="idx">03</span><span class="tx">RP-2 regression</span>
+            </div>
+            <div class="chip" id="ch4">
+              <span class="idx">04</span><span class="tx">CIELAB / ΔE00</span>
+            </div>
+            <div id="s2-stamp">
+              <span class="glyph">✓</span>
+              <span class="tx">Residual GOOD · ≤ 2.5 ΔE00</span>
+            </div>
+            <div id="s2-loo">24 patch LOO · mean 0.82 · max 1.46</div>
+          </div>
+        </div>
+      </section>
+
+
+
+      <!-- ============================ SCENE 3 ============================ -->
+      <section
+        id="s3"
+        class="clip"
+        data-start="8.6"
+        data-duration="4.4"
+        data-track-index="3"
+        style="z-index: 30"
+      >
+        <div id="s3-inner">
+          <div id="s3-lift" data-layout-ignore="true"></div>
+          <div id="s3-rule-a" class="s3-bgrule" data-layout-ignore="true"></div>
+          <div id="s3-rule-b" class="s3-bgrule" data-layout-ignore="true"></div>
+
+          <div id="s3-left">
+            <div id="s3-card">
+              <div id="s3-eyebrow" class="eyebrow">Sealed record · SEQ #5</div>
+              <p id="s3-reading">
+                <span>Reagent showed the expected</span>
+                <span>colour response</span>
+              </p>
+              <span id="s3-rule" class="rule"></span>
+              <div id="s3-constant">CONSISTENT_WITH_REAGENT_POSITIVE</div>
+              <div id="s3-terminal">
+                <div class="tfield">
+                  <span class="k">payload sha256</span>
+                  <span class="v" id="s3-h1">4c1e…8a72</span>
+                </div>
+                <div class="tfield" style="margin-top: 14px">
+                  <span class="k">chain hash</span>
+                  <span class="v" id="s3-h2">7f3a…91c4</span>
+                </div>
+              </div>
+              <div id="s3-micro">Append-only · prev hash linked</div>
+            </div>
+          </div>
+
+          <div id="s3-rail">
+            <div id="s3-railcard">
+            <div id="s3-rail-eyebrow" class="eyebrow">Chain · 5 of 5 verified</div>
+            <div class="rail" data-layout-allow-overflow="true">
+              <div class="nodes">
+                <span class="node" id="n1"></span>
+                <span class="node" id="n2"></span>
+                <span class="node" id="n3"></span>
+                <span class="node" id="n4"></span>
+                <span class="node" id="n5"></span>
+              </div>
+            </div>
+            <div class="rail-labels">
+              <span>SEQ 1</span>
+              <span>SEQ 2</span>
+              <span>SEQ 3</span>
+              <span>SEQ 4</span>
+              <span>SEQ 5</span>
+            </div>
+            <span id="s3-rule-c" class="rule"></span>
+            <div id="s3-form">
+              <div class="fline">payload_sha256 = SHA256(payload_jcs)</div>
+              <div class="fline">chain_hash = SHA256(prev_hash + payload_sha256)</div>
+            </div>
+            <div id="s3-rail-note">every link recomputed from the last</div>
+            </div>
+          </div>
+        </div>
+      </section>
+      <!-- ============================ SCENE 4 ============================ -->
+      <section
+        id="s4"
+        class="clip"
+        data-start="13"
+        data-duration="5.4"
+        data-track-index="4"
+        style="z-index: 40"
+      >
+        <div id="s4-main">
+          <div id="s4-head">
+            <div id="s4-headline">Chain verification</div>
+          </div>
+
+          <div id="s4-caption">
+            <span id="cap-ok">Chain verified · 5 of 5</span>
+            <span id="cap-bad">Chain broken · 3 of 5</span>
+          </div>
+
+          <div id="s4-table" data-layout-allow-overlap="true">
+            <div class="trow head">
+              <span class="c-seq">SEQ</span>
+              <span class="c-id">Record</span>
+              <span class="c-hash">Chain hash</span>
+              <span class="c-state">State</span>
+            </div>
+
+            <div class="trow" id="r1">
+              <span class="c-seq seq">1</span>
+              <span class="c-id">
+                <span class="id">NCB/DZU/CR-14/2026 · P-1</span>
+                <span class="sub"></span>
+              </span>
+              <span class="c-hash hash">b0d4…2c19</span>
+              <span class="c-state">
+                <span class="pill"><span class="gl">✓</span><span class="tx">OK</span></span>
+              </span>
+            </div>
+
+            <div class="trow" id="r2">
+              <span class="c-seq seq">2</span>
+              <span class="c-id">
+                <span class="id">NCB/DZU/CR-14/2026 · P-2</span>
+                <span class="sub"></span>
+              </span>
+              <span class="c-hash hash">8e71…a4f0</span>
+              <span class="c-state">
+                <span class="pill"><span class="gl">✓</span><span class="tx">OK</span></span>
+              </span>
+            </div>
+
+            <div class="trow" id="r3">
+              <span class="c-seq seq">3</span>
+              <span class="c-id">
+                <span class="id">NCB/DZU/CR-14/2026 · P-3</span>
+                <span class="sub" id="r3-sub">payload byte flipped · hash no longer recomputes</span>
+              </span>
+              <span class="c-hash hash">37bc…5d82</span>
+              <span class="c-state">
+                <span class="pillwrap">
+                  <span class="pill" id="r3-okpill"><span class="gl">✓</span><span class="tx">OK</span></span>
+                  <span class="pill broken" id="r3-badpill"
+                    ><span class="gl">!</span><span class="tx">Broken</span></span
+                  >
+                </span>
+              </span>
+            </div>
+
+            <div class="trow" id="r4">
+              <span class="c-seq seq">4</span>
+              <span class="c-id">
+                <span class="id">NCB/DZU/CR-14/2026 · P-4</span>
+                <span class="sub"></span>
+              </span>
+              <span class="c-hash hash">c50a…e613</span>
+              <span class="c-state">
+                <span class="pill"><span class="gl">✓</span><span class="tx">OK</span></span>
+              </span>
+            </div>
+
+            <div class="trow" id="r5">
+              <span class="c-seq seq">5</span>
+              <span class="c-id">
+                <span class="id">NCB/DZU/CR-14/2026 · P-5</span>
+                <span class="sub"></span>
+              </span>
+              <span class="c-hash hash">7f3a…91c4</span>
+              <span class="c-state">
+                <span class="pill"><span class="gl">✓</span><span class="tx">OK</span></span>
+              </span>
+            </div>
+          </div>
+
+          <div id="s4-actions">
+            <div class="btn" id="s4-tamper">
+              <span id="s4-tamper-a">Tamper with P-3</span>
+              <span id="s4-tamper-b">Corrupting payload…</span>
+            </div>
+            <div class="btn" id="s4-restore">Restore</div>
+          </div>
+
+          <div id="s4-hint">One byte changed. Nothing re-sealed.</div>
+
+          <div id="s4-cursor">
+            <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true">
+              <path
+                d="M2 2 L2 36 L11.5 26.5 L18 41 L24 38.2 L17.4 24 L31 24 Z"
+                fill="#0f172a"
+                stroke="#ffffff"
+                stroke-width="2.4"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
+
+          <div id="s4-banner" data-layout-allow-overlap="true">
+            <div class="beye">Integrity failure detected</div>
+            <div class="btitle">Verification failed — tampering detected</div>
+            <div class="bcite">Chain broken at position 3 of 5</div>
+            <div class="bbody">Every later link fails to recompute.</div>
+            <div class="bnote">That is the append-only guarantee</div>
+          </div>
+        </div>
+      </section>
+      <!-- ============================ SCENE 5 ============================ -->
+      <section
+        id="s5"
+        class="clip"
+        data-start="18.1"
+        data-duration="3.2"
+        data-track-index="5"
+        style="z-index: 50"
+      >
+        <div id="s5-inner">
+          <div id="s5-ghost" data-layout-ignore="true">
+            <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i> <i></i><i></i><i></i><i></i
+            ><i></i><i></i><i></i><i></i> <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+          </div>
+          <div id="s5-lift" data-layout-ignore="true"></div>
+
+          <div id="s5-mark">PARINAAM</div>
+          <span id="s5-toprule" class="rule"></span>
+          <div id="s5-label">Presumptive only — lab confirmation required</div>
+          <div id="s5-chips">
+            <span class="chipx">Offline</span>
+            <span class="chipx">Append-only</span>
+            <span class="chipx">Self-hosted</span>
+          </div>
+          <div id="s5-botrule"></div>
+        </div>
+      </section>
+
+      <!-- ============================ AUDIO ============================ -->
+      <audio
+        id="bg-music"
+        data-start="0"
+        data-duration="21.3"
+        data-track-index="10"
+        data-automation='{"version":1,"lanes":[{"target":"volume","points":[{"t":0,"v":0},{"t":0.25,"v":0.3},{"t":13.45,"v":0.3},{"t":13.7,"v":0.2},{"t":14.45,"v":0.2},{"t":14.7,"v":0.3},{"t":20.7,"v":0.3},{"t":21.3,"v":0}]}]}'
+        src="assets/music/happy-beats-business-moves-vol-12-by-ende-dot-app.mp3"
+      ></audio>
+
+      <audio
+        id="sfx-headline"
+        data-start="1.15"
+        data-duration="0.19"
+        data-track-index="11"
+        data-volume="0.7"
+        src="assets/sfx/impact/impactSoft_medium_001.ogg"
+      ></audio>
+      <audio
+        id="sfx-chip1"
+        data-start="3.82"
+        data-duration="0.12"
+        data-track-index="12"
+        data-volume="0.6"
+        src="assets/sfx/interface/drop_001.ogg"
+      ></audio>
+      <audio
+        id="sfx-chip2"
+        data-start="4.91"
+        data-duration="0.20"
+        data-track-index="13"
+        data-volume="0.6"
+        src="assets/sfx/interface/drop_002.ogg"
+      ></audio>
+      <audio
+        id="sfx-chip3"
+        data-start="6"
+        data-duration="0.12"
+        data-track-index="14"
+        data-volume="0.6"
+        src="assets/sfx/interface/drop_001.ogg"
+      ></audio>
+      <audio
+        id="sfx-chip4"
+        data-start="7.09"
+        data-duration="0.20"
+        data-track-index="15"
+        data-volume="0.62"
+        src="assets/sfx/interface/drop_002.ogg"
+      ></audio>
+      <audio
+        id="sfx-stamp"
+        data-start="7.64"
+        data-duration="0.14"
+        data-track-index="16"
+        data-volume="0.72"
+        src="assets/sfx/impact/impactSoft_medium_002.ogg"
+      ></audio>
+      <audio
+        id="sfx-rail"
+        data-start="9.29"
+        data-duration="0.06"
+        data-track-index="17"
+        data-volume="0.55"
+        src="assets/sfx/ui/rollover2.ogg"
+      ></audio>
+      <audio
+        id="sfx-hash"
+        data-start="10.93"
+        data-duration="1.48"
+        data-track-index="18"
+        data-volume="0.66"
+        src="assets/sfx/impact/impactBell_heavy_000.ogg"
+      ></audio>
+      <audio
+        id="sfx-click"
+        data-start="13.11"
+        data-duration="0.011"
+        data-track-index="19"
+        data-volume="0.75"
+        src="assets/sfx/interface/click_003.ogg"
+      ></audio>
+      <audio
+        id="sfx-glitch"
+        data-start="13.36"
+        data-duration="0.031"
+        data-track-index="20"
+        data-volume="0.6"
+        src="assets/sfx/interface/glitch_002.ogg"
+      ></audio>
+      <audio
+        id="sfx-banner"
+        data-start="13.64"
+        data-duration="0.55"
+        data-track-index="21"
+        data-volume="0.85"
+        src="assets/sfx/impact/impactSoft_heavy_003.ogg"
+      ></audio>
+      <audio
+        id="sfx-restore"
+        data-start="16.93"
+        data-duration="0.15"
+        data-track-index="22"
+        data-volume="0.62"
+        src="assets/sfx/impact/impactSoft_medium_004.ogg"
+      ></audio>
+      <audio
+        id="sfx-mark"
+        data-start="18.56"
+        data-duration="0.66"
+        data-track-index="23"
+        data-volume="0.7"
+        src="assets/sfx/impact/impactBell_heavy_003.ogg"
+      ></audio>
+    </div>
+    <script src="assets/music/audio-reactive.js"></script>
+    <script>
+      /* ============================================================
+         Parinaam brag — one paused, seekable timeline.
+         All tweens use explicit fromTo endpoints so state is a pure
+         function of timeline time. No clocks, no Math.random,
+         no repeat: -1. Length is governed by the root data-duration.
+         ============================================================ */
+      (function () {
+        var tl = gsap.timeline({ paused: true });
+
+        /* ---------- persistent ground: the palette flip ---------- */
+        tl.fromTo("#paper", { opacity: 0 }, { opacity: 1, duration: 0.5, ease: "power2.inOut" }, 8.45);
+
+        /* ================= SCENE 1 — the refusal ================= */
+        tl.fromTo("#s1-inner", { opacity: 0 }, { opacity: 1, duration: 0.35 }, 0);
+        tl.to("#s1-inner", { opacity: 0, duration: 0.3, ease: "power2.in" }, 3.2);
+        tl.fromTo("#s1-ghost", { x: -40 }, { x: 74, duration: 3.5, ease: "none" }, 0);
+        tl.fromTo(
+          "#s1-glow",
+          { scale: 1 },
+          { scale: 1.07, duration: 1.7, ease: "sine.inOut", yoyo: true, repeat: 1 },
+          0,
+        );
+        tl.fromTo(
+          "#s1-cardwrap",
+          { opacity: 0, y: 74, rotation: -3.4 },
+          { opacity: 1, y: 0, rotation: -1.6, duration: 1.0, ease: "power3.out" },
+          0.1,
+        );
+        tl.fromTo(
+          "#s1-reticle",
+          { opacity: 0, scale: 1.15 },
+          { opacity: 1, scale: 1, duration: 0.85, ease: "power2.out" },
+          0.32,
+        );
+        tl.fromTo(
+          "#s1-cross",
+          { opacity: 0, scale: 0.55 },
+          { opacity: 1, scale: 1, duration: 0.5, ease: "back.out(2)" },
+          0.62,
+        );
+        tl.fromTo(
+          "#s1-overline",
+          { opacity: 0, y: 16 },
+          { opacity: 1, y: 0, duration: 0.45, ease: "power2.out" },
+          0.15,
+        );
+        tl.fromTo("#s1-rule", { scaleX: 0 }, { scaleX: 1, duration: 0.5, ease: "power2.out" }, 0.2);
+        tl.fromTo("#s1-l1", { opacity: 0, y: 36 }, { opacity: 1, y: 0, duration: 0.55, ease: "power3.out" }, 0.32);
+        tl.fromTo("#s1-l2", { opacity: 0, y: 36 }, { opacity: 1, y: 0, duration: 0.55, ease: "power3.out" }, 0.44);
+        tl.fromTo("#s1-l3", { opacity: 0, y: 36 }, { opacity: 1, y: 0, duration: 0.55, ease: "power3.out" }, 0.56);
+        tl.fromTo("#s1-sub", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.5, ease: "power2.out" }, 0.92);
+
+        /* ================= SCENE 2 — capture, calibrate ================= */
+        tl.fromTo("#s2-inner", { opacity: 0 }, { opacity: 1, duration: 0.35 }, 3.2);
+        tl.to("#s2-inner", { opacity: 0, duration: 0.35, ease: "power2.in" }, 8.45);
+        tl.fromTo(
+          "#s2-glow",
+          { scale: 1 },
+          { scale: 1.06, duration: 1.7, ease: "sine.inOut", yoyo: true, repeat: 1 },
+          3.2,
+        );
+        tl.fromTo(
+          "#s2-cardwrap",
+          { opacity: 0, x: 214, rotation: 3.2 },
+          { opacity: 1, x: 0, rotation: 1.4, duration: 0.9, ease: "power3.out" },
+          3.25,
+        );
+        tl.fromTo(
+          "#s2-reticle",
+          { opacity: 0, scale: 1.14 },
+          { opacity: 1, scale: 1, duration: 0.75, ease: "power2.out" },
+          3.42,
+        );
+        tl.fromTo(
+          "#s2-cross",
+          { opacity: 0, scale: 0.55 },
+          { opacity: 1, scale: 1, duration: 0.45, ease: "back.out(2)" },
+          3.7,
+        );
+        tl.fromTo("#s2-banner", { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: 0.5, ease: "power2.out" }, 3.6);
+        tl.fromTo("#s2-eyebrow", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.45, ease: "power2.out" }, 3.5);
+
+        /* beat-grid: chip 1 at 3.82s, chip 2 at 4.91s, chip 3 at 6.00s, chip 4 at 7.09s
+           (vol-12 beats taken every second beat -> 1.09s apart, above the 0.8s label
+           floor; the full stack then holds complete from 7.09s to the scene fade) */
+        [
+          ["#ch1", 3.82],
+          ["#ch2", 4.91],
+          ["#ch3", 6.0],
+          ["#ch4", 7.09],
+        ].forEach(function (c) {
+          tl.fromTo(c[0], { opacity: 0, x: 56 }, { opacity: 1, x: 0, duration: 0.5, ease: "power3.out" }, c[1]);
+        });
+
+        tl.fromTo(
+          "#s2-stamp",
+          { opacity: 0, scale: 1.07 },
+          { opacity: 1, scale: 1, duration: 0.45, ease: "power2.out" },
+          7.64,
+        );
+        tl.fromTo("#s2-loo", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.4, ease: "power2.out" }, 7.8);
+
+        /* ================= SCENE 3 — seal the record ================= */
+        tl.fromTo("#s3-inner", { opacity: 0 }, { opacity: 1, duration: 0.35 }, 8.75);
+        tl.fromTo("#s3-rule-a", { scaleX: 0 }, { scaleX: 1, duration: 0.9, ease: "power2.out" }, 8.7);
+        tl.fromTo("#s3-rule-b", { scaleX: 0 }, { scaleX: 1, duration: 0.9, ease: "power2.out" }, 8.85);
+        tl.fromTo("#s3-card", { opacity: 0, x: -46 }, { opacity: 1, x: 0, duration: 0.7, ease: "power3.out" }, 8.75);
+        tl.fromTo("#s3-eyebrow", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.4, ease: "power2.out" }, 8.95);
+        tl.fromTo("#s3-reading", { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: 0.6, ease: "power3.out" }, 9.1);
+        tl.fromTo("#s3-rule", { scaleX: 0 }, { scaleX: 1, duration: 0.5, ease: "power2.out" }, 9.6);
+        tl.fromTo("#s3-constant", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.45, ease: "power2.out" }, 9.75);
+        tl.fromTo("#s3-railcard", { opacity: 0, x: 46 }, { opacity: 1, x: 0, duration: 0.7, ease: "power3.out" }, 8.85);
+        tl.fromTo(
+          "#s3-rail-eyebrow",
+          { opacity: 0, y: 12 },
+          { opacity: 1, y: 0, duration: 0.4, ease: "power2.out" },
+          9.0,
+        );
+        tl.fromTo("#s3-terminal", { opacity: 0 }, { opacity: 1, duration: 0.4, ease: "power2.out" }, 10.05);
+
+        /* beat-grid (non-text accents): chain-rail nodes on the vol-12 beats
+           9.29 / 9.83 / 10.37 / 10.93 / 11.46 */
+        [
+          ["#n1", 9.29],
+          ["#n2", 9.83],
+          ["#n3", 10.37],
+          ["#n4", 10.93],
+          ["#n5", 11.46],
+        ].forEach(function (n) {
+          tl.fromTo(
+            n[0],
+            { scale: 0.55, backgroundColor: "#ffffff", borderColor: "#94a3b8" },
+            {
+              scale: 1,
+              backgroundColor: "#16a34a",
+              borderColor: "#16a34a",
+              duration: 0.3,
+              ease: "back.out(2.2)",
+            },
+            n[1],
+          );
+        });
+
+        /* beat-locked: 10.93s — strong cue. The digest lands as the rail completes. */
+        tl.fromTo("#s3-h1", { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.35, ease: "power2.out" }, 10.93);
+        tl.fromTo("#s3-h2", { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.35, ease: "power2.out" }, 11.0);
+        tl.fromTo("#s3-micro", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.4, ease: "power2.out" }, 11.65);
+        tl.fromTo("#s3-rule-c", { scaleX: 0 }, { scaleX: 1, duration: 0.5, ease: "power2.out" }, 11.6);
+        tl.fromTo("#s3-form", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.4, ease: "power2.out" }, 11.7);
+        tl.fromTo("#s3-rail-note", { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.4, ease: "power2.out" }, 11.85);
+
+        /* ================= SCENE 4 — break it, watch it fail ================= */
+        /* Stable resting state for the cursor: it is absent until the scene
+           starts, and a later fromTo must not become its pre-scene baseline. */
+        tl.set("#s4-cursor", { opacity: 0, x: 0 }, 0);
+        tl.to("#s4-main", { opacity: 0, duration: 0.35, ease: "power2.in" }, 18.05);
+
+        tl.fromTo("#s4-cursor", { opacity: 0 }, { opacity: 1, duration: 0.12, ease: "none" }, 13.0);
+        tl.fromTo("#s4-cursor", { x: -186 }, { x: 0, duration: 0.14, ease: "power3.out" }, 13.0);
+        tl.fromTo("#s4-tamper", { scale: 1 }, { scale: 0.97, duration: 0.08, ease: "power2.out" }, 13.11);
+        tl.fromTo(
+          "#s4-tamper",
+          { scale: 0.97 },
+          { scale: 1, duration: 0.16, ease: "power2.out", immediateRender: false },
+          13.19,
+        );
+        tl.fromTo("#s4-tamper-a", { opacity: 1 }, { opacity: 0, duration: 0.01, ease: "none" }, 13.2);
+        tl.fromTo("#s4-tamper-b", { opacity: 0 }, { opacity: 1, duration: 0.01, ease: "none" }, 13.2);
+        tl.fromTo("#r3-okpill", { opacity: 1 }, { opacity: 0, duration: 0.22, ease: "power2.out" }, 13.32);
+        tl.fromTo("#r3-badpill", { opacity: 0 }, { opacity: 1, duration: 0.22, ease: "power2.out" }, 13.32);
+        tl.fromTo("#r3-sub", { opacity: 0 }, { opacity: 1, duration: 0.3, ease: "power2.out" }, 13.36);
+        tl.fromTo("#cap-ok", { opacity: 1 }, { opacity: 0, duration: 0.22, ease: "power2.out" }, 13.32);
+        tl.fromTo("#cap-bad", { opacity: 0 }, { opacity: 1, duration: 0.22, ease: "power2.out" }, 13.32);
+
+        /* beat-locked: 13.64s — strong cue. The failure lands on the hit.
+           The alert is its own panel below the ledger, so the table stays
+           fully readable: the evidence does not hide when it fails. */
+        tl.fromTo("#s4-headline", { opacity: 1 }, { opacity: 0.35, duration: 0.35, ease: "power2.out" }, 13.64);
+        tl.fromTo("#s4-hint", { opacity: 1 }, { opacity: 0.35, duration: 0.35, ease: "power2.out" }, 13.64);
+        tl.fromTo("#s4-cursor", { opacity: 1 }, { opacity: 0.2, duration: 0.3, ease: "power2.out" }, 13.64);
+        tl.fromTo(
+          "#s4-banner",
+          { opacity: 0, y: 46, scale: 0.985 },
+          { opacity: 1, y: 0, scale: 1, duration: 0.45, ease: "power3.out" },
+          13.64,
+        );
+
+        tl.fromTo(
+          "#s4-banner",
+          { opacity: 1, y: 0, scale: 1 },
+          { opacity: 0, y: -22, duration: 0.28, ease: "power2.in", immediateRender: false },
+          16.24,
+        );
+        tl.fromTo(
+          "#s4-headline",
+          { opacity: 0.35 },
+          { opacity: 1, duration: 0.35, ease: "power2.out", immediateRender: false },
+          16.28,
+        );
+        tl.fromTo(
+          "#s4-hint",
+          { opacity: 0.35 },
+          { opacity: 1, duration: 0.35, ease: "power2.out", immediateRender: false },
+          16.28,
+        );
+        tl.fromTo(
+          "#s4-cursor",
+          { opacity: 0.2 },
+          { opacity: 1, duration: 0.3, ease: "power2.out", immediateRender: false },
+          16.28,
+        );
+        tl.fromTo("#s4-cursor", { x: 0 }, { x: 389, duration: 0.3, ease: "power2.inOut", immediateRender: false }, 16.53);
+        tl.fromTo("#s4-restore", { scale: 1 }, { scale: 0.97, duration: 0.08, ease: "power2.out" }, 16.93);
+        tl.fromTo(
+          "#s4-restore",
+          { scale: 0.97 },
+          { scale: 1, duration: 0.16, ease: "power2.out", immediateRender: false },
+          17.01,
+        );
+        tl.fromTo("#r3-okpill", { opacity: 0 }, { opacity: 1, duration: 0.22, ease: "power2.out", immediateRender: false }, 16.93);
+        tl.fromTo("#r3-badpill", { opacity: 1 }, { opacity: 0, duration: 0.22, ease: "power2.out", immediateRender: false }, 16.93);
+        tl.fromTo("#r3-sub", { opacity: 1 }, { opacity: 0, duration: 0.22, ease: "power2.out", immediateRender: false }, 16.93);
+        tl.fromTo("#cap-ok", { opacity: 0 }, { opacity: 1, duration: 0.22, ease: "power2.out", immediateRender: false }, 16.93);
+        tl.fromTo("#cap-bad", { opacity: 1 }, { opacity: 0, duration: 0.22, ease: "power2.out", immediateRender: false }, 16.93);
+
+        /* ================= SCENE 5 — the honest boundary ================= */
+        tl.fromTo("#s5-inner", { opacity: 0 }, { opacity: 1, duration: 0.4, ease: "power2.out" }, 18.1);
+        tl.fromTo("#s5-ghost", { x: -34 }, { x: 44, duration: 3.2, ease: "none" }, 18.1);
+        tl.fromTo("#s5-lift", { scale: 1 }, { scale: 1.05, duration: 1.6, ease: "sine.inOut", yoyo: true, repeat: 1 }, 18.1);
+        /* beat-locked: 18.56s — strong cue. The name lands on the hit. */
+        tl.fromTo(
+          "#s5-mark",
+          { opacity: 0, y: 46, scale: 1.03 },
+          { opacity: 1, y: 0, scale: 1, duration: 0.55, ease: "power3.out" },
+          18.56,
+        );
+        tl.fromTo("#s5-toprule", { scaleX: 0 }, { scaleX: 1, duration: 0.55, ease: "power2.out" }, 18.72);
+        tl.fromTo("#s5-botrule", { scaleX: 0 }, { scaleX: 1, duration: 0.7, ease: "power2.out" }, 18.9);
+        tl.fromTo("#s5-label", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.45, ease: "power2.out" }, 18.9);
+        tl.fromTo("#s5-chips", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.5, ease: "power2.out" }, 19.1);
+
+        /* ---------- audio-reactive: per-frame sampling (RMS + bass) ----------
+           Owns ONLY properties no other tween touches, so the two layers can
+           never fight. No waveform, equaliser, particle, or text pulse. */
+        var AR = window.__PARINAAM_AUDIO || { fps: 10, rms: [], bass: [] };
+        var AR_LAST = AR.rms.length ? AR.rms.length - 1 : 0;
+        for (var f = 0; f <= 639; f++) {
+          tl.call(
+            (function (idx) {
+              return function () {
+                var r = AR.rms[idx] || 0;
+                var b = AR.bass[idx] || 0;
+                gsap.set("#s1-glow", { opacity: 0.42 + 0.16 * r });
+                gsap.set("#s2-glow", { opacity: 0.38 + 0.16 * r });
+                gsap.set("#s3-lift", { opacity: 0.6 + 0.22 * r });
+                gsap.set("#s5-lift", { opacity: 0.58 + 0.22 * r });
+                gsap.set("#s3-terminal", {
+                  boxShadow:
+                    "0 0 " +
+                    (14 + 30 * b).toFixed(1) +
+                    "px rgba(56,189,248," +
+                    (0.1 + 0.26 * r).toFixed(3) +
+                    ")",
+                });
+              };
+            })(Math.min(AR_LAST, Math.floor((f / 30) * AR.fps))),
+            [],
+            f / 30,
+          );
+        }
+
+        window.__timelines["parinaam-brag"] = tl;
+      })();
+    </script>
+  </body>
+</html>

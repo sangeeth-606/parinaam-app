@@ -1,9 +1,8 @@
 /**
- * CaptureScreen — Wizard Step 2 host · Guided Burst Capture
+ * CaptureScreen — Wizard Step 2 host · Guided Camera Capture
  *
- * The guided burst (CameraView) runs inside wizard chrome. Captured bursts go
- * to the session store and analysis begins on hand-off; cancel keeps the draft
- * alive (resumable from Duty).
+ * The real native camera runs inside wizard chrome. A captured photo goes to
+ * the self-hosted camera-engine; cancel keeps the draft alive (resumable from Duty).
  *
  * Colorimetry law: the VIEWFINDER STAYS DARK — camera UI must never introduce
  * light glare into the scene, and AE/AWB/gates run inside CameraView unchanged.
@@ -36,8 +35,8 @@ export const CaptureScreen: React.FC = () => {
   const [editPkg, setEditPkg] = useState(setup.packageNo);
   const [editLot, setEditLot] = useState(setup.lotNo ?? '');
 
-  const onBurst = (burst: BurstAcquisitionResult) => {
-    setBurst(burst);
+  const onPhoto = (photo: BurstAcquisitionResult) => {
+    setBurst(photo);
     setStep(2);
     navigation.navigate('Analyze');
   };
@@ -131,7 +130,7 @@ export const CaptureScreen: React.FC = () => {
 
       {/* Dark instrument zone — viewfinder stays dark by colorimetry law */}
       <View style={styles.cameraHost}>
-        <CameraView onBurstCaptured={onBurst} onCancel={() => navigation.goBack()} />
+        <CameraView onBurstCaptured={onPhoto} onCancel={() => navigation.goBack()} />
       </View>
     </View>
   );

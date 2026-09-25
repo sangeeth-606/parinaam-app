@@ -1,12 +1,12 @@
 /**
- * Parinaam — Burst Acquisition Manager & Measurement Covariance Engine
- * Conforms to spec/02-phase-1-guided-capture.md Task 1.5.
- *
- * Collects 5–10 quality-gated frames in a rapid burst and calculates
- * the empirical measurement noise covariance matrix Σ_meas for QDA classification.
+ * Legacy burst/covariance utilities retained for historical unit tests and
+ * contracts. The production capture path does not instantiate BurstManager:
+ * CameraView sends one real photo to the self-hosted camera-engine and leaves
+ * covariance/kinetics empty rather than manufacturing measurements.
  */
 
 import type { CaptureFrame, QualityReport } from '../types/contracts.ts';
+import type { CameraEngineResult } from './camera-engine-contract.ts';
 
 export interface OpticalParameters {
   iso: number;
@@ -22,14 +22,16 @@ export interface BurstFrameEntry {
 
 export interface BurstAcquisitionResult {
   frames: CaptureFrame[];
-  /** v2-F seam: file URI of the representative photo. Real VisionCamera builds fill
-   *  this via takePhoto; the simulator leaves it undefined → record carries a NULL
-   *  image_ref (honest absence — no gallery path exists either, rule 1). */
+  /** v2-F seam: file URI of the representative photo. Real native-camera builds fill
+   *  this via the camera capture; legacy unit fixtures may leave it absent and are
+   *  never accepted as a sealed app result. */
   photoPath?: string;
   aggregateReport: QualityReport;
   measurementCovariance: number[][]; // d x d matrix
   meanObservation: number[];
   opticalStabilityVerified: boolean;
+  /** Present for the real image path; absent only for legacy callers/tests. */
+  engineResult?: CameraEngineResult;
 }
 
 /**

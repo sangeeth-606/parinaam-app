@@ -126,6 +126,36 @@ CREATE TABLE IF NOT EXISTS record_sync_state (
 CREATE INDEX IF NOT EXISTS idx_record_sync_state ON record_sync_state (state, updated_at);
 `;
 
+/**
+ * Camera-engine diagnostics are kept in their own append-only projection.
+ * The authoritative sealed payload remains the existing field-test contract;
+ * this table preserves the exact image-bound engine JSON for local audit and
+ * future query without pretending it is an additional signed wire field.
+ */
+export const MIGRATION_APP_V3 = `
+CREATE TABLE IF NOT EXISTS camera_engine_result (
+  record_uuid   TEXT PRIMARY KEY NOT NULL,
+  schema_version TEXT NOT NULL,
+  image_sha256  TEXT NOT NULL,
+  result_json   TEXT NOT NULL,
+  result_sha256 TEXT NOT NULL,
+  created_at    TEXT NOT NULL,
+  FOREIGN KEY (record_uuid) REFERENCES field_test(record_uuid) ON DELETE RESTRICT
+);
+
+CREATE TRIGGER IF NOT EXISTS camera_engine_result_no_update
+BEFORE UPDATE ON camera_engine_result
+BEGIN
+  SELECT RAISE(ABORT, 'camera_engine_result is append-only: UPDATE disallowed (AGENTS rule 2)');
+END;
+
+CREATE TRIGGER IF NOT EXISTS camera_engine_result_no_delete
+BEFORE DELETE ON camera_engine_result
+BEGIN
+  SELECT RAISE(ABORT, 'camera_engine_result is append-only: DELETE disallowed (AGENTS rule 2)');
+END;
+`;
+
 /** FTS5 mirror — applied only when the SQLite build supports it (driver probes). */
 export interface AppMigrationAdapter {
   exec(sql: string): Promise<void>;
@@ -148,6 +178,22 @@ export async function applyVersionedAppMigrations(adapter: AppMigrationAdapter):
       await adapter.run(
         'INSERT INTO app_schema_migrations (version, applied_at) VALUES (?, ?)',
         2,
+        new Date().toISOString()
+      );
+      await adapter.exec('COMMIT');
+    } catch (error) {
+      await adapter.exec('ROLLBACK').catch(() => undefined);
+      throw error;
+    }
+  }
+  const version3 = await adapter.get<{ version: number }>('SELECT MAX(version) AS version FROM app_schema_migrations');
+  if (!version3 || Number(version3.version) < 3) {
+    try {
+      await adapter.exec('BEGIN IMMEDIATE');
+      await adapter.exec(MIGRATION_APP_V3);
+      await adapter.run(
+        'INSERT INTO app_schema_migrations (version, applied_at) VALUES (?, ?)',
+        3,
         new Date().toISOString()
       );
       await adapter.exec('COMMIT');

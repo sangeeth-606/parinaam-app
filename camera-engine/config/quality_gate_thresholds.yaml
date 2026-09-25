@@ -1,0 +1,39 @@
+# Parinaam Color Engine — Quality Gate Thresholds
+# engine_version: 0.1.0-mvp
+# ALL values are INITIAL ENGINEERING DEFAULTS.
+# PHYSICAL EXPERIMENT REQUIRED: tune every threshold against the labeled
+# adversarial dataset (spec §27/§47) before production release.
+
+# ─── CARD DETECTION ────────────────────────────────────────────────────────
+aruco_min_markers_required: 3
+
+# ─── IMAGE QUALITY (card region) ───────────────────────────────────────────
+blur_laplacian_variance_min: 100.0        # PHYSICAL EXPERIMENT REQUIRED
+exposure_clipping_fraction_max: 0.05      # PHYSICAL EXPERIMENT REQUIRED
+glare_masked_fraction_max: 0.15           # PHYSICAL EXPERIMENT REQUIRED
+glare_saturation_threshold: 250
+perspective_angle_max_degrees: 30.0       # PHYSICAL EXPERIMENT REQUIRED
+achromatic_dynamic_range_min: 0.30        # PHYSICAL EXPERIMENT REQUIRED
+
+# ─── PATCH SAMPLING ────────────────────────────────────────────────────────
+patch_erosion_fraction: 0.25
+patch_trim_fraction: 0.10
+patch_mad_zscore_cutoff: 3.0              # robust sigma units
+patch_mad_sigma_divisor: 0.6745            # converts MAD to robust sigma
+
+# ─── CALIBRATION FIT ───────────────────────────────────────────────────────
+calibration_fit_residual_de00_max: 5.0    # PHYSICAL EXPERIMENT REQUIRED
+
+# ─── ILLUMINATION CONSISTENCY ──────────────────────────────────────────────
+mixed_lighting_delta_max: 0.15            # PHYSICAL EXPERIMENT REQUIRED
+
+# ─── CLASSIFICATION ────────────────────────────────────────────────────────
+ambiguity_margin_de00: 3.0                # PHYSICAL EXPERIMENT REQUIRED
+abstention_confidence_threshold: 0.40     # PHYSICAL EXPERIMENT REQUIRED
+confidence_uncalibrated_max_margin: 20.0  # PHYSICAL EXPERIMENT REQUIRED
+
+# ─── NORMALIZATION METHOD ──────────────────────────────────────────────────
+# Options: root_polynomial | ccm_3x3 | ccm_bias | per_channel_scale | polynomial
+# Run §15 comparison on Phase-A data before locking. root_polynomial is the
+# working hypothesis (spec §14).
+normalization_method: "root_polynomial"

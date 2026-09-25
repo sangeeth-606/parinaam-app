@@ -198,8 +198,8 @@ PART B — TO BE FILLED BY THE FORENSIC / CYBER EXPERT
        mutations are possible per append-only database schema triggers.
    (b) The hardware key integrity seal was verified using secp256r1 (P-256) ECDSA-SHA256,
        originating from hardware-backed keystore keystore enclave (${record.security_level}).
-   (c) Colorimetric classification was executed via transparent Mahalanobis quadratic discriminant
-       analysis in CIE-Lab space with burst covariance coupling, with zero black-box neural networks.
+   (c) Colorimetric measurement was executed via transparent corrected CIELAB and CIEDE2000
+       distance analysis; no neural network or substance-identity assertion was used.
    (d) The presumptive classification outcome recorded is: ${record.outcome}.
 
 3. HASH DIGEST VERIFICATION:
@@ -269,7 +269,7 @@ Date     : ${timestampIst}
     <tr><th>Institution</th><td>${expert.institution}</td></tr>
     <tr><th>Record UUID</th><td><code>${record.record_uuid}</code></td></tr>
     <tr><th>Presumptive Outcome</th><td><strong>${record.outcome}</strong></td></tr>
-    <tr><th>Confidence / Conformal Set</th><td>${(record.confidence * 100).toFixed(1)}% / ${record.conformal_set}</td></tr>
+    <tr><th>Confidence / Candidate Set</th><td>${(record.confidence * 100).toFixed(1)}% / ${record.conformal_set}</td></tr>
     <tr><th>Verified SHA-256 Digest</th><td><code>${record.payload_sha256}</code></td></tr>
     <tr><th>Chain Hash Linkage</th><td><code>${record.chain_hash}</code></td></tr>
     <tr><th>Hardware Attestation Type</th><td>${record.security_level} Enclave Integrity Seal</td></tr>

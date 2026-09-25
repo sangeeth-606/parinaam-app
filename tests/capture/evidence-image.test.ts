@@ -1,7 +1,7 @@
 /**
  * F1 — evidence-image store: fake fs proves bytes-on-disk hashing, no-overwrite
  * idempotence (the hash of an already-staled file wins), and the honest null-reason
- * branches (simulated acquisition / missing uuid).
+ * branches (no camera bytes / missing uuid).
  */
 
 import { describe, it } from 'node:test';
@@ -52,10 +52,10 @@ describe('phase F — evidence image store', () => {
     assert.equal(files.size, 1);
   });
 
-  it('simulated acquisition → honest null with reason, no exception', async () => {
+  it('missing camera bytes → honest null with reason, no exception', async () => {
     const res = await saveEvidenceImage({ uuid: 'REC-F-3' }, fakeFs().deps);
     assert.equal(res.saved, null);
-    assert.match(res.reason ?? '', /simulated acquisition/);
+    assert.match(res.reason ?? '', /no camera bytes supplied/);
   });
 
   it('no uuid → honest null', async () => {
