@@ -12,8 +12,8 @@
  * - NDPS (Seizure, Storage, Sampling and Disposal) Rules, 2022 — presumptive field test record
  * - BNS s. 63(4) / BNSS evidentiary register: two-register presentation of every outcome
  *
- * Design Language (shared with BunchingScreen — src/theme/evidence.ts):
- * - WCAG AAA contrast light theme (contrast ratios >= 7:1 for normal text)
+ * Design Language (shared with BunchingScreen — src/theme (useAppTheme + useThemedStyles)):
+ * - WCAG AAA contrast, light and dark palettes (contrast ratios >= 7:1 for normal text)
  * - Evidentiary review structure (not a consumer app card feed)
  * - Large touch targets (>= 48x48 dp)
  * - Compact technical metadata with tabular monospace typography
@@ -29,7 +29,6 @@ import {
   ActivityIndicator,
   Modal,
   ScrollView,
-  StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -58,7 +57,8 @@ import { useCaseContext } from '../state/case-context';
 import { useAuthStore } from '../state/auth-store';
 import { makeRecordUuid } from '../services/analysis-pipeline';
 import { WizardHeader } from '../components/ui/WizardHeader';
-import { evidenceTheme as T, evidenceMono } from '../theme/evidence';
+import { useAppTheme, useThemedStyles } from '../theme/theme-context';
+import type { Theme } from '../theme';
 import { ABSTENTION_COPY, GRADE_COPY, OFFICER_READING, REAGENT_LABEL, formatIst } from '../domain/outcome-copy';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -69,6 +69,9 @@ const round2safe = (v: number) => Math.round(v * 100) / 100;
 /* ------------------------------------------------------------------ */
 
 export const ResultsScreen: React.FC = () => {
+  const { theme } = useAppTheme();
+  const T = theme.colors;
+  const styles = useThemedStyles(createStyles);
   const navigation = useNavigation<Nav>();
   const { setup, burst, decision, residual, record, setSeal, setRecord, setStep, reset } =
     useSessionStore();
@@ -94,7 +97,6 @@ export const ResultsScreen: React.FC = () => {
   if (!decision || !residual || !burst || !measuredLab) {
     return (
       <View style={styles.screen}>
-        <StatusBar barStyle="dark-content" />
         <View style={styles.header}>
           <View style={styles.headerTop}>
             <TouchableOpacity
@@ -133,7 +135,7 @@ export const ResultsScreen: React.FC = () => {
               accessibilityRole="button"
               accessibilityLabel="Start a field test"
             >
-              <Icon name="camera" size={20} color="#FFFFFF" strokeWidth={2.5} />
+              <Icon name="camera" size={20} color={T.onAccent} strokeWidth={2.5} />
               <Text style={styles.primaryBtnText}>START A FIELD TEST</Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -223,7 +225,13 @@ export const ResultsScreen: React.FC = () => {
         operatorName: officer?.name ?? 'Unknown Officer',
         officerRole: officer?.role ?? 'ADMIN',
         gps: geo ?? undefined,
-        isDemo: Boolean(engineResult && (engineResult.profile.demoMode || engineResult.profile.status !== 'VALIDATED')),
+        // isDemo means THIS RECORD IS A DEMONSTRATION, not that the profile is
+        // unvalidated. A genuine capture taken against the pending-validation profile is
+        // a real test event with an unvalidated result — conflating the two made every
+        // real record report "LOCAL DEMO RECORD — never uploaded" after a restart, while
+        // it had in fact been queued. The unvalidated profile is disclosed separately by
+        // the PROFILE STATUS card below, which is the honest place for it.
+        isDemo: Boolean(engineResult?.profile.demoMode),
         engineResult,
       });
       setRecord(created);
@@ -274,8 +282,7 @@ export const ResultsScreen: React.FC = () => {
 
   return (
     <View style={styles.screen}>
-      <StatusBar barStyle="dark-content" />
-
+ 
       <WizardHeader
         step={3}
         title={sealed ? 'Record Sealed to Ledger' : 'Test Outcome'}
@@ -569,9 +576,9 @@ export const ResultsScreen: React.FC = () => {
               accessibilityRole="button"
               accessibilityLabel="Open the full sealed record"
             >
-              <Icon name="document" size={20} color="#FFFFFF" strokeWidth={2.5} />
+              <Icon name="document" size={20} color={T.onAccent} strokeWidth={2.5} />
               <Text style={styles.primaryBtnText}>VIEW FULL RECORD</Text>
-              <Icon name="chevronRight" size={18} color="#FFFFFF" strokeWidth={2.5} />
+              <Icon name="chevronRight" size={18} color={T.onAccent} strokeWidth={2.5} />
             </TouchableOpacity>
 
             <View style={styles.actionRow}>
@@ -626,7 +633,7 @@ export const ResultsScreen: React.FC = () => {
               accessibilityLabel="Seal this reading and add it to the ledger"
               accessibilityState={{ disabled: Boolean(sealBlockedReason) }}
             >
-              <Icon name="shield" size={20} color="#FFFFFF" strokeWidth={2.5} />
+              <Icon name="shield" size={20} color={T.onAccent} strokeWidth={2.5} />
               <Text style={styles.primaryBtnText}>
                 {sealBlockedReason ? 'SEAL UNAVAILABLE — ENGINE INCONCLUSIVE' : 'SEAL & ADD TO LEDGER'}
               </Text>
@@ -714,9 +721,9 @@ export const ResultsScreen: React.FC = () => {
               accessibilityLabel="Confirm: seal and chain this record"
             >
               {sealing ? (
-                <ActivityIndicator size="small" color="#FFFFFF" />
+                <ActivityIndicator size="small" color={T.onAccent} />
               ) : (
-                <Icon name="shield" size={20} color="#FFFFFF" strokeWidth={2.5} />
+                <Icon name="shield" size={20} color={T.onAccent} strokeWidth={2.5} />
               )}
               <Text style={styles.primaryBtnText}>
                 {sealing ? 'CANONICALIZING & CHAINING…' : 'SEAL & CHAIN'}
@@ -738,7 +745,10 @@ export const ResultsScreen: React.FC = () => {
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => {
+  const T = theme.colors;
+  const evidenceMono = theme.fontFamily.mono;
+  return StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: T.canvas,
@@ -971,12 +981,12 @@ const styles = StyleSheet.create({
     marginTop: 12,
     paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(15, 23, 42, 0.12)',
+    borderTopColor: T.borderSubtle,
   },
   pill: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: T.surface,
     borderWidth: 1,
-    borderColor: 'rgba(15, 23, 42, 0.18)',
+    borderColor: T.border,
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 4,
@@ -1168,7 +1178,7 @@ const styles = StyleSheet.create({
   terminalLabel: {
     fontSize: 9,
     fontWeight: '700',
-    color: '#94A3B8', // Slate 400 on dark — 6.9:1, mono micro metadata
+    color: T.terminalMuted,
     letterSpacing: 0.8,
   },
   terminalLabelGap: {
@@ -1223,7 +1233,7 @@ const styles = StyleSheet.create({
   primaryBtnText: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#FFFFFF',
+    color: T.onAccent,
     letterSpacing: 0.4,
   },
   secondaryBtn: {
@@ -1271,7 +1281,7 @@ const styles = StyleSheet.create({
   /* Confirm modal */
   scrim: {
     flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.55)',
+    backgroundColor: T.scrim,
     justifyContent: 'flex-end',
   },
   sheet: {
@@ -1302,6 +1312,7 @@ const styles = StyleSheet.create({
     marginBottom: 14,
     marginTop: 6,
   },
-});
+  });
+};
 
 export default ResultsScreen;

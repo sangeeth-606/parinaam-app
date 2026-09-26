@@ -12,7 +12,8 @@ import { useNavigation } from '@react-navigation/native';
 
 import { Icon } from './Icon';
 import { LightStepper } from './evidentiary/EvidenceBits';
-import { evidenceTheme as T, evidenceMono } from '../../theme/evidence';
+import { useAppTheme, useThemedStyles } from '../../theme/theme-context';
+import type { Theme } from '../../theme';
 
 export const WIZARD_STEP_NAMES = ['CASE', 'PHOTO', 'ANALYSIS', 'RESULT'] as const;
 
@@ -39,6 +40,9 @@ export const WizardHeader: React.FC<{
   right,
   draftSaved,
 }) => {
+  const { theme } = useAppTheme();
+  const T = theme.colors;
+  const styles = useThemedStyles(createStyles);
   const navigation = useNavigation();
   const goBack = onBack ?? (() => navigation.goBack());
   const tagTone =
@@ -90,7 +94,10 @@ export const WizardHeader: React.FC<{
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => {
+  const { colors, fontFamily } = theme;
+  const T = colors;
+  return StyleSheet.create({
   wrap: {
     backgroundColor: T.card,
     borderBottomWidth: 1,
@@ -111,7 +118,7 @@ const styles = StyleSheet.create({
     paddingRight: 8,
   },
   backDisabled: { opacity: 0.6 },
-  backText: { fontFamily: evidenceMono, fontSize: 11, letterSpacing: 0.6, color: T.textPrimary },
+  backText: { fontFamily: fontFamily.mono, fontSize: 11, letterSpacing: 0.6, color: T.textPrimary },
   tag: {
     borderWidth: 1,
     borderRadius: 4,
@@ -122,9 +129,10 @@ const styles = StyleSheet.create({
   tagOk: { borderColor: T.successBorder, backgroundColor: T.successSurface },
   tagWarn: { borderColor: T.marginalBorder, backgroundColor: T.marginalSurface },
   tagNeutral: { borderColor: T.border, backgroundColor: T.cardSubtle },
-  tagText: { fontFamily: evidenceMono, fontSize: 10, letterSpacing: 0.5, color: T.textSecondary },
+  tagText: { fontFamily: fontFamily.mono, fontSize: 10, letterSpacing: 0.5, color: T.textSecondary },
   right: { flexDirection: 'row', alignItems: 'center' },
-  title: { fontFamily: evidenceMono, fontSize: 17, letterSpacing: 0.3, color: T.textPrimary, fontWeight: '700' },
-  context: { fontFamily: evidenceMono, fontSize: 12, letterSpacing: 0.4, color: T.textSecondary },
+  title: { fontFamily: fontFamily.mono, fontSize: 17, letterSpacing: 0.3, color: T.textPrimary, fontWeight: '700' },
+  context: { fontFamily: fontFamily.mono, fontSize: 12, letterSpacing: 0.4, color: T.textSecondary },
   citation: { fontSize: 11, lineHeight: 16, color: T.textMuted },
-});
+  });
+};

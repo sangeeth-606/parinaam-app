@@ -11,14 +11,13 @@
  * the simulated OCR route is labelled SIMULATED, never presented as real.
  *
  * Data logic (validation, suggestion, patchSetup flow) is unchanged from the
- * audited implementation — only the presentation migrates to the light
- * evidentiary language (src/theme/evidence.ts + EvidenceBits).
+ * audited implementation — only the presentation migrates to the theme
+ * evidentiary language (src/theme (useAppTheme + useThemedStyles) + EvidenceBits).
  */
 
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ScrollView,
-  StatusBar,
   StyleSheet,
   Text,
   TextInput,
@@ -35,7 +34,8 @@ import { prefillForNextLap, useCaseContext } from '../state/case-context';
 import { WizardHeader } from '../components/ui/WizardHeader';
 import { useSessionStore } from '../state/session-store';
 import { useLedgerStore } from '../state/ledger-store';
-import { evidenceTheme as T, evidenceMono } from '../theme/evidence';
+import { useAppTheme, useThemedStyles } from '../theme/theme-context';
+import type { Theme } from '../theme';
 import { REAGENT_LABEL } from '../domain/outcome-copy';
 import type { ReagentType } from '../types/domain';
 
@@ -64,8 +64,12 @@ const LightField: React.FC<{
   error?: string | null;
   helper?: string;
   optional?: boolean;
-}> = ({ label, value, onChangeText, placeholder, error, helper, optional = false }) => (
-  <View style={styles.field}>
+}> = ({ label, value, onChangeText, placeholder, error, helper, optional = false }) => {
+  const { theme } = useAppTheme();
+  const T = theme.colors;
+  const styles = useThemedStyles(createStyles);
+  return (
+    <View style={styles.field}>
     <Text style={styles.fieldLabel}>
       {label.toUpperCase()}
       {optional ? ' (OPTIONAL)' : ' · REQUIRED'}
@@ -89,9 +93,13 @@ const LightField: React.FC<{
       <Text style={styles.fieldHelper}>{helper}</Text>
     ) : null}
   </View>
-);
+  );
+};
 
 export const NewTestSetupScreen: React.FC = () => {
+  const { theme } = useAppTheme();
+  const T = theme.colors;
+  const styles = useThemedStyles(createStyles);
   const navigation = useNavigation<Nav>();
   const { setup, patchSetup, setStep, reset } = useSessionStore();
   const records = useLedgerStore((s) => s.records);
@@ -169,7 +177,6 @@ export const NewTestSetupScreen: React.FC = () => {
 
   return (
     <View style={styles.screen}>
-      <StatusBar barStyle="dark-content" />
 
       <WizardHeader
         step={0}
@@ -251,7 +258,7 @@ export const NewTestSetupScreen: React.FC = () => {
                   accessibilityState={{ selected }}
                   accessibilityLabel={`Reagent ${REAGENT_LABEL[r]}`}
                 >
-                  <Icon name="flask" size={15} color={selected ? '#FFFFFF' : T.textSecondary} strokeWidth={2.2} />
+                  <Icon name="flask" size={15} color={selected ? T.onAccent : T.textSecondary} strokeWidth={2.2} />
                   <Text style={[styles.reagentLabel, selected && styles.reagentLabelSelected]} numberOfLines={1}>
                     {REAGENT_LABEL[r]}
                   </Text>
@@ -298,7 +305,7 @@ export const NewTestSetupScreen: React.FC = () => {
               accessibilityState={{ selected: setup.entryMethod === 'ocr' }}
               accessibilityLabel="Simulated OCR label scan"
             >
-              <Icon name="camera" size={14} color={setup.entryMethod === 'ocr' ? '#FFFFFF' : T.textSecondary} strokeWidth={2.4} />
+              <Icon name="camera" size={14} color={setup.entryMethod === 'ocr' ? T.onAccent : T.textSecondary} strokeWidth={2.4} />
               <Text style={[styles.entryBtnText, setup.entryMethod === 'ocr' && styles.entryBtnTextActive]} numberOfLines={1}>
                 SCAN LABEL (SIM)
               </Text>
@@ -337,7 +344,7 @@ export const NewTestSetupScreen: React.FC = () => {
           accessibilityRole="button"
           accessibilityLabel="Start guided capture"
         >
-          <Icon name="camera" size={20} color="#FFFFFF" strokeWidth={2.5} />
+          <Icon name="camera" size={20} color={T.onAccent} strokeWidth={2.5} />
           <Text style={styles.primaryBtnText}>{activeCase ? "UPDATE & RESUME CAPTURE" : "OPEN CASE & START TESTING"}</Text>
         </TouchableOpacity>
 
@@ -357,7 +364,10 @@ export const NewTestSetupScreen: React.FC = () => {
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => {
+  const T = theme.colors;
+  const evidenceMono = theme.fontFamily.mono;
+  return StyleSheet.create({
   screen: { flex: 1, backgroundColor: T.canvas },
   scroll: { flex: 1 },
   scrollContent: { padding: 16, gap: 14, paddingBottom: 64 },
@@ -450,12 +460,12 @@ const styles = StyleSheet.create({
   },
   reagentTileSelected: { backgroundColor: T.accent, borderColor: T.accent },
   reagentLabel: { fontSize: 12.5, fontWeight: '600', color: T.textPrimary, flex: 1 },
-  reagentLabelSelected: { color: '#FFFFFF', fontWeight: '700' },
+  reagentLabelSelected: { color: T.onAccent, fontWeight: '700' },
   reagentCheck: {
     width: 16,
     height: 16,
     borderRadius: 8,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: T.onAccent,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -476,7 +486,7 @@ const styles = StyleSheet.create({
   },
   entryBtnActive: { backgroundColor: T.accent, borderColor: T.accent },
   entryBtnText: { fontSize: 12, fontWeight: '700', color: T.textSecondary, letterSpacing: 0.4 },
-  entryBtnTextActive: { color: '#FFFFFF' },
+  entryBtnTextActive: { color: T.onAccent },
   ocrNote: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -501,9 +511,10 @@ const styles = StyleSheet.create({
     backgroundColor: T.accent,
     paddingHorizontal: 16,
   },
-  primaryBtnText: { fontSize: 15, fontWeight: '700', color: '#FFFFFF', letterSpacing: 0.5 },
+  primaryBtnText: { fontSize: 15, fontWeight: '700', color: T.onAccent, letterSpacing: 0.5 },
   discardBtn: { minHeight: 48, alignItems: 'center', justifyContent: 'center' },
   discardText: { fontSize: 12, fontWeight: '700', color: T.textMuted, letterSpacing: 0.5 },
-});
+  });
+};
 
 export default NewTestSetupScreen;

@@ -63,6 +63,118 @@ export interface CameraEngineClient {
   health(): Promise<Record<string, unknown>>;
 }
 
+/**
+ * An officer-facing explanation of a capture-processing failure.
+ *
+ * The engine reports machine codes on purpose; the field UI must never show a
+ * raw code as if it were an instruction. `code` is kept alongside the sentence
+ * so the duty log and any support conversation can name the exact failure.
+ */
+export interface CameraEngineFailure {
+  message: string;
+  action: string;
+  code: string;
+  retryable: boolean;
+}
+
+const CODE_EXPLANATIONS: Record<string, { message: string; action: string }> = {
+  IMAGE_TOO_LARGE: {
+    message: 'This photo is larger than the local engine can accept.',
+    action: 'Retake the photo with the standard (1x) camera resolution.',
+  },
+  IMAGE_TOO_MANY_PIXELS: {
+    message: 'This photo is higher resolution than the engine can measure.',
+    action: 'Retake the photo with the standard (1x) camera resolution.',
+  },
+  UNSUPPORTED_IMAGE_FORMAT: {
+    message: 'The camera returned an image format the engine cannot read.',
+    action: 'Retake the photo; the engine reads JPEG and PNG captures only.',
+  },
+  EXPECTED_ONE_IMAGE: {
+    message: 'The capture upload did not contain exactly one image.',
+    action: 'Retake the photo. No manual file import is possible.',
+  },
+  EMPTY_IMAGE: {
+    message: 'The captured file was empty.',
+    action: 'Retake the photo once the lens is clear.',
+  },
+  ENGINE_PROCESSING_ERROR: {
+    message: 'The local engine could not measure this photo.',
+    action: 'Make sure the whole printed card is flat and in frame, then retake.',
+  },
+};
+
+/** Turn a transport or engine error into something an officer can act on. */
+export function explainEngineFailure(cause: unknown): CameraEngineFailure {
+  const code =
+    cause instanceof CameraEngineClientError
+      ? engineErrorCode(cause)
+      : cause instanceof Error && cause.message
+        ? cause.message
+        : 'UNKNOWN';
+
+  if (code in CODE_EXPLANATIONS) {
+    return {
+      ...CODE_EXPLANATIONS[code],
+      code,
+      retryable: cause instanceof CameraEngineClientError ? cause.retryable : true,
+    };
+  }
+  if (cause instanceof CameraEngineClientError) {
+    if (cause.kind === 'network') {
+      return {
+        message: 'The local engine could not be reached.',
+        action: 'Keep the phone on the same Wi-Fi as this laptop, then retake.',
+        code,
+        retryable: true,
+      };
+    }
+    if (cause.kind === 'timeout') {
+      return {
+        message: 'The local engine did not answer in time.',
+        action: 'Retake the photo; the engine may still be starting up.',
+        code,
+        retryable: true,
+      };
+    }
+    if (cause.kind === 'invalid_url') {
+      return {
+        message: 'The camera-engine address saved in Settings is not usable.',
+        action: 'Open Settings and save the engine URL printed by npm run app.',
+        code,
+        retryable: false,
+      };
+    }
+    if (cause.status === 503) {
+      return {
+        message: 'The local engine is not ready to process yet.',
+        action: 'Wait a few seconds, then retake the photo.',
+        code,
+        retryable: true,
+      };
+    }
+  }
+  return {
+    message: 'The local engine could not process this capture.',
+    action: 'Retake the photo. The last capture stays on the device until it succeeds.',
+    code,
+    retryable: true,
+  };
+}
+
+/** Prefer the engine's own error code; fall back to the transport kind. */
+function engineErrorCode(error: CameraEngineClientError): string {
+  const body = error.body;
+  if (typeof body === 'object' && body !== null && 'error' in body) {
+    const value = (body as { error?: unknown }).error;
+    if (typeof value === 'string' && value) return value;
+  }
+  if (error.kind === 'network') return 'ENGINE_UNREACHABLE';
+  if (error.kind === 'timeout') return 'ENGINE_TIMEOUT';
+  if (error.status !== null) return `HTTP_${error.status}`;
+  return error.kind.toUpperCase();
+}
+
 function validateBaseUrl(value: string): string {
   let parsed: URL;
   try {

@@ -12,8 +12,8 @@
  *   color alone; chemical identity is never asserted.
  * - In-app statutory banner retired per owner decision (AGENTS.md rule 3, 2026-09-16).
  *
- * Design Language: src/theme/evidence.ts + evidentiary/EvidenceBits + LightTabBar
- * (WCAG AAA light; ≥56 dp rows; mono technical metadata; evidentiary register,
+ * Design Language: src/theme (useAppTheme + useThemedStyles) + evidentiary/EvidenceBits + LightTabBar
+ * (high-contrast; ≥56 dp rows; mono technical metadata; evidentiary register,
  * not a shopping list).
  */
 
@@ -33,7 +33,8 @@ import { FadeEntrance } from '../components/ui/FadeEntrance';
 import { useLedgerStore, type LedgerRecord } from '../state/ledger-store';
 import { searchRecordUuids } from '../db/ledger-repository';
 import { useSyncStore } from '../state/sync-store';
-import { evidenceTheme as T, evidenceMono } from '../theme/evidence';
+import { useAppTheme, useThemedStyles } from '../theme/theme-context';
+import type { Theme } from '../theme';
 import { formatDateIst, formatTimeIst, relativeIst, REAGENT_LABEL, OFFICER_READING_SHORT } from '../domain/outcome-copy';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -60,6 +61,9 @@ function inBucket(r: LedgerRecord, b: Bucket): boolean {
 }
 
 export const CaseLogScreen: React.FC = () => {
+  const { theme } = useAppTheme();
+  const T = theme.colors;
+  const styles = useThemedStyles(createStyles);
   const navigation = useNavigation<Nav>();
   const { records, seeded, verification } = useLedgerStore();
   const [bucket, setBucket] = useState<Bucket>('all');
@@ -238,7 +242,7 @@ export const CaseLogScreen: React.FC = () => {
                 <Icon
                   name={b.icon}
                   size={13}
-                  color={selected ? '#FFFFFF' : b.key === 'inconclusive' ? T.marginalText : b.key === 'rx_pos' ? T.successText : T.textSecondary}
+                  color={selected ? T.onAccent : b.key === 'inconclusive' ? T.marginalText : b.key === 'rx_pos' ? T.successText : T.textSecondary}
                   strokeWidth={2.5}
                 />
                 <Text style={[styles.bucketLabel, selected && styles.bucketLabelSelected]}>{b.label}</Text>
@@ -495,14 +499,25 @@ export const CaseLogScreen: React.FC = () => {
  * Three honest sync states. A demo seed is a real, chain-sealed record that lives
  * ONLY on this device: it is never queued for upload and must never read as SYNCED.
  */
-const syncChipFor = (status: LedgerRecord['syncStatus']): { style: ViewStyle; color: string; icon: IconName; label: string } => {
+const syncChipFor = (
+  status: LedgerRecord['syncStatus'],
+  styles: ReturnType<typeof createStyles>,
+  T: Theme['colors'],
+): { style: ViewStyle; color: string; icon: IconName; label: string } => {
   if (status === 'synced') return { style: styles.syncChip, color: T.textSecondary, icon: 'check', label: 'SYNCED' };
+  // A dead-lettered record never reached the server. It must never read like SYNCED.
+  if (status === 'dead-letter') {
+    return { style: styles.syncChipQueued, color: T.dangerText, icon: 'alert', label: 'SERVER REJECTED · NOT UPLOADED' };
+  }
   if (status === 'queued') return { style: styles.syncChipQueued, color: T.accent, icon: 'clock', label: 'QUEUED' };
   return { style: styles.syncChipDemo, color: T.marginalText, icon: 'flask', label: 'DEMO SEED · LOCAL ONLY' };
 };
 
 /** One evidentiary register row: identity left, metrics + seal + sync right. */
 const RecordRow: React.FC<{ r: LedgerRecord; onPress: () => void }> = ({ r, onPress }) => {
+  const { theme } = useAppTheme();
+  const T = theme.colors;
+  const styles = useThemedStyles(createStyles);
   const serverCase = useSyncStore((x) => x.caseStatus[r.case_ref]);
   return (
   <TouchableOpacity
@@ -534,7 +549,7 @@ const RecordRow: React.FC<{ r: LedgerRecord; onPress: () => void }> = ({ r, onPr
           </View>
         ) : null}
         {(() => {
-          const chip = syncChipFor(r.syncStatus);
+          const chip = syncChipFor(r.syncStatus, styles, T);
           return (
             <View style={chip.style} accessibilityLabel={`Sync state: ${chip.label}`}>
               <Icon name={chip.icon} size={11} color={chip.color} strokeWidth={2.5} />
@@ -562,7 +577,10 @@ const RecordRow: React.FC<{ r: LedgerRecord; onPress: () => void }> = ({ r, onPr
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => {
+  const T = theme.colors;
+  const evidenceMono = theme.fontFamily.mono;
+  return StyleSheet.create({
   modeRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10 },
   modeTab: { borderWidth: 1, borderColor: T.border, borderRadius: 6, paddingHorizontal: 14, minHeight: 44, justifyContent: 'center', backgroundColor: T.cardSubtle },
   modeTabActive: { borderColor: T.borderStrong, backgroundColor: T.accentSurface },
@@ -695,9 +713,9 @@ const styles = StyleSheet.create({
   },
   bucketChipSelected: { backgroundColor: T.accent, borderColor: T.accent },
   bucketLabel: { fontSize: 11, fontWeight: '700', color: T.textSecondary, letterSpacing: 0.4 },
-  bucketLabelSelected: { color: '#FFFFFF' },
+  bucketLabelSelected: { color: T.onAccent },
   bucketCount: { fontSize: 11, fontWeight: '700', color: T.textPrimary, fontFamily: evidenceMono },
-  bucketCountSelected: { color: '#FFFFFF' },
+  bucketCountSelected: { color: T.onAccent },
 
   verifyRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   verifyLeft: { flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 },
@@ -846,6 +864,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   emptyBtnText: { fontSize: 13, fontWeight: '700', color: T.accent, letterSpacing: 0.4 },
-});
+  });
+};
 
 export default CaseLogScreen;

@@ -1,4 +1,5 @@
 import type { ServerDb } from './db.ts';
+import type { SqlStore } from './storage.ts';
 import type { AuthedOfficer } from './auth.ts';
 import { ApiError } from '../../src/contracts/api-errors.ts';
 import { MAX_EVIDENCE_BYTES, type FieldTestRecordV1 } from '../../src/contracts/field-test-record.ts';
@@ -148,7 +149,12 @@ export async function ingestRecord(
       record.kit.test_name,
       record.kit.lot_no,
       regionFromCaseRef(record.case_ref),
-      'NCB',
+      // Provenance must be measured, not assumed. The wire contract has no department
+      // field, so this is the authenticated account's unit, not a hardcoded 'NCB'.
+      await departmentForOfficer(tx, record.operator_id),
+      // Derived from the case-reference STRING, not from the record's own sealed GPS.
+      // A region code is a routing hint, never a claim about where a seizure happened;
+      // the sealed coordinates are the only location fact in the payload.
       locationFromCaseRef(record.case_ref),
       record.created_at,
       receivedAt,
@@ -162,12 +168,16 @@ export async function ingestRecord(
       record.is_demo ? demoFlag : db.engine === 'postgres' ? false : 0,
       JSON.stringify(record)
     );
-    const panchnama = casePanchnama(record.case_ref);
+    // A panchnama reference is a fact about a real seizure record, and it is deliberately
+    // NOT part of the sealed device payload (MutableCaseReview owns it). The server must
+    // never infer one from a case-reference string; a reviewer sets it from the actual
+    // panchnama, or it stays absent.
+    const panchnama: string | null = null;
     await tx.run(
       `INSERT INTO cases (
         case_ref, case_status, panchnama_ref, region, department, location_label,
         first_record_at, last_record_at, created_at, updated_at
-      ) VALUES (?, 'REPORTED', ?, ?, 'NCB', ?, ?, ?, ?, ?)
+      ) VALUES (?, 'REPORTED', ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT (case_ref) DO UPDATE SET
         first_record_at = CASE WHEN cases.first_record_at IS NULL OR excluded.first_record_at < cases.first_record_at THEN excluded.first_record_at ELSE cases.first_record_at END,
         last_record_at = CASE WHEN cases.last_record_at IS NULL OR excluded.last_record_at > cases.last_record_at THEN excluded.last_record_at ELSE cases.last_record_at END,
@@ -176,6 +186,7 @@ export async function ingestRecord(
       record.case_ref,
       panchnama,
       regionFromCaseRef(record.case_ref),
+      await departmentForOfficer(tx, record.operator_id),
       locationFromCaseRef(record.case_ref),
       record.created_at,
       record.created_at,
@@ -224,18 +235,39 @@ export async function ingestRecord(
   return result;
 }
 
-function casePanchnama(caseRef: string): string | null {
-  if (caseRef === 'NCB/DZU/CR-14/2026') return 'PAN/DZU/2026/884';
-  if (caseRef === 'NCB/MZU/CR-02/2026') return 'PAN/MZU/2026/091';
-  if (caseRef === 'NCB/KZU/CR-07/2026') return 'PAN/KZU/2026/312';
-  if (caseRef === 'NCB/BZU/CR-19/2026') return 'PAN/BZU/2026/505';
-  return null;
+/**
+ * The ingesting officer's unit. This used to be a hardcoded 'NCB' literal stamped on every
+ * ingested record, which made an unverifiable provenance column look like a captured fact.
+ * The `officers` table has no department column yet, so this honestly reports
+ * 'UNSPECIFIED' until unit provisioning lands (docs/known-gaps.md). Provenance must be
+ * measured, not assumed.
+ */
+async function departmentForOfficer(tx: SqlStore, operatorId: string): Promise<string> {
+  // OfficerRow carries no department yet, so this honestly reports 'UNSPECIFIED' rather
+  // than stamping a unit that was never captured. The read must run on the
+  // transaction-bound store, not the parent handle.
+  try {
+    const row = await tx.get<{ department?: string | null }>(
+      'SELECT department FROM officers WHERE officer_code = ?',
+      operatorId
+    );
+    const value = typeof row?.department === 'string' ? row.department.trim() : '';
+    return value.length > 0 ? value : 'UNSPECIFIED';
+  } catch {
+    // Column not provisioned yet — absence is reported, never invented.
+    return 'UNSPECIFIED';
+  }
 }
 
 export function regionFromCaseRef(caseRef: string): string {
   return caseRef.split('/')[1] ?? 'UNKNOWN';
 }
 
+/**
+ * A region ROUTING label derived from the case-reference string (DZU → Delhi). This is a
+ * filing convenience, not a statement about where a seizure occurred: the only location
+ * fact in a record is its own sealed GPS, which is validated and stored in the payload.
+ */
 export function locationFromCaseRef(caseRef: string): string {
   const region = regionFromCaseRef(caseRef);
   const locations: Record<string, string> = {

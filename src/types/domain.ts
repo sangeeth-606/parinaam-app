@@ -122,7 +122,13 @@ export interface TestRecordEntity {
   payload_sha256: string;
   prev_hash: string;
   chain_hash: string;
-  device_attestation: string;
+  /**
+   * null when no device key attested the record. The migration and the wire contract both
+   * allow NULL (app-migrations.ts, FieldTestRecordV1) and the ledger genuinely stores null
+   * whenever the keystore could not run — typing this as `string` used to force consumers
+   * to invent a sentinel string for "no seal", which is exactly the claim rule 10 forbids.
+   */
+  device_attestation: string | null;
   rfc3161_token?: string;
   esign_pkcs7?: string;
 

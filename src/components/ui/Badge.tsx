@@ -7,7 +7,8 @@
 import React from 'react';
 import { StyleSheet, Text, View, StyleProp, ViewStyle } from 'react-native';
 import { Icon, IconName } from './Icon';
-import { badgeTones, BadgeTone, colors, type, radius, space, fontWeight } from '../../theme';
+import { useAppTheme, useThemedStyles } from '../../theme/theme-context';
+import type { Theme, BadgeTone } from '../../theme';
 
 interface BadgeProps {
   label: string;
@@ -17,7 +18,10 @@ interface BadgeProps {
 }
 
 export const Badge: React.FC<BadgeProps> = ({ label, tone = 'neutral', icon, style }) => {
-  const t = badgeTones[tone];
+  const { theme } = useAppTheme();
+  const { type } = theme;
+  const styles = useThemedStyles(createStyles);
+  const t = theme.badgeTones[tone];
   return (
     <View
       style={[styles.badge, { backgroundColor: t.bg, borderColor: t.border }, style]}
@@ -41,7 +45,9 @@ interface StatusPillProps {
 
 /** Small inline status chip for the Duty status strip / chain health. */
 export const StatusPill: React.FC<StatusPillProps> = ({ label, tone = 'neutral', dot = true, icon }) => {
-  const t = badgeTones[tone];
+  const { theme } = useAppTheme();
+  const styles = useThemedStyles(createStyles);
+  const t = theme.badgeTones[tone];
   return (
     <View style={[styles.pill, { borderColor: t.border }]} accessibilityRole="text">
       {dot ? <View style={[styles.dot, { backgroundColor: t.fg }]} /> : null}
@@ -51,7 +57,9 @@ export const StatusPill: React.FC<StatusPillProps> = ({ label, tone = 'neutral',
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => {
+  const { colors, type, radius, space, fontWeight } = theme;
+  return StyleSheet.create({
   badge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -76,4 +84,5 @@ const styles = StyleSheet.create({
   },
   dot: { width: 6, height: 6, borderRadius: 3 },
   pillText: { ...type.micro, fontSize: 10, letterSpacing: 0.6, color: colors.textSecondary },
-});
+  });
+};

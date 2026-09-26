@@ -37,6 +37,8 @@ export function createHttpSyncClient(cfg: SyncHttpConfig) {
     return readEvidenceImageBytes(record.imageRef);
   });
   const session: SyncSession = { token: null, expiresAt: 0 };
+  /** Why the last token mint failed — 'rejected' means the server said no to these credentials. */
+  let authFailure: 'none' | 'rejected' | 'unreachable' | 'unset' = 'none';
 
   async function request(path: string, init: RequestInit): Promise<Response> {
     const ctrl = new AbortController();
@@ -50,20 +52,37 @@ export function createHttpSyncClient(cfg: SyncHttpConfig) {
 
   async function ensureToken(): Promise<string | null> {
     if (session.token && Date.now() < session.expiresAt - 5_000) return session.token;
-    if (!cfg.credentials) return null;
+    if (!cfg.credentials) {
+      authFailure = 'unset';
+      return null;
+    }
     try {
       const res = await request('/api/v1/auth/login', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(cfg.credentials),
       });
-      if (!res.ok) return null;
-      const data = (await res.json()) as { token?: string };
-      if (!data.token) return null;
+      if (!res.ok) {
+        // 401/403 = the server rejected these credentials outright. Anything else is a
+        // server-side problem, not a credential problem — do not blame the officer.
+        authFailure = res.status === 401 || res.status === 403 ? 'rejected' : 'unreachable';
+        return null;
+      }
+      const data = (await res.json()) as { token?: string; expires_at?: string };
+      if (!data.token) {
+        authFailure = 'rejected';
+        return null;
+      }
       session.token = data.token;
-      session.expiresAt = Date.now() + 11 * 3600_000; // refresh before the 12 h server TTL
+      // Prefer the server's own expiry; fall back to refreshing before the 12 h TTL.
+      const serverExpiry = typeof data.expires_at === 'string' ? Date.parse(data.expires_at) : NaN;
+      session.expiresAt = Number.isFinite(serverExpiry)
+        ? serverExpiry
+        : Date.now() + 11 * 3600_000;
+      authFailure = 'none';
       return session.token;
     } catch {
+      authFailure = 'unreachable';
       return null;
     }
   }
@@ -142,7 +161,48 @@ export function createHttpSyncClient(cfg: SyncHttpConfig) {
     },
   };
 
-  return { client, session, ensureToken, currentToken: () => session.token };
+  return {
+    client,
+    session,
+    ensureToken,
+    currentToken: () => session.token,
+    authFailure: () => authFailure,
+  };
+}
+
+/**
+ * Verify a credential against the API without touching the outbox — used by
+ * Settings › Server account so a rejected password is reported at the moment it is
+ * entered, instead of surfacing hours later as a queue that never drains.
+ */
+export async function verifyServerCredentials(
+  serverUrl: string,
+  credentials: { username: string; password: string },
+  fetchImpl?: typeof fetch,
+  timeoutMs = 12_000
+): Promise<{ ok: boolean; reason: 'accepted' | 'rejected' | 'unreachable' | 'malformed' }> {
+  const doFetch = fetchImpl ?? fetch;
+  const url = serverUrl.trim().replace(/\/$/, '');
+  if (!/^https?:\/\/[^\s/]+/i.test(url)) return { ok: false, reason: 'malformed' };
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await doFetch(`${url}/api/v1/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(credentials),
+      signal: ctrl.signal,
+    });
+    if (res.ok) {
+      // Do not keep the token: this probe only answers "are these credentials valid?".
+      return { ok: true, reason: 'accepted' };
+    }
+    return { ok: false, reason: res.status === 401 || res.status === 403 ? 'rejected' : 'unreachable' };
+  } catch {
+    return { ok: false, reason: 'unreachable' };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** Health probe used by Settings → TEST CONNECTION. */

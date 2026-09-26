@@ -19,8 +19,8 @@
  *   present, honest "chain-only, keystore unavailable" when null — never an
  *   assumed security level.
  *
- * Design Language: src/theme/evidence.ts + src/components/ui/evidentiary/EvidenceBits.tsx
- * (WCAG AAA light evidentiary review; tri-modal states; ≥48 dp targets; mono
+ * Design Language: src/theme (useAppTheme + useThemedStyles) + src/components/ui/evidentiary/EvidenceBits.tsx
+ * (evidentiary review; tri-modal states; ≥48 dp targets; mono
  * technical metadata; dark terminal boxes for integrity digests/exports).
  */
 
@@ -28,7 +28,6 @@ import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   ScrollView,
-  StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -56,7 +55,8 @@ import { useSyncStore } from '../state/sync-store';
 import { buildExportBundle, printCourtPdf, type ExportBundle } from '../services/export-flow';
 import { StatutoryClockModal } from '../components/StatutoryClockModal';
 import { FadeEntrance } from '../components/ui/FadeEntrance';
-import { evidenceTheme as T, evidenceMono } from '../theme/evidence';
+import { useAppTheme, useThemedStyles } from '../theme/theme-context';
+import type { Theme } from '../theme';
 import {
   ABSTENTION_COPY,
   GRADE_COPY,
@@ -73,6 +73,9 @@ type DetailRoute = RouteProp<RootStackParamList, 'RecordDetail'>;
 
 /** Expandable tenderable artifact row inside the export card. */
 const ArtifactRow: React.FC<{ icon: IconName; label: string; text: string }> = ({ icon, label, text }) => {
+  const { theme } = useAppTheme();
+  const T = theme.colors;
+  const local = useThemedStyles(createLocalStyles);
   const [open, setOpen] = useState(false);
   return (
     <View style={local.artifactBlock}>
@@ -101,7 +104,10 @@ const ArtifactRow: React.FC<{ icon: IconName; label: string; text: string }> = (
   );
 };
 
-const local = StyleSheet.create({
+const createLocalStyles = (theme: Theme) => {
+  const T = theme.colors;
+  const evidenceMono = theme.fontFamily.mono;
+  return StyleSheet.create({
   artifactBlock: { gap: 4 },
   artifactHead: {
     flexDirection: 'row',
@@ -148,11 +154,15 @@ const local = StyleSheet.create({
     color: T.terminalText,
     lineHeight: 15,
   },
-});
+  });
+};
 
 /* ------------------------------ screen ------------------------------ */
 
 export const RecordDetailScreen: React.FC<{ route: DetailRoute }> = ({ route }) => {
+  const { theme } = useAppTheme();
+  const T = theme.colors;
+  const styles = useThemedStyles(createStyles);
   const navigation = useNavigation<Nav>();
   const record = useLedgerStore((s) => s.records.find((r) => r.record_uuid === route.params.uuid));
   const serverCase = useSyncStore((s) => (record ? s.caseStatus[record.case_ref] : undefined));
@@ -207,7 +217,6 @@ export const RecordDetailScreen: React.FC<{ route: DetailRoute }> = ({ route }) 
   if (!record) {
     return (
       <View style={styles.screen}>
-        <StatusBar barStyle="dark-content" />
         {renderHeader('Record', '', '')}
         <ScrollView contentContainerStyle={styles.scrollContent}>
           <StateBanner
@@ -218,7 +227,7 @@ export const RecordDetailScreen: React.FC<{ route: DetailRoute }> = ({ route }) 
             citation="The ledger holds the records sealed since this app session started — device builds hydrate the full encrypted history."
           />
           <TouchableOpacity style={styles.primaryBtn} onPress={() => navigation.goBack()} accessibilityRole="button" accessibilityLabel="Go back">
-            <Icon name="chevronLeft" size={20} color="#FFFFFF" strokeWidth={2.5} />
+            <Icon name="chevronLeft" size={20} color={T.onAccent} strokeWidth={2.5} />
             <Text style={styles.primaryBtnText}>GO BACK</Text>
           </TouchableOpacity>
         </ScrollView>
@@ -259,7 +268,6 @@ export const RecordDetailScreen: React.FC<{ route: DetailRoute }> = ({ route }) 
 
   return (
     <View style={styles.screen}>
-      <StatusBar barStyle="dark-content" />
 
       {renderHeader(record.case_ref + ' · ' + record.package_no, 'SEALED RECORD — IMMUTABLE', record.record_uuid)}
 
@@ -320,9 +328,11 @@ export const RecordDetailScreen: React.FC<{ route: DetailRoute }> = ({ route }) 
                   ? `${serverCase.status} · fetched ${serverCaseAt ? new Date(serverCaseAt).toLocaleTimeString('en-IN') : '—'}`
                   : record.syncStatus === 'queued'
                     ? 'NOT YET UPLOADABLE — queued on device'
-                    : record.syncStatus === 'demo-seed'
-                      ? 'LOCAL DEMO RECORD — never uploaded to the API'
-                      : 'NOT FETCHED — pull to refresh on RECORDS'
+                    : record.syncStatus === 'dead-letter'
+                      ? 'NOT ON THE SERVER — the API permanently refused this record'
+                      : record.syncStatus === 'demo-seed'
+                        ? 'LOCAL DEMO RECORD — never uploaded to the API'
+                        : 'NOT FETCHED — pull to refresh on RECORDS'
               }
               wide
             />
@@ -342,11 +352,13 @@ export const RecordDetailScreen: React.FC<{ route: DetailRoute }> = ({ route }) 
               value={
                 record.syncStatus === 'synced'
                   ? 'SYNCED — accepted by the configured API'
-                  : record.syncStatus === 'demo-seed'
-                    ? 'DEMO SEED — LOCAL ONLY, never uploaded'
-                    : 'QUEUED — OFFLINE OUTBOX'
+                  : record.syncStatus === 'dead-letter'
+                    ? 'SERVER REJECTED — retained on this device, never uploaded'
+                    : record.syncStatus === 'demo-seed'
+                      ? 'DEMO SEED — LOCAL ONLY, never uploaded'
+                      : 'QUEUED — OFFLINE OUTBOX'
               }
-              tone="default"
+              tone={record.syncStatus === 'dead-letter' ? 'danger' : 'default'}
             />
           </View>
           {record.gps?.mocked ? (
@@ -456,7 +468,7 @@ export const RecordDetailScreen: React.FC<{ route: DetailRoute }> = ({ route }) 
           {record.deviceAttestation ? (
             <View style={styles.attestRow}>
               <View style={styles.attestIconOk}>
-                <Icon name="lock" size={16} color="#FFFFFF" strokeWidth={2.5} />
+                <Icon name="lock" size={16} color={T.onAccent} strokeWidth={2.5} />
               </View>
               <Text style={styles.attestText}>
                 Integrity seal produced by the device keystore path (SEQ #{record.seq}).
@@ -467,7 +479,7 @@ export const RecordDetailScreen: React.FC<{ route: DetailRoute }> = ({ route }) 
           ) : (
             <View style={styles.attestRow}>
               <View style={styles.attestIconWarn}>
-                <Icon name="info" size={16} color="#FFFFFF" strokeWidth={2.5} />
+                <Icon name="info" size={16} color={T.onAccent} strokeWidth={2.5} />
               </View>
               <Text style={styles.attestText}>
                 Keystore seal unavailable in this environment — the record honestly carries a null
@@ -525,7 +537,7 @@ export const RecordDetailScreen: React.FC<{ route: DetailRoute }> = ({ route }) 
               accessibilityRole="button"
               accessibilityLabel="Generate the court evidence package from this sealed record"
             >
-              {generating ? <ActivityIndicator size="small" color="#FFFFFF" /> : <Icon name="download" size={20} color="#FFFFFF" strokeWidth={2.5} />}
+              {generating ? <ActivityIndicator size="small" color={T.onAccent} /> : <Icon name="download" size={20} color={T.onAccent} strokeWidth={2.5} />}
               <Text style={styles.primaryBtnText}>{generating ? 'GENERATING FROM SEALED PAYLOAD…' : 'GENERATE COURT EVIDENCE PACKAGE'}</Text>
             </TouchableOpacity>
           )}
@@ -568,7 +580,10 @@ export const RecordDetailScreen: React.FC<{ route: DetailRoute }> = ({ route }) 
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => {
+  const T = theme.colors;
+  const evidenceMono = theme.fontFamily.mono;
+  return StyleSheet.create({
   screen: { flex: 1, backgroundColor: T.canvas },
   scroll: { flex: 1 },
   scrollContent: { padding: 16, gap: 16, paddingBottom: 64 },
@@ -675,7 +690,7 @@ const styles = StyleSheet.create({
     marginTop: 12,
     paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(15, 23, 42, 0.12)',
+    borderTopColor: T.borderSubtle,
   },
 
   metaGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
@@ -786,7 +801,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   primaryBtnDisabled: { opacity: 0.6 },
-  primaryBtnText: { fontSize: 14, fontWeight: '700', color: '#FFFFFF', letterSpacing: 0.4 },
+  primaryBtnText: { fontSize: 14, fontWeight: '700', color: T.onAccent, letterSpacing: 0.4 },
   secondaryBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -807,6 +822,7 @@ const styles = StyleSheet.create({
   },
   flex: { flex: 1 },
   entranceWrap: { gap: 16 },
-});
+  });
+};
 
 export default RecordDetailScreen;

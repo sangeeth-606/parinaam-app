@@ -8,11 +8,11 @@
  * routes (Home/CaseLog/Integrity) render the shared LightTabBar inside the screens.
  */
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { NavigationContainer, type Theme as NavTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { evidenceTheme as T } from '../theme/evidence';
+import { useAppTheme } from '../theme/theme-context';
 import { useAuthStore } from '../state/auth-store';
 import { useLedgerStore } from '../state/ledger-store';
 import { attachDraftPersistence, hydrateDraftFromDb } from '../state/draft-persistence';
@@ -50,25 +50,28 @@ export type RootStackParamList = {
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
-const navTheme: NavTheme = {
-  dark: false,
-  colors: {
-    primary: T.accent,
-    background: T.canvas,
-    card: T.canvas,
-    text: T.textPrimary,
-    border: T.border,
-    notification: T.accent,
-  },
-  fonts: {
-    regular: { fontFamily: 'System', fontWeight: '400' },
-    medium: { fontFamily: 'System', fontWeight: '500' },
-    bold: { fontFamily: 'System', fontWeight: '700' },
-    heavy: { fontFamily: 'System', fontWeight: '800' },
-  },
-};
-
 export const AppNavigator: React.FC = () => {
+  const { mode, theme } = useAppTheme();
+  const navTheme = useMemo<NavTheme>(
+    () => ({
+      dark: mode === 'dark',
+      colors: {
+        primary: theme.colors.accent,
+        background: theme.colors.canvas,
+        card: theme.colors.canvas,
+        text: theme.colors.textPrimary,
+        border: theme.colors.border,
+        notification: theme.colors.accent,
+      },
+      fonts: {
+        regular: { fontFamily: 'System', fontWeight: '400' },
+        medium: { fontFamily: 'System', fontWeight: '500' },
+        bold: { fontFamily: 'System', fontWeight: '700' },
+        heavy: { fontFamily: 'System', fontWeight: '800' },
+      },
+    }),
+    [mode, theme],
+  );
   const status = useAuthStore((s) => s.status);
   const restore = useAuthStore((s) => s.restore);
   const briefSeen = useAuthStore((s) => s.briefSeen);
@@ -104,10 +107,10 @@ export const AppNavigator: React.FC = () => {
   if (status === 'booting' || briefSeen === null) {
     return (
       <View
-        style={{ flex: 1, backgroundColor: T.canvas, alignItems: 'center', justifyContent: 'center' }}
+        style={{ flex: 1, backgroundColor: theme.colors.canvas, alignItems: 'center', justifyContent: 'center' }}
         accessibilityLabel="Starting Parinaam"
       >
-        <ActivityIndicator color={T.accent} size="large" />
+        <ActivityIndicator color={theme.colors.accent} size="large" />
       </View>
     );
   }
@@ -120,7 +123,7 @@ export const AppNavigator: React.FC = () => {
       <Stack.Navigator
         screenOptions={{
           headerShown: false,
-          contentStyle: { backgroundColor: T.canvas },
+          contentStyle: { backgroundColor: theme.colors.canvas },
           animation: 'fade',
           animationDuration: 200,
         }}

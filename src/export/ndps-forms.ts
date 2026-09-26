@@ -26,8 +26,9 @@ export interface SeizureCaseDetails {
   dateOfSeizure: string;
   magistrateCourtName: string;
   allegedDescription: string; // e.g. "Suspected psychotropic substance/narcotic drug in powder form"
-  grossWeightGrams: number;
-  netWeightGrams: number;
+  /** null = not recorded. A seizure weight is never inferred, defaulted, or invented. */
+  grossWeightGrams: number | null;
+  netWeightGrams: number | null;
 }
 
 export interface NdpsFormsBundle {
@@ -78,10 +79,10 @@ INVENTORY OF SEIZED NARCOTICS, DRUGS, PSYCHOTROPIC SUBSTANCES, AND CONVEYANCES
 2. PACKAGE & SAMPLING IDENTIFICATION (RULE 10(2)):
    - Package Number          : ${record.package_no} (of seized packages)
    - Lot Number (if bunched) : ${record.lot_no ?? 'N/A (Single Package)'}
-   - Original Sample Mark    : ${record.sample_orig_no ?? 'SO-1'}
-   - Duplicate Sample Mark   : ${record.sample_dup_no ?? 'SD-1'}
-   - Gross Weight (Grams)    : ${seizure.grossWeightGrams} g
-   - Net Weight (Grams)      : ${seizure.netWeightGrams} g
+   - Original Sample Mark    : ${record.sample_orig_no ?? 'NOT RECORDED — TO BE ENTERED BY THE SEIZING OFFICER'}
+   - Duplicate Sample Mark   : ${record.sample_dup_no ?? 'NOT RECORDED — TO BE ENTERED BY THE SEIZING OFFICER'}
+   - Gross Weight (Grams)    : ${seizure.grossWeightGrams ?? 'NOT RECORDED'} g
+   - Net Weight (Grams)      : ${seizure.netWeightGrams ?? 'NOT RECORDED'} g
 
 3. FIELD TEST SPOT SAMPLING & RECORD INTEGRITY:
    - Record UUID             : ${record.record_uuid}
@@ -197,8 +198,8 @@ Date (IST)       : ${timestampIst}
   <table class="form-table">
     <tr><th>Case Crime No</th><td>${seizure.caseCrimeNo}</td><th>Panchnama Ref</th><td>${seizure.panchnamaRef}</td></tr>
     <tr><th>Package No</th><td><strong>${record.package_no}</strong></td><th>Lot No</th><td>${record.lot_no ?? 'N/A'}</td></tr>
-    <tr><th>Original Sample No</th><td>${record.sample_orig_no ?? 'SO-1'}</td><th>Duplicate Sample No</th><td>${record.sample_dup_no ?? 'SD-1'}</td></tr>
-    <tr><th>Gross / Net Weight</th><td>${seizure.grossWeightGrams}g / ${seizure.netWeightGrams}g</td><th>Place of Seizure</th><td>${seizure.placeOfSeizure}</td></tr>
+    <tr><th>Original Sample No</th><td>${record.sample_orig_no ?? 'NOT RECORDED'}</td><th>Duplicate Sample No</th><td>${record.sample_dup_no ?? 'NOT RECORDED'}</td></tr>
+    <tr><th>Gross / Net Weight</th><td>${seizure.grossWeightGrams ?? 'NOT RECORDED'}g / ${seizure.netWeightGrams ?? 'NOT RECORDED'}g</td><th>Place of Seizure</th><td>${seizure.placeOfSeizure}</td></tr>
     <tr><th>Field Test Reagent</th><td>${record.reagent.toUpperCase()}</td><th>Preliminary Outcome</th><td><strong>${record.outcome}</strong></td></tr>
     <tr><th>Confidence Score</th><td>${(record.confidence * 100).toFixed(1)}%</td><th>Calibration Grade</th><td>${record.calib_grade} (${record.calib_residual_mean.toFixed(2)} ΔE00)</td></tr>
     <tr><th>Record UUID</th><td colspan="3"><code>${record.record_uuid}</code></td></tr>

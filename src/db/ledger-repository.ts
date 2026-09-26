@@ -312,8 +312,7 @@ export async function queueForSync(recordUuid: string, idempotencyKey: string): 
   );
 }
 
-export async function markSyncedDb(recordUuid: string, serverAck?: string): Promise<void> {
-  const a = activeAdapter;
+export async function markSyncedDb(recordUuid: string, serverAck?: string): Promise<void> {  const a = activeAdapter;
   if (!a || a.kind === 'none') return;
   const existing = await a.get<{ record_uuid: string }>('SELECT record_uuid FROM field_test WHERE record_uuid = ?', recordUuid);
   if (!existing) return;
@@ -334,10 +333,30 @@ export async function markSyncedDb(recordUuid: string, serverAck?: string): Prom
   );
 }
 
+/**
+ * Record the permanent-rejection state in the ledger projection. The queue row is kept
+ * (see markDeadLetteredDb) so nothing silently disappears; only the ledger's view of the
+ * upload state changes, and record_sync_state already allows 'dead-letter'.
+ */
+export async function markDeadLetterStateDb(recordUuid: string, reason: string | null): Promise<void> {
+  const a = activeAdapter;
+  if (!a || a.kind === 'none') return;
+  const existing = await a.get<{ record_uuid: string }>('SELECT record_uuid FROM field_test WHERE record_uuid = ?', recordUuid);
+  if (!existing) return;
+  await a.run(
+    `INSERT INTO record_sync_state (record_uuid, state, reason, updated_at)
+     VALUES (?, 'dead-letter', ?, ?)
+     ON CONFLICT(record_uuid) DO UPDATE SET state = 'dead-letter', reason = excluded.reason, updated_at = excluded.updated_at`,
+    recordUuid,
+    reason,
+    new Date().toISOString()
+  );
+}
+
 export async function pendingCountDb(): Promise<number> {
   const a = activeAdapter;
   if (!a || a.kind === 'none') return 0;
-  const row = await a.get<{ c: number }>('SELECT COUNT(*) AS c FROM sync_queue');
+  const row = await a.get<{ c: number }>('SELECT COUNT(*) AS c FROM sync_queue WHERE dead_lettered_at IS NULL');
   return row?.c ?? 0;
 }
 
@@ -353,7 +372,36 @@ export interface QueueEntry {
 export async function pendingEntriesDb(): Promise<QueueEntry[]> {
   const a = activeAdapter;
   if (!a || a.kind === 'none') return [];
-  return a.all<QueueEntry>(`SELECT id, record_uuid, idempotency_key, attempts, next_attempt_at, last_error FROM sync_queue ORDER BY id ASC`);
+  return a.all<QueueEntry>(`SELECT id, record_uuid, idempotency_key, attempts, next_attempt_at, last_error FROM sync_queue WHERE dead_lettered_at IS NULL ORDER BY id ASC`);
+}
+
+/**
+ * Records the server permanently refused. They are retained (not deleted) so the
+ * officer can see them, re-queue them, and hand them over as a known gap.
+ */
+export async function deadLetteredUuidsDb(): Promise<string[]> {
+  const a = activeAdapter;
+  if (!a || a.kind === 'none') return [];
+  const rows = await a.all<{ record_uuid: string }>(
+    `SELECT record_uuid FROM sync_queue WHERE dead_lettered_at IS NOT NULL ORDER BY id ASC`
+  );
+  return rows.map((r) => r.record_uuid);
+}
+
+export async function markDeadLetteredDb(id: number, at: string): Promise<void> {
+  const a = activeAdapter;
+  if (!a || a.kind === 'none') return;
+  await a.run('UPDATE sync_queue SET dead_lettered_at = ? WHERE id = ?', at, id);
+}
+
+/** Return a dead-lettered record to the queue (officer-driven retry after a fix). */
+export async function requeueDeadLetteredDb(recordUuid: string): Promise<void> {
+  const a = activeAdapter;
+  if (!a || a.kind === 'none') return;
+  await a.run(
+    `UPDATE sync_queue SET dead_lettered_at = NULL, attempts = 0, next_attempt_at = NULL WHERE record_uuid = ?`,
+    recordUuid
+  );
 }
 
 export async function noteQueueFailureDb(id: number, attempts: number, nextAttemptAt: string, error: string): Promise<void> {

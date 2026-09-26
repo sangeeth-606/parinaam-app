@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { createCameraEngineClient, CameraEngineClientError } from '../../src/capture/camera-engine-client.ts';
+import { createCameraEngineClient, CameraEngineClientError, explainEngineFailure } from '../../src/capture/camera-engine-client.ts';
 import { parseCameraEngineResult, serializeCameraEngineResult } from '../../src/capture/camera-engine-contract.ts';
 
 function wireResult(): Record<string, unknown> {
@@ -115,5 +115,66 @@ describe('camera-engine bounded client', () => {
       () => createCameraEngineClient({ baseUrl: 'file:///engine', fetchImpl: hangingFetch }),
       (error: unknown) => error instanceof CameraEngineClientError && error.kind === 'invalid_url',
     );
+  });
+});
+
+describe('camera-engine failure explanations', () => {
+  it('translates an oversized photo into an instruction, not a code', async () => {
+    const tooLargeFetch = (async () =>
+      response(413, { error: 'IMAGE_TOO_LARGE', max_bytes: 12 * 1024 * 1024 })) as unknown as typeof fetch;
+    const client = createCameraEngineClient({ baseUrl: 'http://engine.local', fetchImpl: tooLargeFetch, maxAttempts: 1 });
+    const failure = await client
+      .analyzeImage({ uri: 'file:///capture.jpg', mimeType: 'image/jpeg', reagent: 'duquenois_levine' })
+      .then(() => null, (error: unknown) => explainEngineFailure(error));
+    assert.ok(failure);
+    assert.equal(failure.code, 'IMAGE_TOO_LARGE');
+    assert.match(failure.message, /larger than the local engine can accept/i);
+    assert.match(failure.action, /retake/i);
+  });
+
+  it('explains an unreadable image format without inventing a cause', async () => {
+    const badFormat = new CameraEngineClientError('UNSUPPORTED_IMAGE_FORMAT', 'http', {
+      status: 415,
+      body: { error: 'UNSUPPORTED_IMAGE_FORMAT' },
+    });
+    const failure = explainEngineFailure(badFormat);
+    assert.equal(failure.code, 'UNSUPPORTED_IMAGE_FORMAT');
+    assert.match(failure.action, /JPEG and PNG/i);
+  });
+
+  it('explains a generic engine processing failure honestly', () => {
+    const failure = explainEngineFailure(
+      new CameraEngineClientError('ENGINE_PROCESSING_ERROR', 'http', {
+        status: 500,
+        body: { error: 'ENGINE_PROCESSING_ERROR' },
+      }),
+    );
+    assert.equal(failure.code, 'ENGINE_PROCESSING_ERROR');
+    assert.match(failure.message, /could not measure this photo/i);
+    // A 500 is not auto-retried: the same photo would fail again, so the
+    // instruction is to retake rather than to resend.
+    assert.equal(failure.retryable, false);
+  });
+
+  it('tells the officer what to do when the engine cannot be reached', () => {
+    const failure = explainEngineFailure(new CameraEngineClientError('Network request failed', 'network'));
+    assert.equal(failure.code, 'ENGINE_UNREACHABLE');
+    assert.match(failure.message, /could not be reached/i);
+    assert.match(failure.action, /same Wi-Fi/i);
+  });
+
+  it('points a bad engine URL at Settings', () => {
+    const failure = explainEngineFailure(new CameraEngineClientError('Camera-engine URL must use HTTP or HTTPS', 'invalid_url'));
+    assert.match(failure.action, /Settings/i);
+    assert.equal(failure.retryable, false);
+  });
+
+  it('never shows a raw machine code as the officer-facing sentence', () => {
+    const codes = ['IMAGE_TOO_LARGE', 'UNSUPPORTED_IMAGE_FORMAT', 'ENGINE_PROCESSING_ERROR'];
+    for (const code of codes) {
+      const failure = explainEngineFailure(new CameraEngineClientError(code, 'http', { status: 500, body: { error: code } }));
+      assert.ok(!failure.message.includes('_'), `message must not leak the code: ${failure.message}`);
+      assert.ok(failure.message.endsWith('.'), 'message must read as a sentence');
+    }
   });
 });

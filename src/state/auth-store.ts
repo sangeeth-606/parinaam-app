@@ -16,7 +16,7 @@ import {
   saveSession,
   type SessionRecord,
 } from '../auth/session-token.ts';
-import { forgetServerCredentials, rememberServerCredentials } from '../sync/server-credentials.ts';
+import { forgetServerCredentials } from '../sync/server-credentials.ts';
 import { getPref, setPref } from '../auth/session-token.ts';
 
 /** v2 — one-time post-login brief acknowledgement pref key (canonical location: here). */
@@ -114,15 +114,19 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
     const session = await mintSession(DEMO_OFFICER.id);
     await saveSession(session);
-    // v2 D2 prototype: background sync reuses this credential (secure-store, this device).
-    await rememberServerCredentials({ username: username.trim().toLowerCase(), password });
+    // The device gate is NOT the API account. Unlocking the phone must never silently
+    // install the gate password as a server credential: the API rejects it (HTTP 401)
+    // and, because the health probe is public, the failure is invisible. The API account
+    // lives in Settings › Server account, or comes from the launcher's seeded account.
     set({ status: 'unlocked', officer: DEMO_OFFICER, session, failures: 0, lockedUntil: null });
     return 'ok';
   },
 
   logout: async () => {
-    void revokeServerSession(); // best-effort server-side revocation (D2)
+    void revokeServerSession(); // best-effort server-side revocation
     await clearSession();
+    // The officer-entered API credential is device-scoped: signing out of the phone
+    // signs out of the API too, so a shared duty device does not keep the password.
     await forgetServerCredentials();
     set({ status: 'locked', officer: null, session: null, failures: 0, lockedUntil: null });
   },

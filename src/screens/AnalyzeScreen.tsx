@@ -13,11 +13,11 @@
  *
  * Data logic below (useEffect run pipeline, STAGES, ticks, halt strings,
  * navigation.replace hand-off) is unchanged from the audited implementation —
- * only the presentation migrates to the light evidentiary language.
+ * only the presentation migrates to the evidentiary review language.
  */
 
 import React, { useEffect, useRef, useState } from 'react';
-import { ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/AppNavigator';
@@ -28,7 +28,8 @@ import { useSessionStore } from '../state/session-store';
 import { adaptCameraEngineResult } from '../capture/camera-engine-adapter.ts';
 import { WizardHeader } from '../components/ui/WizardHeader';
 import { GUIDANCE_TEXTS, useGuidance } from '../state/guidance';
-import { evidenceTheme as T, evidenceMono } from '../theme/evidence';
+import { useAppTheme, useThemedStyles } from '../theme/theme-context';
+import type { Theme } from '../theme';
 import { REAGENT_LABEL } from '../domain/outcome-copy';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -41,6 +42,10 @@ const STAGES = [
 ] as const;
 
 export const AnalyzeScreen: React.FC = () => {
+  const { theme } = useAppTheme();
+  const T = theme.colors;
+  const { fontFamily } = theme;
+  const styles = useThemedStyles(createStyles);
   const guidanceSeen = useGuidance((g) => !!g.seen.analyze);
   const dismissGuidance = useGuidance((g) => g.dismiss);
   const navigation = useNavigation<Nav>();
@@ -100,7 +105,6 @@ export const AnalyzeScreen: React.FC = () => {
 
   return (
     <View style={styles.screen}>
-      <StatusBar barStyle="dark-content" />
 
       <WizardHeader
         step={2}
@@ -116,7 +120,7 @@ export const AnalyzeScreen: React.FC = () => {
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 }}>
             <Text style={{ flex: 1, fontSize: 12, lineHeight: 17, color: T.textSecondary }}>{GUIDANCE_TEXTS.analyze}</Text>
             <TouchableOpacity onPress={() => void dismissGuidance('analyze')} accessibilityRole="button" accessibilityLabel="Dismiss this hint">
-              <Text style={{ fontFamily: evidenceMono, fontSize: 11, color: T.accent }}>GOT IT</Text>
+              <Text style={{ fontFamily: fontFamily.mono, fontSize: 11, color: T.accent }}>GOT IT</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -193,7 +197,7 @@ export const AnalyzeScreen: React.FC = () => {
               accessibilityRole="button"
               accessibilityLabel="Return to capture and retake the photo"
             >
-              <Icon name="camera" size={20} color="#FFFFFF" strokeWidth={2.5} />
+              <Icon name="camera" size={20} color={T.onAccent} strokeWidth={2.5} />
               <Text style={styles.primaryBtnText}>RETURN TO CAPTURE &amp; RETAKE</Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -226,7 +230,10 @@ export const AnalyzeScreen: React.FC = () => {
 
 const tick = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => {
+  const T = theme.colors;
+  const evidenceMono = theme.fontFamily.mono;
+  return StyleSheet.create({
   screen: { flex: 1, backgroundColor: T.canvas },
   scroll: { flex: 1 },
   scrollContent: { padding: 16, gap: 14, paddingBottom: 64 },
@@ -348,7 +355,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     backgroundColor: T.accent,
   },
-  primaryBtnText: { fontSize: 14, fontWeight: '700', color: '#FFFFFF', letterSpacing: 0.4 },
+  primaryBtnText: { fontSize: 14, fontWeight: '700', color: T.onAccent, letterSpacing: 0.4 },
   secondaryBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -374,6 +381,7 @@ const styles = StyleSheet.create({
   },
   explainText: { flex: 1, fontSize: 12.5, color: T.textSecondary, lineHeight: 19 },
   explainBold: { fontWeight: '700', color: T.textPrimary },
-});
+  });
+};
 
 export default AnalyzeScreen;

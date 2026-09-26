@@ -1,12 +1,14 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { DetailedQualityResult } from './quality-gates';
-import { colors, fontWeight } from '../theme';
+import { darkTheme, fontWeight } from '../theme';
 
 interface CoachingOverlayProps {
   qualityResult: DetailedQualityResult | null;
   photoProgress?: { current: number; total: number };
 }
+
+const colors = darkTheme.colors;
 
 export const CoachingOverlay: React.FC<CoachingOverlayProps> = ({
   qualityResult,

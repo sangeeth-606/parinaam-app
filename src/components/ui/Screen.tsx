@@ -7,7 +7,6 @@
 import React from 'react';
 import {
   ScrollView,
-  StatusBar,
   StyleProp,
   StyleSheet,
   Text,
@@ -17,8 +16,8 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PressableScale } from './PressableScale';
 import { Icon, IconName } from './Icon';
-import { colors, type, radius, space } from '../../theme';
-import { headerHeight, target } from '../../theme';
+import { useAppTheme, useThemedStyles } from '../../theme/theme-context';
+import type { Theme } from '../../theme';
 
 interface AppHeaderProps {
   title: string;
@@ -39,6 +38,9 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
   rightAction,
   centerTitle = false,
 }) => {
+  const { theme } = useAppTheme();
+  const { colors, space } = theme;
+  const styles = useThemedStyles(createStyles);
   const insets = useSafeAreaInsets();
   return (
     <View style={[styles.header, { paddingTop: Math.max(insets.top, space.sm) }]} accessibilityRole="header">
@@ -108,12 +110,14 @@ export const Screen: React.FC<ScreenProps> = ({
   contentStyle,
   keyboardShouldPersistTaps = 'handled',
 }) => {
+  const { theme, mode } = useAppTheme();
+  const { space } = theme;
+  const styles = useThemedStyles(createStyles);
   const insets = useSafeAreaInsets();
   const bottomPad = tabBar ? space.lg : insets.bottom + space.lg;
 
   return (
     <View style={[styles.screen, style]}>
-      <StatusBar barStyle="light-content" />
       {header}
       {scroll ? (
         <ScrollView
@@ -124,7 +128,7 @@ export const Screen: React.FC<ScreenProps> = ({
             contentStyle,
           ]}
           keyboardShouldPersistTaps={keyboardShouldPersistTaps}
-          indicatorStyle="white"
+          indicatorStyle={mode === 'dark' ? 'white' : 'black'}
         >
           {children}
         </ScrollView>
@@ -145,13 +149,18 @@ export const Screen: React.FC<ScreenProps> = ({
 export const StatusStrip: React.FC<{ children: React.ReactNode; style?: StyleProp<ViewStyle> }> = ({
   children,
   style,
-}) => (
-  <View style={[styles.statusStrip, style]} accessibilityRole="summary">
-    {children}
-  </View>
-);
+}) => {
+  const styles = useThemedStyles(createStyles);
+  return (
+    <View style={[styles.statusStrip, style]} accessibilityRole="summary">
+      {children}
+    </View>
+  );
+};
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => {
+  const { colors, type, radius, space, target } = theme;
+  return StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.canvas },
   header: {
     backgroundColor: colors.surfaceRaised,
@@ -159,7 +168,7 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
   },
   headerRow: {
-    minHeight: headerHeight - 12,
+    minHeight: theme.layout.headerHeight - 12,
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: space.sm,
@@ -197,4 +206,5 @@ const styles = StyleSheet.create({
     gap: space.sm,
     paddingVertical: space.sm,
   },
-});
+  });
+};

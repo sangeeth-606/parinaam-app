@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from flask import Flask, jsonify, request
+from werkzeug.exceptions import RequestEntityTooLarge
 
 from analyzer import (
     MAX_IMAGE_BYTES,
@@ -97,6 +98,11 @@ def analyze():
         elif code == "IMAGE_TOO_LARGE":
             status = 413
         return jsonify({"error": code}), status
+    except RequestEntityTooLarge:
+        # Werkzeug raises this lazily while the multipart body is parsed, which
+        # happens inside _extract_image(). It must be reported as "too large",
+        # never as a generic processing failure.
+        return jsonify({"error": "IMAGE_TOO_LARGE", "max_bytes": MAX_IMAGE_BYTES}), 413
     except Exception:
         # Do not expose stack traces or image data to a mobile client.
         app.logger.exception("camera-engine analysis failed")

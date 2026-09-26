@@ -12,9 +12,10 @@
  */
 
 import React, { useState } from 'react';
-import { ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useAuthStore } from '../state/auth-store';
-import { evidenceTheme as T, evidenceMono } from '../theme/evidence';
+import { useThemedStyles } from '../theme/theme-context';
+import type { Theme } from '../theme';
 
 // v2 hotfix: the key lives in auth-store (the gate is store-driven now); re-export kept.
 export { BRIEF_SEEN_PREF } from '../state/auth-store';
@@ -38,6 +39,7 @@ const POINTS: Array<{ n: string; title: string; body: string }> = [
 ];
 
 export const PostLoginBriefScreen: React.FC = () => {
+  const styles = useThemedStyles(createStyles);
   const [busy, setBusy] = useState(false);
   const officer = useAuthStore((s) => s.officer?.name ?? '—');
 
@@ -51,7 +53,6 @@ export const PostLoginBriefScreen: React.FC = () => {
 
   return (
     <View style={styles.host}>
-      <StatusBar barStyle="dark-content" />
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
@@ -98,7 +99,10 @@ export const PostLoginBriefScreen: React.FC = () => {
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => {
+  const T = theme.colors;
+  const evidenceMono = theme.fontFamily.mono;
+  return StyleSheet.create({
   host: { flex: 1, backgroundColor: T.canvas },
   scroll: { flex: 1 },
   scrollContent: {
@@ -175,8 +179,9 @@ const styles = StyleSheet.create({
     fontSize: 14,
     letterSpacing: 1.4,
     fontWeight: '800',
-    color: '#FFFFFF',
+    color: T.onAccent,
   },
-});
+  });
+};
 
 export default PostLoginBriefScreen;

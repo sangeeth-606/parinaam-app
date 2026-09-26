@@ -16,8 +16,9 @@ import {
 import { CoachingOverlay } from './CoachingOverlay';
 import { Button } from '../components/ui/Button';
 import { Icon } from '../components/ui/Icon';
-import { colors, type, radius, space, badgeTones } from '../theme';
-import { createCameraEngineClient } from './camera-engine-client.ts';
+import { useAppTheme, useThemedStyles } from '../theme/theme-context';
+import type { Theme } from '../theme';
+import { createCameraEngineClient, explainEngineFailure, type CameraEngineFailure } from './camera-engine-client.ts';
 import type { CameraEngineResult } from './camera-engine-contract.ts';
 import type { BurstAcquisitionResult } from './burst-manager.ts';
 import type { CaptureFrame } from '../types/contracts.ts';
@@ -60,10 +61,14 @@ function frameFromPicture(picture: CameraCapturedPicture, quality: ReturnType<ty
 }
 
 export const CameraView: React.FC<CameraViewProps> = ({ onBurstCaptured, onCancel }) => {
+  const { theme } = useAppTheme();
+  const { colors } = theme;
+  const styles = useThemedStyles(createStyles);
   const [permission, requestPermission] = useCameraPermissions();
   const [cameraReady, setCameraReady] = useState(false);
   const [capturing, setCapturing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [failure, setFailure] = useState<CameraEngineFailure | null>(null);
   const [lastCaptureUri, setLastCaptureUri] = useState<string | null>(null);
   const cameraRef = useRef<NativeCameraView>(null);
   const setup = useSessionStore((state) => state.setup);
@@ -82,7 +87,7 @@ export const CameraView: React.FC<CameraViewProps> = ({ onBurstCaptured, onCance
     if (!cameraReady || !cameraRef.current || capturing) return;
     setCapturing(true);
     setError(null);
-    let capturedUri: string | null = null;
+    setFailure(null);
     try {
       const capturedPicture = await cameraRef.current.takePictureAsync({
         quality: 0.92,
@@ -91,7 +96,6 @@ export const CameraView: React.FC<CameraViewProps> = ({ onBurstCaptured, onCance
         shutterSound: false,
       });
       if (!capturedPicture?.uri) throw new Error('Camera returned no image URI.');
-      capturedUri = capturedPicture.uri;
       setLastCaptureUri(capturedPicture.uri);
       const result = await client.analyzeImage({
         uri: capturedPicture.uri,
@@ -114,12 +118,9 @@ export const CameraView: React.FC<CameraViewProps> = ({ onBurstCaptured, onCance
       };
       onBurstCaptured(burst);
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : 'The camera-engine could not process this capture.';
-      setError(
-        capturedUri
-          ? `Photo retained for retry; processing unavailable: ${message}`
-          : `Capture/processing failed: ${message}`,
-      );
+      // Say what went wrong and what to do next; keep the engine's own code for
+      // the duty log. A raw code is never shown as if it were an instruction.
+      setFailure(explainEngineFailure(cause));
     } finally {
       setCapturing(false);
     }
@@ -163,6 +164,16 @@ export const CameraView: React.FC<CameraViewProps> = ({ onBurstCaptured, onCance
       </View>
 
       <View style={styles.controls}>
+        {failure ? (
+          <View style={styles.failureBox} accessibilityRole="alert">
+            <Text style={styles.errorText}>
+              {lastCaptureUri ? 'The photo was kept on this device. ' : ''}
+              {failure.message}
+            </Text>
+            <Text style={styles.failureAction}>{failure.action}</Text>
+            <Text style={styles.failureCode}>ENGINE CODE · {failure.code}</Text>
+          </View>
+        ) : null}
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
         {lastCaptureUri ? <Text style={styles.retryText}>The last photo is retained locally; recapture or retry when the engine is available.</Text> : null}
         <Button
@@ -180,7 +191,9 @@ export const CameraView: React.FC<CameraViewProps> = ({ onBurstCaptured, onCance
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => {
+  const { colors, type, radius, space, badgeTones } = theme;
+  return StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.canvas,
@@ -236,5 +249,16 @@ const styles = StyleSheet.create({
   permissionTitle: { ...type.headline, color: colors.textPrimary, textAlign: 'center' },
   permissionText: { ...type.body, color: colors.textSecondary, textAlign: 'center' },
   errorText: { ...type.caption, color: colors.fail, textAlign: 'center' },
+  failureBox: {
+    gap: 4,
+    padding: 10,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: colors.dangerBorder,
+    backgroundColor: colors.dangerSurface,
+  },
+  failureAction: { ...type.caption, color: colors.textPrimary, textAlign: 'center' },
+  failureCode: { ...type.monoSm, color: colors.textMuted, textAlign: 'center' },
   retryText: { ...type.micro, color: colors.textSecondary, textAlign: 'center' },
-});
+  });
+};

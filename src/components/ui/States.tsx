@@ -19,7 +19,8 @@ import {
 } from 'react-native';
 import { Icon, IconName } from './Icon';
 import { Button } from './Button';
-import { badgeTones, colors, type, radius, space, duration } from '../../theme';
+import { useAppTheme, useThemedStyles } from '../../theme/theme-context';
+import type { Theme } from '../../theme';
 
 /* ------------------------------- Skeleton ------------------------------- */
 
@@ -34,10 +35,13 @@ interface SkeletonProps {
 export const Skeleton: React.FC<SkeletonProps> = ({
   width = '100%',
   height = 14,
-  radius: r = radius.sm,
+  radius: r,
   style,
   shimmer = true,
 }) => {
+  const { theme } = useAppTheme();
+  const { colors, duration, radius } = theme;
+  const resolvedRadius = r ?? radius.sm;
   const opacity = useRef(new Animated.Value(0.35)).current;
 
   useEffect(() => {
@@ -54,13 +58,17 @@ export const Skeleton: React.FC<SkeletonProps> = ({
 
   return (
     <Animated.View
-      style={[{ width, height, borderRadius: r, backgroundColor: colors.surfaceRaised, opacity }, style]}
+      style={[{ width, height, borderRadius: resolvedRadius, backgroundColor: colors.surfaceRaised, opacity }, style]}
     />
   );
 };
 
 /** A list placeholder whose geometry matches RecordRow exactly. */
-export const SkeletonList: React.FC<{ rows?: number }> = ({ rows = 5 }) => (
+export const SkeletonList: React.FC<{ rows?: number }> = ({ rows = 5 }) => {
+  const { theme } = useAppTheme();
+  const { radius } = theme;
+  const styles = useThemedStyles(createStyles);
+  return (
   <View style={styles.skeletonList} accessibilityRole="progressbar" accessibilityLabel="Loading records">
     {Array.from({ length: rows }).map((_, i) => (
       <View key={i} style={styles.skeletonRow}>
@@ -72,8 +80,9 @@ export const SkeletonList: React.FC<{ rows?: number }> = ({ rows = 5 }) => (
         <Skeleton width={54} height={16} radius={radius.xs} />
       </View>
     ))}
-  </View>
-);
+    </View>
+  );
+};
 
 /* ------------------------------ EmptyState ------------------------------ */
 
@@ -93,10 +102,14 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   actionLabel,
   onAction,
   compact = false,
-}) => (
-  <View
-    style={[styles.empty, compact && styles.emptyCompact]}
-    accessibilityRole="summary"
+}) => {
+  const { theme } = useAppTheme();
+  const { colors } = theme;
+  const styles = useThemedStyles(createStyles);
+  return (
+    <View
+      style={[styles.empty, compact && styles.emptyCompact]}
+      accessibilityRole="summary"
     accessibilityLabel={`${title}. ${message ?? ''}`}
   >
     <View style={styles.emptyIconWell}>
@@ -108,7 +121,8 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
       <Button label={actionLabel} onPress={onAction} variant="tonal" size="md" fullWidth={false} style={styles.emptyAction} />
     ) : null}
   </View>
-);
+  );
+};
 
 /* ------------------------------ ErrorState ------------------------------ */
 
@@ -130,8 +144,12 @@ export const ErrorState: React.FC<ErrorStateProps> = ({
   onRetry,
   secondaryLabel,
   onSecondary,
-}) => (
-  <View style={styles.error} accessibilityRole="alert">
+}) => {
+  const { theme } = useAppTheme();
+  const { colors, badgeTones } = theme;
+  const styles = useThemedStyles(createStyles);
+  return (
+    <View style={styles.error} accessibilityRole="alert">
     <View style={[styles.errorIconWell, { borderColor: badgeTones.fail.border }]}>
       <Icon name="alert" size={26} color={colors.fail} />
     </View>
@@ -146,32 +164,44 @@ export const ErrorState: React.FC<ErrorStateProps> = ({
         ) : null}
       </View>
     ) : null}
-  </View>
-);
+    </View>
+  );
+};
 
 /* ----------------------------- LoadingState ----------------------------- */
 
-export const LoadingState: React.FC<{ label?: string }> = ({ label }) => (
+export const LoadingState: React.FC<{ label?: string }> = ({ label }) => {
+  const { theme } = useAppTheme();
+  const { colors } = theme;
+  const styles = useThemedStyles(createStyles);
+  return (
   <View style={styles.loading} accessibilityRole="progressbar" accessibilityLabel={label ?? 'Loading'}>
     <ActivityIndicator size="small" color={colors.brand} />
     {label ? <Text style={styles.loadingLabel}>{label}</Text> : null}
   </View>
-);
+  );
+};
 
 /** Inline progress note shown when a job crosses the "taking longer" threshold. */
-export const SlowNotice: React.FC<{ message: string; onCancel?: () => void }> = ({ message, onCancel }) => (
+export const SlowNotice: React.FC<{ message: string; onCancel?: () => void }> = ({ message, onCancel }) => {
+  const styles = useThemedStyles(createStyles);
+  return (
   <View style={styles.slow}>
     <Text style={styles.slowText}>{message}</Text>
     {onCancel ? <Button label="Cancel" onPress={onCancel} variant="ghost" size="sm" fullWidth={false} /> : null}
   </View>
-);
+  );
+};
 
 /** Full-screen scrollable host for the chrome of state pages. */
-export const StateScroll: React.FC<{ children: React.ReactNode }> = ({ children }) => (
-  <ScrollView contentContainerStyle={styles.stateScroll}>{children}</ScrollView>
-);
+export const StateScroll: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const styles = useThemedStyles(createStyles);
+  return <ScrollView contentContainerStyle={styles.stateScroll}>{children}</ScrollView>;
+};
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => {
+  const { colors, type, radius, space } = theme;
+  return StyleSheet.create({
   skeletonList: { gap: space.lg, paddingVertical: space.sm },
   skeletonRow: { flexDirection: 'row', alignItems: 'center', gap: space.md },
   skeletonLines: { flex: 1 },
@@ -219,5 +249,6 @@ const styles = StyleSheet.create({
   },
   slowText: { ...type.caption, color: colors.textSecondary, flex: 1 },
   stateScroll: { flexGrow: 1, justifyContent: 'center', padding: space.lg },
-});
+  });
+};
 

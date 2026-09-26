@@ -1,6 +1,9 @@
 /**
- * LightTabBar — bottom navigation for the light evidentiary surfaces
- * (WCAG AAA light theme, src/theme/evidence.ts).
+ * LightTabBar — bottom navigation for the evidentiary surfaces
+ * (theme tokens (light + dark), src/theme (useAppTheme + useThemedStyles)).
+ *
+ * The component name is historical (it was the light-only bar); it now follows
+ * the resolved mode like every other surface.
  *
  * Four sibling cells of identical geometry: DUTY · NEW TEST (the action) ·
  * RECORDS · INTEGRITY, with an optional records badge. Active destination is
@@ -15,8 +18,8 @@ import { StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PressableScale } from '../PressableScale';
 import { Icon, type IconName } from '../Icon';
-import { evidenceTheme as T } from '../../../theme/evidence';
-import { tabbarHeight, target, space, radius } from '../../../theme';
+import { useAppTheme, useThemedStyles } from '../../../theme/theme-context';
+import type { Theme } from '../../../theme';
 
 export type { TabKey } from '../TabBar';
 import type { TabKey } from '../TabBar';
@@ -41,6 +44,10 @@ interface LightTabBarProps {
 }
 
 export const LightTabBar: React.FC<LightTabBarProps> = ({ active, onTab, onNewTest, recordsBadge }) => {
+  const { theme } = useAppTheme();
+  const T = theme.colors;
+  const { space } = theme;
+  const styles = useThemedStyles(createStyles);
   const insets = useSafeAreaInsets();
   const leftTabs = TABS.slice(0, 1);
   const rightTabs = TABS.slice(1);
@@ -62,7 +69,7 @@ export const LightTabBar: React.FC<LightTabBarProps> = ({ active, onTab, onNewTe
           <Icon
             name={tab.icon}
             size={20}
-            color={isActive ? T.accentSurface : T.textMuted}
+            color={isActive ? T.onAccent : T.textMuted}
             strokeWidth={isActive ? 2.3 : 1.8}
           />
           {tab.key === 'records' && recordsBadge ? (
@@ -107,7 +114,10 @@ export const LightTabBar: React.FC<LightTabBarProps> = ({ active, onTab, onNewTe
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => {
+  const T = theme.colors;
+  const { target, space, radius } = theme;
+  return StyleSheet.create({
   bar: {
     backgroundColor: T.card,
     borderTopWidth: 1,
@@ -116,7 +126,7 @@ const styles = StyleSheet.create({
   inner: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    height: tabbarHeight,
+    height: theme.layout.tabbarHeight,
     paddingHorizontal: space.lg,
   },
   tabCell: {
@@ -168,8 +178,9 @@ const styles = StyleSheet.create({
   },
   badgeText: {
     fontSize: 9,
-    color: '#FFFFFF',
+    color: T.onAccent,
     fontWeight: '700',
     fontVariant: ['tabular-nums'],
   },
-});
+  });
+};

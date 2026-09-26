@@ -8,7 +8,8 @@ import React, { useState } from 'react';
 import { StyleSheet, Text, TextStyle, View } from 'react-native';
 import { PressableScale } from './PressableScale';
 import { Icon } from './Icon';
-import { colors, type, radius, space, fontFamily } from '../../theme';
+import { useAppTheme, useThemedStyles } from '../../theme/theme-context';
+import type { Theme } from '../../theme';
 import { abbreviateHash } from '../../domain/outcome-copy';
 import { labToHex } from '../../domain/lab-swatch';
 
@@ -19,15 +20,20 @@ interface HashChipProps {
   startExpanded?: boolean;
 }
 
-const toneColor: Record<NonNullable<HashChipProps['tone']>, TextStyle> = {
-  default: { color: colors.textSecondary },
-  ok: { color: colors.ok },
-  fail: { color: colors.fail },
-  brand: { color: colors.brand },
-};
+function getToneStyle(colors: Theme['colors'], tone: NonNullable<HashChipProps['tone']>): TextStyle {
+  return {
+    default: { color: colors.textSecondary },
+    ok: { color: colors.ok },
+    fail: { color: colors.fail },
+    brand: { color: colors.brand },
+  }[tone];
+}
 
 /** Chain-hash / payload digest: `a1b2…f9e8`, tap expands full digest (selectable). */
 export const HashChip: React.FC<HashChipProps> = ({ label, hash, tone = 'default', startExpanded = false }) => {
+  const { theme } = useAppTheme();
+  const { colors } = theme;
+  const styles = useThemedStyles(createStyles);
   const [expanded, setExpanded] = useState(startExpanded);
   return (
     <View style={styles.hashBlock}>
@@ -38,7 +44,7 @@ export const HashChip: React.FC<HashChipProps> = ({ label, hash, tone = 'default
         accessibilityLabel={`${label}: ${hash}. ${expanded ? 'Collapse' : 'Show full digest'}`}
         style={styles.hashRow}
       >
-        <Text style={[styles.hashValue, toneColor[tone]]} numberOfLines={expanded ? 4 : 1} selectable={expanded}>
+        <Text style={[styles.hashValue, getToneStyle(colors, tone)]} numberOfLines={expanded ? 4 : 1} selectable={expanded}>
           {expanded ? hash : abbreviateHash(hash)}
         </Text>
         <Icon
@@ -67,6 +73,7 @@ export const LabSwatch: React.FC<LabSwatchProps> = ({
   showHex = false,
   surround = false,
 }) => {
+  const styles = useThemedStyles(createStyles);
   const hex = labToHex(lab);
   const dot = (
     <View
@@ -84,7 +91,9 @@ export const LabSwatch: React.FC<LabSwatchProps> = ({
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => {
+  const { colors, type, radius, space, fontFamily } = theme;
+  return StyleSheet.create({
   hashBlock: { gap: 2 },
   hashLabel: { ...type.micro, fontSize: 10, color: colors.textTertiary },
   hashRow: {
@@ -113,4 +122,5 @@ const styles = StyleSheet.create({
     borderColor: colors.colorimeterHairline,
   },
   swatchHex: { ...type.monoSm, fontSize: 9, color: colors.textTertiary },
-});
+  });
+};

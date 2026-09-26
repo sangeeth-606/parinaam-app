@@ -127,6 +127,17 @@ CREATE INDEX IF NOT EXISTS idx_record_sync_state ON record_sync_state (state, up
 `;
 
 /**
+ * A dead-lettered record must stay visible. Deleting the queue row used to make an
+ * unuploaded record vanish while the ledger still said "queued" and the UI said
+ * "outbox clear" — evidence loss that looked like success. The row is now marked
+ * terminal and the ledger carries the matching 'dead-letter' state, which
+ * record_sync_state already permitted in its CHECK constraint.
+ */
+export const MIGRATION_APP_V4 = `
+ALTER TABLE sync_queue ADD COLUMN dead_lettered_at TEXT;
+`;
+
+/**
  * Camera-engine diagnostics are kept in their own append-only projection.
  * The authoritative sealed payload remains the existing field-test contract;
  * this table preserves the exact image-bound engine JSON for local audit and
@@ -200,6 +211,25 @@ export async function applyVersionedAppMigrations(adapter: AppMigrationAdapter):
     } catch (error) {
       await adapter.exec('ROLLBACK').catch(() => undefined);
       throw error;
+    }
+  }
+  const version4 = await adapter.get<{ version: number }>('SELECT MAX(version) AS version FROM app_schema_migrations');
+  if (!version4 || Number(version4.version) < 4) {
+    try {
+      await adapter.exec('BEGIN IMMEDIATE');
+      await adapter.exec(MIGRATION_APP_V4);
+      await adapter.run(
+        'INSERT INTO app_schema_migrations (version, applied_at) VALUES (?, ?)',
+        4,
+        new Date().toISOString()
+      );
+      await adapter.exec('COMMIT');
+    } catch (error) {
+      await adapter.exec('ROLLBACK').catch(() => undefined);
+      // A pre-existing dead_lettered_at column means the migration is already applied;
+      // that is not a failure condition.
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/duplicate column name/i.test(message)) throw error;
     }
   }
 }

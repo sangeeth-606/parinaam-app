@@ -8,8 +8,8 @@ import React from 'react';
 import { StyleSheet, Text, View, StyleProp, ViewStyle } from 'react-native';
 import { PressableScale } from './PressableScale';
 import { Icon, IconName } from './Icon';
-import { colors, type, space } from '../../theme';
-import { target } from '../../theme';
+import { useAppTheme, useThemedStyles } from '../../theme/theme-context';
+import type { Theme } from '../../theme';
 
 interface ListRowProps {
   title: string;
@@ -38,6 +38,9 @@ export const ListRow: React.FC<ListRowProps> = ({
   style,
   accessibilityLabel,
 }) => {
+  const { theme } = useAppTheme();
+  const styles = useThemedStyles(createStyles);
+  const { colors } = theme;
   const content = (
     <View style={[styles.row, !onPress && styles.rowStatic]}>
       {leading ??
@@ -71,7 +74,9 @@ export const ListRow: React.FC<ListRowProps> = ({
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => {
+  const { colors, type, space, target } = theme;
+  return StyleSheet.create({
   row: {
     minHeight: target.min,
     flexDirection: 'row',
@@ -100,4 +105,5 @@ const styles = StyleSheet.create({
     height: StyleSheet.hairlineWidth,
     backgroundColor: colors.borderSubtle,
   },
-});
+  });
+};

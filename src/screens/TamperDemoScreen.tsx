@@ -4,7 +4,7 @@
  * verify walk breaks — then restores. Uses the actual crypto (canonical-json.ts +
  * hash-chain.ts), so what the officer sees is what an audit would see.
  *
- * Design: light evidentiary language (src/theme/evidence.ts + EvidenceBits). Red is used
+ * Design: light evidentiary language (src/theme (useAppTheme + useThemedStyles) + EvidenceBits). Red is used
  * here for its one reserved meaning — an integrity failure the officer is being shown.
  *
  * Exported both as a root screen (default) and as an embeddable section for Integrity.
@@ -19,10 +19,14 @@ import {
   TerminalField,
 } from '../components/ui/evidentiary/EvidenceBits';
 import { useLedgerStore } from '../state/ledger-store';
-import { evidenceTheme as T, evidenceMono } from '../theme/evidence';
+import { useAppTheme, useThemedStyles } from '../theme/theme-context';
+import type { Theme } from '../theme';
 import { REAGENT_LABEL } from '../domain/outcome-copy';
 
 export const TamperDemoSection: React.FC = () => {
+  const { theme } = useAppTheme();
+  const T = theme.colors;
+  const styles = useThemedStyles(createStyles);
   const { records, verification, demoCorrupted, simulateTamper, resetDemo, reverify } = useLedgerStore();
   const [busy, setBusy] = useState(false);
 
@@ -78,7 +82,7 @@ export const TamperDemoSection: React.FC = () => {
             accessibilityRole="button"
             accessibilityLabel={`Demonstrate tampering on package ${target.package_no}`}
           >
-            <Icon name="alert" size={20} color="#FFFFFF" strokeWidth={2.5} />
+            <Icon name="alert" size={20} color={T.onAccent} strokeWidth={2.5} />
             <Text style={styles.dangerBtnText}>{busy ? 'CORRUPTING PAYLOAD…' : `TAMPER WITH ${target.package_no}`}</Text>
           </TouchableOpacity>
         </>
@@ -125,7 +129,7 @@ export const TamperDemoSection: React.FC = () => {
               accessibilityRole="button"
               accessibilityLabel="Restore the demonstration record"
             >
-              <Icon name="check" size={17} color="#FFFFFF" strokeWidth={2.5} />
+              <Icon name="check" size={17} color={T.onAccent} strokeWidth={2.5} />
               <Text style={styles.primaryBtnText}>RESTORE</Text>
             </TouchableOpacity>
           </View>
@@ -158,7 +162,10 @@ export const TamperDemoSection: React.FC = () => {
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => {
+  const T = theme.colors;
+  const evidenceMono = theme.fontFamily.mono;
+  return StyleSheet.create({
   card: {
     backgroundColor: T.card,
     borderRadius: 8,
@@ -189,7 +196,7 @@ const styles = StyleSheet.create({
     backgroundColor: T.dangerBorder,
     marginTop: 12,
   },
-  dangerBtnText: { fontSize: 14, fontWeight: '700', color: '#FFFFFF', letterSpacing: 0.4 },
+  dangerBtnText: { fontSize: 14, fontWeight: '700', color: T.onAccent, letterSpacing: 0.4 },
   btnDisabled: { opacity: 0.6 },
 
   restoreNote: {
@@ -209,7 +216,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     backgroundColor: T.accent,
   },
-  primaryBtnText: { fontSize: 13, fontWeight: '700', color: '#FFFFFF', letterSpacing: 0.4 },
+  primaryBtnText: { fontSize: 13, fontWeight: '700', color: T.onAccent, letterSpacing: 0.4 },
   secondaryBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -258,7 +265,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 3,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: T.surface,
     borderColor: T.dangerBorder,
     borderWidth: 1,
     borderRadius: 4,
@@ -268,12 +275,16 @@ const styles = StyleSheet.create({
   pillText: { fontSize: 10, fontWeight: '700', letterSpacing: 0.4 },
 
   host: { flex: 1, backgroundColor: T.canvas, padding: 16, gap: 16 },
-});
+  });
+};
 
-export const TamperDemoScreen: React.FC = () => (
-  <View style={styles.host}>
-    <TamperDemoSection />
-  </View>
-);
+export const TamperDemoScreen: React.FC = () => {
+  const styles = useThemedStyles(createStyles);
+  return (
+    <View style={styles.host}>
+      <TamperDemoSection />
+    </View>
+  );
+};
 
 export default TamperDemoScreen;

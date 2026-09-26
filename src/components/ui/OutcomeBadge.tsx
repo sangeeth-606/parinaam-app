@@ -9,7 +9,8 @@ import React from 'react';
 import { StyleSheet, Text, View, StyleProp, ViewStyle } from 'react-native';
 import { Icon } from './Icon';
 import { Badge } from './Badge';
-import { colors, type, radius, space, badgeTones, BadgeTone } from '../../theme';
+import { useAppTheme, useThemedStyles } from '../../theme/theme-context';
+import type { Theme, BadgeTone } from '../../theme';
 import {
   ABSTENTION_COPY,
   OFFICER_READING,
@@ -67,6 +68,9 @@ export const OutcomeHero: React.FC<OutcomeHeroProps> = ({
   detail,
   conformalSet,
 }) => {
+  const { theme } = useAppTheme();
+  const { colors, badgeTones } = theme;
+  const styles = useThemedStyles(createStyles);
   const tone = outcomeTone(kind);
   const borderColor =
     tone === 'reaction'
@@ -114,7 +118,9 @@ export const OutcomeHero: React.FC<OutcomeHeroProps> = ({
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => {
+  const { colors, type, radius, space } = theme;
+  return StyleSheet.create({
   hero: {
     backgroundColor: colors.surface,
     borderRadius: radius.md,
@@ -148,4 +154,5 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
   },
   heroSet: { ...type.monoSm, color: colors.textTertiary },
-});
+  });
+};

@@ -1,6 +1,6 @@
 /**
- * EvidenceBits — shared primitives of the WCAG AAA light "evidentiary review"
- * language (src/theme/evidence.ts). Consumed by ResultsScreen, RecordDetailScreen,
+ * EvidenceBits — shared primitives of the "evidentiary review" (light + dark palettes)
+ * language (src/theme (useAppTheme + useThemedStyles)). Consumed by ResultsScreen, RecordDetailScreen,
  * CaseLogScreen, IntegrityScreen (reference prose: BunchingScreen).
  *
  * Design law (docs/redesign/04 §A): tri-modal semantic states (color + icon +
@@ -12,7 +12,8 @@ import React, { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import Svg, { Line, Circle, Polyline } from 'react-native-svg';
 import { Icon, type IconName } from '../Icon';
-import { evidenceTheme as T, evidenceMono } from '../../../theme/evidence';
+import { useAppTheme, useThemedStyles } from '../../../theme/theme-context';
+import type { Theme } from '../../../theme';
 import { colorimeterNeutral } from '../../../theme';
 import { labToHex } from '../../../domain/lab-swatch';
 import type { LabValue } from '../../../types/contracts';
@@ -31,8 +32,10 @@ export const EvidenceCard: React.FC<{
   subtext?: string;
   right?: React.ReactNode;
   children?: React.ReactNode;
-}> = ({ eyebrow, heading, subtext, right, children }) => (
-  <View style={s.card}>
+}> = ({ eyebrow, heading, subtext, right, children }) => {
+  const s = useThemedStyles(createStyles);
+  return (
+    <View style={s.card}>
     {eyebrow || heading || right ? (
       <View style={s.cardHeaderRow}>
         <View style={s.cardHeaderText}>
@@ -45,7 +48,8 @@ export const EvidenceCard: React.FC<{
     {subtext ? <Text style={s.cardSubtext}>{subtext}</Text> : null}
     {children}
   </View>
-);
+  );
+};
 
 /** Uppercase micro-label over a mono value; `wide` = full-row tile. */
 export const MetaTile: React.FC<{
@@ -53,8 +57,10 @@ export const MetaTile: React.FC<{
   value: string;
   wide?: boolean;
   tone?: 'default' | 'danger' | 'accent';
-}> = ({ label, value, wide = false, tone = 'default' }) => (
-  <View style={[s.metaTile, wide && s.metaTileWide]}>
+}> = ({ label, value, wide = false, tone = 'default' }) => {
+  const s = useThemedStyles(createStyles);
+  return (
+    <View style={[s.metaTile, wide && s.metaTileWide]}>
     <Text style={s.metaLabel}>{label}</Text>
     <Text
       style={[s.metaValue, tone === 'danger' && s.metaValueDanger, tone === 'accent' && s.metaValueAccent]}
@@ -63,29 +69,36 @@ export const MetaTile: React.FC<{
       {value}
     </Text>
   </View>
-);
+  );
+};
 
 /** Label-left / mono-right reading row (two-register law: statutory constants stay mono). */
 export const ReadingRow: React.FC<{ label: string; value: string; valueColor?: string }> = ({
   label,
   value,
   valueColor,
-}) => (
-  <View style={s.readingRow}>
+}) => {
+  const s = useThemedStyles(createStyles);
+  return (
+    <View style={s.readingRow}>
     <Text style={s.readingLabel} numberOfLines={2}>
       {label}
     </Text>
     <Text style={[s.readingValue, valueColor ? { color: valueColor } : null]}>{value}</Text>
   </View>
-);
+  );
+};
 
 /** White pill inside a state banner: micro-label + bold mono value. */
-export const BannerPill: React.FC<{ label: string; value: string; tint: string }> = ({ label, value, tint }) => (
+export const BannerPill: React.FC<{ label: string; value: string; tint: string }> = ({ label, value, tint }) => {
+  const s = useThemedStyles(createStyles);
+  return (
   <View style={s.pill}>
     <Text style={s.pillLabel}>{label}</Text>
     <Text style={[s.pillValue, { color: tint }]}>{value}</Text>
   </View>
-);
+  );
+};
 
 /** Tri-modal semantic banner: colored surface + border + icon circle + text title. */
 export const StateBanner: React.FC<{
@@ -96,6 +109,9 @@ export const StateBanner: React.FC<{
   citation?: string;
   children?: React.ReactNode;
 }> = ({ tone, icon, eyebrow, title, citation, children }) => {
+  const { theme } = useAppTheme();
+  const T = theme.colors;
+  const s = useThemedStyles(createStyles);
   const toneStyle =
     tone === 'success'
       ? { bg: T.successSurface, border: T.successBorder, text: T.successText, iconBg: T.successBorder }
@@ -112,7 +128,7 @@ export const StateBanner: React.FC<{
     >
       <View style={s.bannerHeaderRow}>
         <View style={[s.bannerIconCircle, { backgroundColor: toneStyle.iconBg }]}>
-          <Icon name={icon} size={18} color="#FFFFFF" strokeWidth={2.5} />
+          <Icon name={icon} size={18} color={T.textInverse} strokeWidth={2.5} />
         </View>
         <View style={s.bannerTitleContainer}>
           <Text style={[s.bannerEyebrow, { color: toneStyle.text }]}>{eyebrow}</Text>
@@ -127,6 +143,9 @@ export const StateBanner: React.FC<{
 
 /** Outcome tag: semantic color + icon + short text label (never substance identity). */
 export const OutcomeTag: React.FC<{ kind: PresumptiveOutcomeKind }> = ({ kind }) => {
+  const { theme } = useAppTheme();
+  const T = theme.colors;
+  const s = useThemedStyles(createStyles);
   if (kind === 'CONSISTENT_WITH_REAGENT_POSITIVE') {
     return (
       <View style={[s.outcomeTag, s.outcomeTagPositive]}>
@@ -153,6 +172,9 @@ export const OutcomeTag: React.FC<{ kind: PresumptiveOutcomeKind }> = ({ kind })
 
 /** Calibration gate badge: GOOD green / DEGRADED amber / REJECT red. */
 export const GradeBadge: React.FC<{ grade: 'GOOD' | 'DEGRADED' | 'REJECT' }> = ({ grade }) => {
+  const { theme } = useAppTheme();
+  const T = theme.colors;
+  const s = useThemedStyles(createStyles);
   const tone =
     grade === 'GOOD'
       ? { bg: T.successSurface, border: T.successBorder, text: T.successText, icon: 'check' as IconName }
@@ -168,7 +190,11 @@ export const GradeBadge: React.FC<{ grade: 'GOOD' | 'DEGRADED' | 'REJECT' }> = (
 };
 
 /** Light wizard stepper (Setup · Capture · Analyze · Outcome …). */
-export const LightStepper: React.FC<{ steps: readonly string[]; current: number }> = ({ steps, current }) => (
+export const LightStepper: React.FC<{ steps: readonly string[]; current: number }> = ({ steps, current }) => {
+  const { theme } = useAppTheme();
+  const T = theme.colors;
+  const s = useThemedStyles(createStyles);
+  return (
   <View style={s.stepperRow} accessibilityLabel={`Wizard progress: step ${current + 1} of ${steps.length}`}>
     {steps.map((label, i) => {
       const done = i < current;
@@ -177,7 +203,7 @@ export const LightStepper: React.FC<{ steps: readonly string[]; current: number 
         <View key={label} style={s.stepperItem}>
           <View style={[s.stepperCircle, done && s.stepperCircleDone, active && s.stepperCircleActive]}>
             {done ? (
-              <Icon name="check" size={12} color="#FFFFFF" strokeWidth={3} />
+              <Icon name="check" size={12} color={T.onAccent} strokeWidth={3} />
             ) : (
               <Text style={[s.stepperIndex, active && s.stepperIndexActive]}>{i + 1}</Text>
             )}
@@ -190,10 +216,12 @@ export const LightStepper: React.FC<{ steps: readonly string[]; current: number 
       );
     })}
   </View>
-);
+  );
+};
 
 /** Measured colour on the fixed neutral colorimeter plate (presentation-only, never themed). */
 export const LightSwatch: React.FC<{ lab: LabValue; size?: number }> = ({ lab, size = 56 }) => {
+  const s = useThemedStyles(createStyles);
   const hex = labToHex(lab);
   return (
     <View style={s.swatchCol} accessibilityLabel={`Measured reagent colour patch ${hex}`}>
@@ -208,6 +236,9 @@ export const LightSwatch: React.FC<{ lab: LabValue; size?: number }> = ({ lab, s
 
 /** ΔE(t) kinetics in light evidentiary style: navy trace, amber 3.0 reaction gate. */
 export const LightKineticsChart: React.FC<{ points: KineticPoint[]; width?: number }> = ({ points, width = 312 }) => {
+  const { theme } = useAppTheme();
+  const T = theme.colors;
+  const s = useThemedStyles(createStyles);
   const H = 96;
   const PAD = { top: 8, right: 10, bottom: 8, left: 10 };
   const geom = useMemo(() => {
@@ -238,7 +269,7 @@ export const LightKineticsChart: React.FC<{ points: KineticPoint[]; width?: numb
             strokeDasharray="5 4"
           />
           <Polyline points={geom.line} fill="none" stroke={T.accent} strokeWidth={2.5} />
-          <Circle cx={geom.x(last.t_ms)} cy={geom.y(last.delta_e)} r={4} fill={T.accent} stroke="#FFFFFF" strokeWidth={1.5} />
+          <Circle cx={geom.x(last.t_ms)} cy={geom.y(last.delta_e)} r={4} fill={T.accent} stroke={T.surface} strokeWidth={1.5} />
         </Svg>
       </View>
       <View style={s.chartLegendRow}>
@@ -258,9 +289,10 @@ export const LightKineticsChart: React.FC<{ points: KineticPoint[]; width?: numb
 };
 
 /** Dark fixed terminal surface for tenderable monospace text — never themed. */
-export const TerminalBox: React.FC<{ children: React.ReactNode; style?: object }> = ({ children, style }) => (
-  <View style={[s.terminalBox, style]}>{children}</View>
-);
+export const TerminalBox: React.FC<{ children: React.ReactNode; style?: object }> = ({ children, style }) => {
+  const s = useThemedStyles(createStyles);
+  return <View style={[s.terminalBox, style]}>{children}</View>;
+};
 
 /** Label + selectable mono value inside a TerminalBox. */
 export const TerminalField: React.FC<{ label: string; value: string; gap?: boolean; lines?: number }> = ({
@@ -268,18 +300,24 @@ export const TerminalField: React.FC<{ label: string; value: string; gap?: boole
   value,
   gap = false,
   lines = 4,
-}) => (
-  <View>
+}) => {
+  const s = useThemedStyles(createStyles);
+  return (
+    <View>
     <Text style={[s.terminalLabel, gap && s.terminalLabelGap]}>{label}</Text>
     <Text style={s.terminalValue} selectable numberOfLines={lines}>
       {value}
     </Text>
   </View>
-);
+  );
+};
 
 /* ------------------------------ styles ------------------------------ */
 
-const s = StyleSheet.create({
+const createStyles = (theme: Theme) => {
+  const T = theme.colors;
+  const evidenceMono = theme.fontFamily.mono;
+  return StyleSheet.create({
   card: {
     backgroundColor: T.card,
     borderRadius: 8,
@@ -364,9 +402,9 @@ const s = StyleSheet.create({
   },
 
   pill: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: T.surface,
     borderWidth: 1,
-    borderColor: 'rgba(15, 23, 42, 0.18)',
+    borderColor: T.border,
   },
   pillLabel: { fontSize: 10, fontWeight: '600', color: T.textSecondary },
   pillValue: { fontSize: 11, fontWeight: '700', fontFamily: evidenceMono },
@@ -491,7 +529,7 @@ const s = StyleSheet.create({
   terminalLabel: {
     fontSize: 9,
     fontWeight: '700',
-    color: '#94A3B8', // Slate 400 on dark — mono micro metadata label
+    color: T.terminalMuted,
     letterSpacing: 0.8,
   },
   terminalLabelGap: { marginTop: 10 },
@@ -502,4 +540,5 @@ const s = StyleSheet.create({
     lineHeight: 18,
     marginTop: 2,
   },
-});
+  });
+};

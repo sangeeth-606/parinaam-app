@@ -7,7 +7,7 @@
  * - In-app statutory banner retired (owner decision 2026-09-16; AGENTS.md rule 3)
  *
  * Design Language:
- * - WCAG AAA contrast light theme (contrast ratios >= 7:1 for normal text, >= 4.5:1 for bold/large)
+ * - WCAG AAA contrast, light and dark palettes (contrast ratios >= 7:1 for normal text, >= 4.5:1 for bold/large)
  * - Evidentiary review structure (not a retail/shopping table)
  * - Large touch targets (>= 48x48 dp)
  * - Compact technical metadata with tabular monospace typography
@@ -19,7 +19,6 @@
 import React, { useMemo, useState } from 'react';
 import {
   ScrollView,
-  StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -39,12 +38,10 @@ import {
 import { deltaE00 } from '../colour/delta-e';
 import { formatIst, OFFICER_READING_SHORT, REAGENT_LABEL } from '../domain/outcome-copy';
 import type { PresumptiveOutcomeKind, ReagentType } from '../types/domain';
-import { evidenceTheme } from '../theme/evidence';
+import { useAppTheme, useThemedStyles } from '../theme/theme-context';
+import type { Theme } from '../theme';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
-
-/** High-contrast evidentiary light theme tokens (WCAG AAA) — shared via theme/evidence. */
-const lightTheme = evidenceTheme;
 
 interface EvaluatedPair {
   pkgA: string;
@@ -54,6 +51,9 @@ interface EvaluatedPair {
 }
 
 export const BunchingScreen: React.FC = () => {
+  const { theme } = useAppTheme();
+  const T = theme.colors;
+  const styles = useThemedStyles(createStyles);
   const navigation = useNavigation<Nav>();
   const route = useRoute();
   const focusUuid = (route.params as { focusUuid?: string } | undefined)?.focusUuid;
@@ -63,7 +63,6 @@ export const BunchingScreen: React.FC = () => {
   const [selectedCase, setSelectedCase] = useState<string | null>(null);
   const [excludedPackageIds, setExcludedPackageIds] = useState<Record<string, boolean>>({});
   const [showAllPairs, setShowAllPairs] = useState(false);
-  const [certCopied, setCertCopied] = useState(false);
   const [activePreset, setActivePreset] = useState<'real' | 'highDeltaE' | 'multiLot'>('real');
 
   // Group ledger records by case reference
@@ -109,9 +108,12 @@ export const BunchingScreen: React.FC = () => {
           payloadSha256: 'sha-sim-1',
           prevHash: '0000',
           chainHash: 'hash-sim-1',
-          deviceAttestation: 'StrongBox Hardware Keystore',
-          sealState: 'ATTESTED',
-          syncStatus: 'synced',
+          // Synthetic scenario row: it has no device seal and was never uploaded.
+          // Claiming StrongBox/ATTESTED/SYNCED here fabricated hardware security
+          // evidence that no device produced (AGENTS hard constraint 10).
+          deviceAttestation: null,
+          sealState: 'UNATTESTED',
+          syncStatus: 'demo-seed',
         },
         {
           seq: 2,
@@ -131,9 +133,12 @@ export const BunchingScreen: React.FC = () => {
           payloadSha256: 'sha-sim-2',
           prevHash: 'hash-sim-1',
           chainHash: 'hash-sim-2',
-          deviceAttestation: 'StrongBox Hardware Keystore',
-          sealState: 'ATTESTED',
-          syncStatus: 'synced',
+          // Synthetic scenario row: it has no device seal and was never uploaded.
+          // Claiming StrongBox/ATTESTED/SYNCED here fabricated hardware security
+          // evidence that no device produced (AGENTS hard constraint 10).
+          deviceAttestation: null,
+          sealState: 'UNATTESTED',
+          syncStatus: 'demo-seed',
         },
         {
           seq: 3,
@@ -153,9 +158,12 @@ export const BunchingScreen: React.FC = () => {
           payloadSha256: 'sha-sim-3',
           prevHash: 'hash-sim-2',
           chainHash: 'hash-sim-3',
-          deviceAttestation: 'StrongBox Hardware Keystore',
-          sealState: 'ATTESTED',
-          syncStatus: 'synced',
+          // Synthetic scenario row: it has no device seal and was never uploaded.
+          // Claiming StrongBox/ATTESTED/SYNCED here fabricated hardware security
+          // evidence that no device produced (AGENTS hard constraint 10).
+          deviceAttestation: null,
+          sealState: 'UNATTESTED',
+          syncStatus: 'demo-seed',
         },
       ];
     }
@@ -186,9 +194,10 @@ export const BunchingScreen: React.FC = () => {
           payloadSha256: `sha-multi-${num}`,
           prevHash: '0000',
           chainHash: `hash-multi-${num}`,
-          deviceAttestation: 'StrongBox Hardware Keystore',
-          sealState: 'ATTESTED' as const,
-          syncStatus: 'synced' as const,
+          // Synthetic scenario row: no device seal, never uploaded (see above).
+          deviceAttestation: null,
+          sealState: 'UNATTESTED' as const,
+          syncStatus: 'demo-seed' as const,
         };
       });
     }
@@ -331,18 +340,12 @@ export const BunchingScreen: React.FC = () => {
     }));
   };
 
-  const handleCopyCertificate = () => {
-    setCertCopied(true);
-    setTimeout(() => setCertCopied(false), 2500);
-  };
-
   const visiblePairs = showAllPairs
     ? pairwiseAnalysis.pairs
     : pairwiseAnalysis.pairs.slice(0, 8);
 
   return (
     <View style={styles.screen}>
-      <StatusBar barStyle="dark-content" />
 
       {/* Official Evidentiary Header */}
       <View style={styles.header}>
@@ -353,7 +356,7 @@ export const BunchingScreen: React.FC = () => {
             accessibilityRole="button"
             accessibilityLabel="Return to previous screen"
           >
-            <Icon name="chevronLeft" size={22} color={lightTheme.textPrimary} strokeWidth={2.5} />
+            <Icon name="chevronLeft" size={22} color={T.textPrimary} strokeWidth={2.5} />
             <Text style={styles.backBtnText}>Back</Text>
           </TouchableOpacity>
 
@@ -382,6 +385,19 @@ export const BunchingScreen: React.FC = () => {
             Rule 10(2) compares packages seized within the same seizure event to determine whether
             presumptive findings are identical before lot formation.
           </Text>
+
+          {/* Any preset that is not a real case record is SYNTHETIC. The certificate below
+              quotes whatever is selected, so the screen must say which one it is. */}
+          {activePreset !== 'real' ? (
+            <View style={styles.simBanner} accessibilityRole="alert">
+              <Icon name="alert" size={15} color={T.dangerText} strokeWidth={2.4} />
+              <Text style={styles.simBannerText}>
+                SIMULATED DATA — these packages were generated in-app to stress-test the Rule 10(2)
+                logic. They were never seized, never measured, and carry no device seal. The
+                determination below is a demonstration, not a statutory certificate.
+              </Text>
+            </View>
+          ) : null}
 
           {/* Quick Scenario Buttons for Immediate Review */}
           <Text style={styles.sectionMicroHeader}>EVALUATION PRESETS</Text>
@@ -539,7 +555,7 @@ export const BunchingScreen: React.FC = () => {
           <View style={styles.confirmedBanner} accessibilityRole="alert">
             <View style={styles.bannerHeaderRow}>
               <View style={styles.successIconCircle}>
-                <Icon name="check" size={20} color="#FFFFFF" strokeWidth={3} />
+                <Icon name="check" size={20} color={T.onAccent} strokeWidth={3} />
               </View>
               <View style={styles.bannerTitleContainer}>
                 <Text style={styles.confirmedTitle}>
@@ -580,7 +596,7 @@ export const BunchingScreen: React.FC = () => {
           <View style={styles.refusedBanner} accessibilityRole="alert">
             <View style={styles.bannerHeaderRow}>
               <View style={styles.dangerIconCircle}>
-                <Icon name="close" size={20} color="#FFFFFF" strokeWidth={3} />
+                <Icon name="close" size={20} color={T.onAccent} strokeWidth={3} />
               </View>
               <View style={styles.bannerTitleContainer}>
                 <Text style={styles.refusedTitle}>
@@ -652,17 +668,17 @@ export const BunchingScreen: React.FC = () => {
                   <View style={styles.pkgTopRow}>
                     <View style={styles.pkgIdentity}>
                       <View style={[styles.checkboxBox, !isExcluded && styles.checkboxBoxChecked]}>
-                        {!isExcluded && <Icon name="check" size={14} color="#FFFFFF" strokeWidth={3} />}
+                        {!isExcluded && <Icon name="check" size={14} color={T.onAccent} strokeWidth={3} />}
                       </View>
                       <Text style={styles.pkgNoText}>{pkg.package_no}</Text>
                       <Text style={styles.pkgCaseRef}>{pkg.case_ref}</Text>
                     </View>
 
-                    {/* Seal Status Pill */}
+                    {/* Seal Status Pill — a real seal only when a device produced one. */}
                     <View style={styles.sealPill}>
-                      <Icon name="shield" size={12} color={lightTheme.textSecondary} strokeWidth={2.2} />
+                      <Icon name="shield" size={12} color={T.textSecondary} strokeWidth={2.2} />
                       <Text style={styles.sealPillText}>
-                        {pkg.deviceAttestation ? 'Attested' : 'Chain Sealed'}
+                        {pkg.deviceAttestation ? 'Attested' : 'Chain Sealed · No Device Seal'}
                       </Text>
                     </View>
                   </View>
@@ -684,10 +700,10 @@ export const BunchingScreen: React.FC = () => {
                         size={14}
                         color={
                           isConsistentPositive
-                            ? lightTheme.successText
+                            ? T.successText
                             : isInconclusive
-                            ? lightTheme.marginalText
-                            : lightTheme.textSecondary
+                            ? T.marginalText
+                            : T.textSecondary
                         }
                         strokeWidth={2.4}
                       />
@@ -764,15 +780,15 @@ export const BunchingScreen: React.FC = () => {
           {/* Matrix Threshold Legend */}
           <View style={styles.legendRow}>
             <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: lightTheme.successBorder }]} />
+              <View style={[styles.legendDot, { backgroundColor: T.successBorder }]} />
               <Text style={styles.legendText}>Identical (&lt; 5)</Text>
             </View>
             <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: lightTheme.marginalBorder }]} />
+              <View style={[styles.legendDot, { backgroundColor: T.marginalBorder }]} />
               <Text style={styles.legendText}>Marginal (5–15)</Text>
             </View>
             <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: lightTheme.dangerBorder }]} />
+              <View style={[styles.legendDot, { backgroundColor: T.dangerBorder }]} />
               <Text style={styles.legendText}>Different (&gt; 15)</Text>
             </View>
           </View>
@@ -803,7 +819,7 @@ export const BunchingScreen: React.FC = () => {
                   <View key={`${pair.pkgA}-${pair.pkgB}`} style={styles.tableRow}>
                     <View style={[styles.tableCellCol, { flex: 2 }]}>
                       <Text style={styles.pairNames}>
-                        {pair.pkgA} <Text style={{ color: lightTheme.textMuted }}>↔</Text> {pair.pkgB}
+                        {pair.pkgA} <Text style={{ color: T.textMuted }}>↔</Text> {pair.pkgB}
                       </Text>
                     </View>
 
@@ -827,10 +843,10 @@ export const BunchingScreen: React.FC = () => {
                           size={12}
                           color={
                             isIdentical
-                              ? lightTheme.successText
+                              ? T.successText
                               : isMarginal
-                              ? lightTheme.marginalText
-                              : lightTheme.dangerText
+                              ? T.marginalText
+                              : T.dangerText
                           }
                           strokeWidth={2.4}
                         />
@@ -864,13 +880,13 @@ export const BunchingScreen: React.FC = () => {
               Total Pairs: <Text style={styles.matrixStatBold}>{pairwiseAnalysis.pairs.length}</Text>
             </Text>
             <Text style={styles.matrixStatText}>
-              Identical: <Text style={[styles.matrixStatBold, { color: lightTheme.successText }]}>{pairwiseAnalysis.countIdentical}</Text>
+              Identical: <Text style={[styles.matrixStatBold, { color: T.successText }]}>{pairwiseAnalysis.countIdentical}</Text>
             </Text>
             <Text style={styles.matrixStatText}>
-              Marginal: <Text style={[styles.matrixStatBold, { color: lightTheme.marginalText }]}>{pairwiseAnalysis.countMarginal}</Text>
+              Marginal: <Text style={[styles.matrixStatBold, { color: T.marginalText }]}>{pairwiseAnalysis.countMarginal}</Text>
             </Text>
             <Text style={styles.matrixStatText}>
-              Different: <Text style={[styles.matrixStatBold, { color: lightTheme.dangerText }]}>{pairwiseAnalysis.countDifferent}</Text>
+              Different: <Text style={[styles.matrixStatBold, { color: T.dangerText }]}>{pairwiseAnalysis.countDifferent}</Text>
             </Text>
           </View>
         </View>
@@ -925,7 +941,7 @@ export const BunchingScreen: React.FC = () => {
                   </View>
 
                   <View style={styles.sampleDrawFoot}>
-                    <Icon name="package" size={14} color={lightTheme.textSecondary} />
+                    <Icon name="package" size={14} color={T.textSecondary} />
                     <Text style={styles.sampleDrawText}>
                       Rule 11 Minimum Draw:{' '}
                       <Text style={styles.sampleDrawBold}>
@@ -941,7 +957,7 @@ export const BunchingScreen: React.FC = () => {
               {engineDetermination.unbunchedPackages.length > 0 && (
                 <View style={styles.remainderNoticeCard}>
                   <View style={styles.remainderNoticeHeader}>
-                    <Icon name="alert" size={18} color={lightTheme.marginalText} />
+                    <Icon name="alert" size={18} color={T.marginalText} />
                     <Text style={styles.remainderNoticeTitle}>
                       Unbunched Remainder Packages ({engineDetermination.unbunchedPackages.length})
                     </Text>
@@ -958,7 +974,7 @@ export const BunchingScreen: React.FC = () => {
           ) : (
             <View style={styles.refusedAllocationCard}>
               <View style={styles.refusedAllocHeader}>
-                <Icon name="close" size={18} color={lightTheme.dangerText} />
+                <Icon name="close" size={18} color={T.dangerText} />
                 <Text style={styles.refusedAllocTitle}>No Composite Lots Formed</Text>
               </View>
               <Text style={styles.refusedAllocBody}>
@@ -987,15 +1003,14 @@ export const BunchingScreen: React.FC = () => {
               <Text style={styles.cardEyebrow}>EVIDENTIARY RECORD</Text>
               <Text style={styles.cardHeading}>Formal Determination Certificate</Text>
             </View>
-            <TouchableOpacity
-              style={styles.copyBtn}
-              onPress={handleCopyCertificate}
-              accessibilityRole="button"
-              accessibilityLabel="Copy formal determination text"
-            >
-              <Icon name={certCopied ? 'check' : 'document'} size={15} color={lightTheme.accent} />
-              <Text style={styles.copyBtnText}>{certCopied ? 'Copied' : 'Copy Text'}</Text>
-            </TouchableOpacity>
+            {/* The previous "Copy Text" button set a "Copied" label and copied nothing:
+                no Clipboard module is available to this build. The text below is native
+                `selectable`, so long-press → Copy works for real, and the UI no longer
+                claims an action it cannot perform. */}
+            <View style={styles.copyHint}>
+              <Icon name="document" size={15} color={T.textMuted} strokeWidth={2.2} />
+              <Text style={styles.copyHintText}>Long-press the text to copy</Text>
+            </View>
           </View>
 
           <Text style={styles.cardSubtext}>
@@ -1014,18 +1029,20 @@ export const BunchingScreen: React.FC = () => {
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => {
+  const T = theme.colors;
+  return StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: lightTheme.canvas,
+    backgroundColor: T.canvas,
   },
   header: {
-    backgroundColor: lightTheme.card,
+    backgroundColor: T.card,
     paddingHorizontal: 16,
     paddingTop: 48,
     paddingBottom: 16,
     borderBottomWidth: 1,
-    borderBottomColor: lightTheme.border,
+    borderBottomColor: T.border,
   },
   headerTop: {
     flexDirection: 'row',
@@ -1045,33 +1062,33 @@ const styles = StyleSheet.create({
   backBtnText: {
     fontSize: 15,
     fontWeight: '600',
-    color: lightTheme.textPrimary,
+    color: T.textPrimary,
     marginLeft: 4,
   },
   statutoryTag: {
-    backgroundColor: lightTheme.cardSubtle,
+    backgroundColor: T.cardSubtle,
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 4,
     borderWidth: 1,
-    borderColor: lightTheme.border,
+    borderColor: T.border,
   },
   statutoryTagText: {
     fontSize: 11,
     fontWeight: '700',
-    color: lightTheme.textSecondary,
+    color: T.textSecondary,
     letterSpacing: 0.6,
   },
   screenTitle: {
     fontSize: 22,
     fontWeight: '700',
-    color: lightTheme.textPrimary,
+    color: T.textPrimary,
     letterSpacing: -0.2,
   },
   statutoryCitation: {
     fontSize: 12,
     fontWeight: '500',
-    color: lightTheme.textSecondary,
+    color: T.textSecondary,
     marginTop: 4,
     lineHeight: 17,
   },
@@ -1086,10 +1103,10 @@ const styles = StyleSheet.create({
 
   // Generic Card
   card: {
-    backgroundColor: lightTheme.card,
+    backgroundColor: T.card,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: lightTheme.border,
+    borderColor: T.border,
     padding: 16,
   },
   cardHeaderRow: {
@@ -1101,19 +1118,19 @@ const styles = StyleSheet.create({
   cardEyebrow: {
     fontSize: 11,
     fontWeight: '700',
-    color: lightTheme.textMuted,
+    color: T.textMuted,
     letterSpacing: 0.8,
     textTransform: 'uppercase',
   },
   cardHeading: {
     fontSize: 17,
     fontWeight: '700',
-    color: lightTheme.textPrimary,
+    color: T.textPrimary,
     marginTop: 2,
   },
   cardSubtext: {
     fontSize: 13,
-    color: lightTheme.textSecondary,
+    color: T.textSecondary,
     lineHeight: 19,
     marginTop: 4,
     marginBottom: 12,
@@ -1121,7 +1138,7 @@ const styles = StyleSheet.create({
   sectionMicroHeader: {
     fontSize: 11,
     fontWeight: '700',
-    color: lightTheme.textMuted,
+    color: T.textMuted,
     letterSpacing: 0.8,
     marginTop: 6,
     marginBottom: 8,
@@ -1136,25 +1153,25 @@ const styles = StyleSheet.create({
   presetBtn: {
     flex: 1,
     minHeight: 48,
-    backgroundColor: lightTheme.cardSubtle,
+    backgroundColor: T.cardSubtle,
     borderWidth: 1,
-    borderColor: lightTheme.border,
+    borderColor: T.border,
     borderRadius: 6,
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 10,
   },
   presetBtnActive: {
-    backgroundColor: lightTheme.accent,
-    borderColor: lightTheme.accent,
+    backgroundColor: T.accent,
+    borderColor: T.accent,
   },
   presetBtnText: {
     fontSize: 13,
     fontWeight: '600',
-    color: lightTheme.textPrimary,
+    color: T.textPrimary,
   },
   presetBtnTextActive: {
-    color: '#FFFFFF',
+    color: T.onAccent,
   },
 
   // Category Toggle
@@ -1165,49 +1182,49 @@ const styles = StyleSheet.create({
   categoryToggleBtn: {
     flex: 1,
     minHeight: 52,
-    backgroundColor: lightTheme.cardSubtle,
+    backgroundColor: T.cardSubtle,
     borderWidth: 1,
-    borderColor: lightTheme.border,
+    borderColor: T.border,
     borderRadius: 6,
     paddingVertical: 8,
     paddingHorizontal: 10,
     justifyContent: 'center',
   },
   categoryToggleBtnActive: {
-    backgroundColor: lightTheme.accentSurface,
-    borderColor: lightTheme.accent,
+    backgroundColor: T.accentSurface,
+    borderColor: T.accent,
     borderWidth: 2,
   },
   categoryToggleTitle: {
     fontSize: 13,
     fontWeight: '700',
-    color: lightTheme.textPrimary,
+    color: T.textPrimary,
   },
   categoryToggleTitleActive: {
-    color: lightTheme.accent,
+    color: T.accent,
   },
   categoryToggleSub: {
     fontSize: 11,
     fontWeight: '500',
-    color: lightTheme.textSecondary,
+    color: T.textSecondary,
     marginTop: 2,
   },
   categoryToggleSubActive: {
-    color: lightTheme.accent,
+    color: T.accent,
   },
 
   // Primary Banners (Clear States)
   confirmedBanner: {
-    backgroundColor: lightTheme.successSurface,
+    backgroundColor: T.successSurface,
     borderWidth: 2,
-    borderColor: lightTheme.successBorder,
+    borderColor: T.successBorder,
     borderRadius: 8,
     padding: 16,
   },
   refusedBanner: {
-    backgroundColor: lightTheme.dangerSurface,
+    backgroundColor: T.dangerSurface,
     borderWidth: 2,
-    borderColor: lightTheme.dangerBorder,
+    borderColor: T.dangerBorder,
     borderRadius: 8,
     padding: 16,
   },
@@ -1223,7 +1240,7 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: lightTheme.successBorder,
+    backgroundColor: T.successBorder,
     justifyContent: 'center',
     alignItems: 'center',
     marginTop: 2,
@@ -1232,7 +1249,7 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: lightTheme.dangerBorder,
+    backgroundColor: T.dangerBorder,
     justifyContent: 'center',
     alignItems: 'center',
     marginTop: 2,
@@ -1240,18 +1257,18 @@ const styles = StyleSheet.create({
   confirmedTitle: {
     fontSize: 16,
     fontWeight: '700',
-    color: lightTheme.successText,
+    color: T.successText,
     lineHeight: 22,
   },
   confirmedCitation: {
     fontSize: 12,
     fontWeight: '600',
-    color: lightTheme.successText,
+    color: T.successText,
     marginTop: 2,
   },
   confirmedBodyText: {
     fontSize: 13,
-    color: lightTheme.successText,
+    color: T.successText,
     lineHeight: 19,
     marginTop: 10,
   },
@@ -1262,12 +1279,12 @@ const styles = StyleSheet.create({
     marginTop: 12,
     paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(22, 163, 74, 0.25)',
+    borderTopColor: T.successBorder,
   },
   summaryPill: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: T.surface,
     borderWidth: 1,
-    borderColor: 'rgba(22, 163, 74, 0.4)',
+    borderColor: T.successBorder,
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 4,
@@ -1277,12 +1294,12 @@ const styles = StyleSheet.create({
   },
   summaryPillLabel: {
     fontSize: 11,
-    color: lightTheme.textSecondary,
+    color: T.textSecondary,
     fontWeight: '500',
   },
   summaryPillValue: {
     fontSize: 11,
-    color: lightTheme.successText,
+    color: T.successText,
     fontWeight: '700',
     fontFamily: 'monospace',
   },
@@ -1290,33 +1307,33 @@ const styles = StyleSheet.create({
   refusedTitle: {
     fontSize: 16,
     fontWeight: '700',
-    color: lightTheme.dangerText,
+    color: T.dangerText,
     lineHeight: 22,
   },
   refusedCitation: {
     fontSize: 12,
     fontWeight: '600',
-    color: lightTheme.dangerText,
+    color: T.dangerText,
     marginTop: 2,
   },
   refusedBodyText: {
     fontSize: 13,
-    color: lightTheme.dangerText,
+    color: T.dangerText,
     lineHeight: 19,
     marginTop: 10,
   },
   reasonsContainer: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: T.surface,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: 'rgba(220, 38, 38, 0.3)',
+    borderColor: T.dangerBorder,
     padding: 12,
     marginTop: 12,
   },
   reasonsTitle: {
     fontSize: 11,
     fontWeight: '700',
-    color: lightTheme.dangerText,
+    color: T.dangerText,
     letterSpacing: 0.6,
     marginBottom: 6,
   },
@@ -1329,22 +1346,22 @@ const styles = StyleSheet.create({
   reasonBullet: {
     fontSize: 14,
     fontWeight: '700',
-    color: lightTheme.dangerText,
+    color: T.dangerText,
     lineHeight: 18,
   },
   reasonText: {
     flex: 1,
     fontSize: 12,
     fontWeight: '500',
-    color: lightTheme.textPrimary,
+    color: T.textPrimary,
     lineHeight: 18,
   },
 
   // Package Card in Comparison List
   badgeNeutral: {
-    backgroundColor: lightTheme.cardSubtle,
+    backgroundColor: T.cardSubtle,
     borderWidth: 1,
-    borderColor: lightTheme.border,
+    borderColor: T.border,
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 4,
@@ -1352,21 +1369,21 @@ const styles = StyleSheet.create({
   badgeNeutralText: {
     fontSize: 11,
     fontWeight: '600',
-    color: lightTheme.textSecondary,
+    color: T.textSecondary,
   },
   packageListContainer: {
     gap: 10,
   },
   packageCard: {
-    backgroundColor: lightTheme.card,
+    backgroundColor: T.card,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: lightTheme.border,
+    borderColor: T.border,
     padding: 12,
   },
   packageCardExcluded: {
     opacity: 0.5,
-    backgroundColor: lightTheme.cardSubtle,
+    backgroundColor: T.cardSubtle,
   },
   pkgTopRow: {
     flexDirection: 'row',
@@ -1384,33 +1401,33 @@ const styles = StyleSheet.create({
     height: 24,
     borderRadius: 4,
     borderWidth: 2,
-    borderColor: lightTheme.borderStrong,
+    borderColor: T.borderStrong,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: T.surface,
   },
   checkboxBoxChecked: {
-    backgroundColor: lightTheme.accent,
-    borderColor: lightTheme.accent,
+    backgroundColor: T.accent,
+    borderColor: T.accent,
   },
   pkgNoText: {
     fontSize: 15,
     fontWeight: '700',
-    color: lightTheme.textPrimary,
+    color: T.textPrimary,
     fontFamily: 'monospace',
   },
   pkgCaseRef: {
     fontSize: 12,
-    color: lightTheme.textSecondary,
+    color: T.textSecondary,
     fontWeight: '500',
   },
   sealPill: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: lightTheme.cardSubtle,
+    backgroundColor: T.cardSubtle,
     borderWidth: 1,
-    borderColor: lightTheme.border,
+    borderColor: T.border,
     paddingHorizontal: 6,
     paddingVertical: 3,
     borderRadius: 4,
@@ -1418,8 +1435,20 @@ const styles = StyleSheet.create({
   sealPillText: {
     fontSize: 11,
     fontWeight: '600',
-    color: lightTheme.textSecondary,
+    color: T.textSecondary,
   },
+  simBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: T.dangerSurface,
+    borderWidth: 1,
+    borderColor: T.dangerBorder,
+    borderRadius: 6,
+    padding: 10,
+    marginTop: 10,
+  },
+  simBannerText: { flex: 1, fontSize: 12, color: T.dangerText, lineHeight: 17 },
   pkgOutcomeRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1436,39 +1465,39 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   outcomeTagPositive: {
-    backgroundColor: lightTheme.successSurface,
-    borderColor: lightTheme.successBorder,
+    backgroundColor: T.successSurface,
+    borderColor: T.successBorder,
   },
   outcomeTagNegative: {
-    backgroundColor: lightTheme.cardSubtle,
-    borderColor: lightTheme.border,
+    backgroundColor: T.cardSubtle,
+    borderColor: T.border,
   },
   outcomeTagInconclusive: {
-    backgroundColor: lightTheme.marginalSurface,
-    borderColor: lightTheme.marginalBorder,
+    backgroundColor: T.marginalSurface,
+    borderColor: T.marginalBorder,
   },
   outcomeTagText: {
     fontSize: 12,
     fontWeight: '700',
   },
   outcomeTagTextPositive: {
-    color: lightTheme.successText,
+    color: T.successText,
   },
   outcomeTagTextNegative: {
-    color: lightTheme.textSecondary,
+    color: T.textSecondary,
   },
   outcomeTagTextInconclusive: {
-    color: lightTheme.marginalText,
+    color: T.marginalText,
   },
   reagentTag: {
     fontSize: 12,
     fontWeight: '600',
-    color: lightTheme.textSecondary,
+    color: T.textSecondary,
   },
   pkgMetaRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    backgroundColor: lightTheme.cardSubtle,
+    backgroundColor: T.cardSubtle,
     borderRadius: 4,
     padding: 8,
   },
@@ -1478,13 +1507,13 @@ const styles = StyleSheet.create({
   pkgMetaLabel: {
     fontSize: 9,
     fontWeight: '700',
-    color: lightTheme.textMuted,
+    color: T.textMuted,
     letterSpacing: 0.6,
   },
   pkgMetaVal: {
     fontSize: 11,
     fontWeight: '600',
-    color: lightTheme.textPrimary,
+    color: T.textPrimary,
     fontFamily: 'monospace',
   },
 
@@ -1498,7 +1527,7 @@ const styles = StyleSheet.create({
   expandBtnText: {
     fontSize: 13,
     fontWeight: '700',
-    color: lightTheme.accent,
+    color: T.accent,
   },
   legendRow: {
     flexDirection: 'row',
@@ -1506,7 +1535,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     paddingBottom: 8,
     borderBottomWidth: 1,
-    borderBottomColor: lightTheme.border,
+    borderBottomColor: T.border,
   },
   legendItem: {
     flexDirection: 'row',
@@ -1521,26 +1550,26 @@ const styles = StyleSheet.create({
   legendText: {
     fontSize: 11,
     fontWeight: '600',
-    color: lightTheme.textSecondary,
+    color: T.textSecondary,
   },
   table: {
     borderWidth: 1,
-    borderColor: lightTheme.border,
+    borderColor: T.border,
     borderRadius: 6,
     overflow: 'hidden',
   },
   tableHeaderRow: {
     flexDirection: 'row',
-    backgroundColor: lightTheme.cardSubtle,
+    backgroundColor: T.cardSubtle,
     paddingVertical: 10,
     paddingHorizontal: 12,
     borderBottomWidth: 1,
-    borderBottomColor: lightTheme.border,
+    borderBottomColor: T.border,
   },
   tableHeadCell: {
     fontSize: 10,
     fontWeight: '700',
-    color: lightTheme.textSecondary,
+    color: T.textSecondary,
     letterSpacing: 0.6,
   },
   tableRow: {
@@ -1549,8 +1578,8 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 12,
     borderBottomWidth: 1,
-    borderBottomColor: lightTheme.border,
-    backgroundColor: '#FFFFFF',
+    borderBottomColor: T.border,
+    backgroundColor: T.surface,
     minHeight: 48,
   },
   tableCellCol: {
@@ -1559,13 +1588,13 @@ const styles = StyleSheet.create({
   pairNames: {
     fontSize: 13,
     fontWeight: '700',
-    color: lightTheme.textPrimary,
+    color: T.textPrimary,
     fontFamily: 'monospace',
   },
   pairDeltaE: {
     fontSize: 13,
     fontWeight: '600',
-    color: lightTheme.textPrimary,
+    color: T.textPrimary,
     fontFamily: 'monospace',
   },
   pairEvalBadge: {
@@ -1578,29 +1607,29 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   pairEvalBadgeIdentical: {
-    backgroundColor: lightTheme.successSurface,
-    borderColor: lightTheme.successBorder,
+    backgroundColor: T.successSurface,
+    borderColor: T.successBorder,
   },
   pairEvalBadgeMarginal: {
-    backgroundColor: lightTheme.marginalSurface,
-    borderColor: lightTheme.marginalBorder,
+    backgroundColor: T.marginalSurface,
+    borderColor: T.marginalBorder,
   },
   pairEvalBadgeDifferent: {
-    backgroundColor: lightTheme.dangerSurface,
-    borderColor: lightTheme.dangerBorder,
+    backgroundColor: T.dangerSurface,
+    borderColor: T.dangerBorder,
   },
   pairEvalText: {
     fontSize: 11,
     fontWeight: '700',
   },
   pairEvalTextIdentical: {
-    color: lightTheme.successText,
+    color: T.successText,
   },
   pairEvalTextMarginal: {
-    color: lightTheme.marginalText,
+    color: T.marginalText,
   },
   pairEvalTextDifferent: {
-    color: lightTheme.dangerText,
+    color: T.dangerText,
   },
   emptyTableBox: {
     padding: 16,
@@ -1608,13 +1637,13 @@ const styles = StyleSheet.create({
   },
   emptyTableText: {
     fontSize: 12,
-    color: lightTheme.textSecondary,
+    color: T.textSecondary,
     fontStyle: 'italic',
   },
   matrixStatsFooter: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    backgroundColor: lightTheme.cardSubtle,
+    backgroundColor: T.cardSubtle,
     paddingVertical: 10,
     paddingHorizontal: 12,
     borderRadius: 4,
@@ -1622,12 +1651,12 @@ const styles = StyleSheet.create({
   },
   matrixStatText: {
     fontSize: 11,
-    color: lightTheme.textSecondary,
+    color: T.textSecondary,
   },
   matrixStatBold: {
     fontWeight: '700',
     fontFamily: 'monospace',
-    color: lightTheme.textPrimary,
+    color: T.textPrimary,
   },
 
   // Lot Allocation Cards
@@ -1635,10 +1664,10 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   lotAllocationCard: {
-    backgroundColor: lightTheme.cardSubtle,
+    backgroundColor: T.cardSubtle,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: lightTheme.border,
+    borderColor: T.border,
     padding: 14,
   },
   lotAllocationHeader: {
@@ -1655,16 +1684,16 @@ const styles = StyleSheet.create({
   lotTitleText: {
     fontSize: 16,
     fontWeight: '700',
-    color: lightTheme.textPrimary,
+    color: T.textPrimary,
   },
   lotPkgCountText: {
     fontSize: 12,
-    color: lightTheme.textSecondary,
+    color: T.textSecondary,
     fontWeight: '500',
   },
   standardLotBadge: {
-    backgroundColor: lightTheme.accentSurface,
-    borderColor: lightTheme.accent,
+    backgroundColor: T.accentSurface,
+    borderColor: T.accent,
     borderWidth: 1,
     paddingHorizontal: 6,
     paddingVertical: 3,
@@ -1673,11 +1702,11 @@ const styles = StyleSheet.create({
   standardLotBadgeText: {
     fontSize: 10,
     fontWeight: '700',
-    color: lightTheme.accent,
+    color: T.accent,
   },
   remainderBadge: {
-    backgroundColor: lightTheme.marginalSurface,
-    borderColor: lightTheme.marginalBorder,
+    backgroundColor: T.marginalSurface,
+    borderColor: T.marginalBorder,
     borderWidth: 1,
     paddingHorizontal: 6,
     paddingVertical: 3,
@@ -1686,27 +1715,27 @@ const styles = StyleSheet.create({
   remainderBadgeText: {
     fontSize: 10,
     fontWeight: '700',
-    color: lightTheme.marginalText,
+    color: T.marginalText,
   },
   lotPackagesBox: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: T.surface,
     borderRadius: 4,
     borderWidth: 1,
-    borderColor: lightTheme.border,
+    borderColor: T.border,
     padding: 10,
     marginBottom: 10,
   },
   lotPackagesLabel: {
     fontSize: 9,
     fontWeight: '700',
-    color: lightTheme.textMuted,
+    color: T.textMuted,
     letterSpacing: 0.6,
     marginBottom: 4,
   },
   lotPackagesList: {
     fontSize: 13,
     fontWeight: '700',
-    color: lightTheme.textPrimary,
+    color: T.textPrimary,
     fontFamily: 'monospace',
     lineHeight: 18,
   },
@@ -1717,23 +1746,23 @@ const styles = StyleSheet.create({
   },
   sampleItemBox: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: T.surface,
     borderRadius: 4,
     borderWidth: 1,
-    borderColor: lightTheme.border,
+    borderColor: T.border,
     padding: 10,
   },
   sampleItemLabel: {
     fontSize: 9,
     fontWeight: '700',
-    color: lightTheme.textMuted,
+    color: T.textMuted,
     letterSpacing: 0.6,
     marginBottom: 2,
   },
   sampleItemCode: {
     fontSize: 14,
     fontWeight: '700',
-    color: lightTheme.accent,
+    color: T.accent,
     fontFamily: 'monospace',
   },
   sampleDrawFoot: {
@@ -1743,16 +1772,16 @@ const styles = StyleSheet.create({
   },
   sampleDrawText: {
     fontSize: 12,
-    color: lightTheme.textSecondary,
+    color: T.textSecondary,
   },
   sampleDrawBold: {
     fontWeight: '700',
-    color: lightTheme.textPrimary,
+    color: T.textPrimary,
   },
   remainderNoticeCard: {
-    backgroundColor: lightTheme.marginalSurface,
+    backgroundColor: T.marginalSurface,
     borderWidth: 1,
-    borderColor: lightTheme.marginalBorder,
+    borderColor: T.marginalBorder,
     borderRadius: 6,
     padding: 12,
   },
@@ -1765,18 +1794,18 @@ const styles = StyleSheet.create({
   remainderNoticeTitle: {
     fontSize: 13,
     fontWeight: '700',
-    color: lightTheme.marginalText,
+    color: T.marginalText,
   },
   remainderNoticeBody: {
     fontSize: 12,
-    color: lightTheme.marginalText,
+    color: T.marginalText,
     lineHeight: 18,
   },
 
   refusedAllocationCard: {
-    backgroundColor: lightTheme.dangerSurface,
+    backgroundColor: T.dangerSurface,
     borderWidth: 1,
-    borderColor: lightTheme.dangerBorder,
+    borderColor: T.dangerBorder,
     borderRadius: 6,
     padding: 14,
   },
@@ -1789,11 +1818,11 @@ const styles = StyleSheet.create({
   refusedAllocTitle: {
     fontSize: 14,
     fontWeight: '700',
-    color: lightTheme.dangerText,
+    color: T.dangerText,
   },
   refusedAllocBody: {
     fontSize: 12,
-    color: lightTheme.dangerText,
+    color: T.dangerText,
     lineHeight: 18,
     marginBottom: 10,
   },
@@ -1804,22 +1833,22 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: T.surface,
     padding: 8,
     borderRadius: 4,
     borderWidth: 1,
-    borderColor: 'rgba(220, 38, 38, 0.25)',
+    borderColor: T.dangerBorder,
   },
   refusedPkgCode: {
     fontSize: 12,
     fontWeight: '700',
-    color: lightTheme.dangerText,
+    color: T.dangerText,
     fontFamily: 'monospace',
   },
   refusedPkgText: {
     fontSize: 12,
     fontWeight: '500',
-    color: lightTheme.textPrimary,
+    color: T.textPrimary,
   },
 
   // Certificate Box
@@ -1831,15 +1860,30 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 10,
     borderRadius: 4,
-    backgroundColor: lightTheme.accentSurface,
+    backgroundColor: T.accentSurface,
   },
   copyBtnText: {
     fontSize: 12,
     fontWeight: '700',
-    color: lightTheme.accent,
+    color: T.accent,
+  },
+  copyHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: T.border,
+  },
+  copyHintText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: T.textMuted,
   },
   certificateContainer: {
-    backgroundColor: '#0F172A', // High-contrast terminal display for tenderable text
+    backgroundColor: T.terminalPanel, // Fixed high-contrast terminal display for tenderable text
     borderRadius: 6,
     padding: 14,
     marginTop: 4,
@@ -1847,9 +1891,10 @@ const styles = StyleSheet.create({
   certificateText: {
     fontFamily: 'monospace',
     fontSize: 11,
-    color: '#F8FAFC',
+    color: T.terminalText,
     lineHeight: 18,
   },
-});
+  });
+};
 
 export default BunchingScreen;

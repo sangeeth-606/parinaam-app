@@ -13,7 +13,6 @@ import {
   Keyboard,
   KeyboardAvoidingView,
   Platform,
-  StatusBar,
   StyleSheet,
   Text,
   TextInput,
@@ -23,9 +22,13 @@ import {
 import { Icon } from '../components/ui/Icon';
 import { StateBanner } from '../components/ui/evidentiary/EvidenceBits';
 import { useAuthStore } from '../state/auth-store';
-import { evidenceTheme as T, evidenceMono, evidenceTarget } from '../theme/evidence';
+import { useAppTheme, useThemedStyles } from '../theme/theme-context';
+import type { Theme } from '../theme';
 
 export const LoginScreen: React.FC = () => {
+  const { theme } = useAppTheme();
+  const T = theme.colors;
+  const styles = useThemedStyles(createStyles);
   const attempt = useAuthStore((s) => s.attempt);
   const failures = useAuthStore((s) => s.failures);
   const lockedUntil = useAuthStore((s) => s.lockedUntil);
@@ -76,7 +79,6 @@ export const LoginScreen: React.FC = () => {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={24}
     >
-      <StatusBar barStyle="dark-content" />
       <View style={styles.inner}>
         <View style={styles.brandBlock}>
           <View style={styles.brandMark}>
@@ -175,7 +177,11 @@ export const LoginScreen: React.FC = () => {
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => {
+  const T = theme.colors;
+  const evidenceMono = theme.fontFamily.mono;
+  const evidenceTarget = theme.target.controlMd;
+  return StyleSheet.create({
   host: { flex: 1, backgroundColor: T.canvas },
   inner: { flex: 1, paddingHorizontal: 20, paddingTop: 56, paddingBottom: 24 },
   brandBlock: { alignItems: 'center', marginBottom: 28 },
@@ -257,7 +263,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     letterSpacing: 2,
     fontWeight: '800',
-    color: '#FFFFFF',
+    color: T.onAccent,
   },
   footer: { marginTop: 'auto', alignItems: 'center', gap: 6 },
   footerLine: {
@@ -268,6 +274,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   footerFine: { fontSize: 11, color: T.textMuted, textAlign: 'center', lineHeight: 16 },
-});
+  });
+};
 
 export default LoginScreen;

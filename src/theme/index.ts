@@ -1,4 +1,30 @@
-export { theme, type Theme, type FontRole, useTheme, colors, type, badgeTones, type BadgeTone } from './theme';
+export {
+  theme,
+  lightTheme,
+  darkTheme,
+  type Theme,
+  type ThemeColors,
+  type ThemeMode,
+  type ThemePreference,
+  type FontRole,
+  useTheme,
+  colors,
+  type,
+  badgeTones,
+  type BadgeTone,
+  type BadgeToneTokens,
+} from './theme';
+export { ThemeProvider, useAppTheme, useThemedStyles, THEME_STORAGE_KEY } from './theme-context';
+export {
+  DEFAULT_THEME_PREFERENCE,
+  THEME_PREFERENCES,
+  isThemePreference,
+  loadThemePreference,
+  normalizeStoredPreference,
+  resolveThemeMode,
+  saveThemePreference,
+  type PreferenceStore,
+} from './theme-preference';
 export {
   space,
   radius,
@@ -17,4 +43,4 @@ export {
   tabbarHeight,
   headerHeight,
 } from './tokens';
-export { slate, sky, emerald, amber, red, colorimeterNeutral, statutoryAmber } from './palette';
+export { slate, navy, gold, sky, emerald, amber, red, colorimeterNeutral, statutoryAmber } from './palette';

@@ -19,7 +19,8 @@ import {
   ScrollView,
   Pressable,
 } from 'react-native';
-import { evidenceTheme as T, evidenceMono } from '../theme/evidence';
+import { useAppTheme, useThemedStyles } from '../theme/theme-context';
+import type { Theme } from '../theme';
 import { Icon } from './ui/Icon';
 import {
   STATUTORY_DEADLINES,
@@ -39,6 +40,9 @@ export const StatutoryClockModal: React.FC<StatutoryClockModalProps> = ({
   initialCaseRef,
   cases = [],
 }) => {
+  const { theme } = useAppTheme();
+  const T = theme.colors;
+  const styles = useThemedStyles(createStyles);
   const [selectedCaseRef, setSelectedCaseRef] = useState<string>(
     initialCaseRef || (cases[0]?.caseRef ?? 'DEFAULT')
   );
@@ -223,10 +227,13 @@ export const StatutoryClockModal: React.FC<StatutoryClockModalProps> = ({
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => {
+  const { colors, fontFamily } = theme;
+  const T = colors;
+  return StyleSheet.create({
   scrim: {
     flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    backgroundColor: colors.scrim,
     justifyContent: 'flex-end',
   },
   dismissArea: {
@@ -302,7 +309,7 @@ const styles = StyleSheet.create({
     backgroundColor: T.accentSurface,
   },
   caseChipText: {
-    fontFamily: evidenceMono,
+    fontFamily: fontFamily.mono,
     fontSize: 11,
     fontWeight: '600',
     color: T.textSecondary,
@@ -326,20 +333,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   anchorLabel: {
-    fontFamily: evidenceMono,
+    fontFamily: fontFamily.mono,
     fontSize: 10,
     fontWeight: '600',
     letterSpacing: 0.5,
     color: T.textMuted,
   },
   anchorCaseRef: {
-    fontFamily: evidenceMono,
+    fontFamily: fontFamily.mono,
     fontSize: 13,
     fontWeight: '700',
     color: T.textPrimary,
   },
   anchorTime: {
-    fontFamily: evidenceMono,
+    fontFamily: fontFamily.mono,
     fontSize: 11,
     color: T.textSecondary,
   },
@@ -383,7 +390,7 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   cardCite: {
-    fontFamily: evidenceMono,
+    fontFamily: fontFamily.mono,
     fontSize: 11,
     color: T.textMuted,
     marginTop: 3,
@@ -403,7 +410,7 @@ const styles = StyleSheet.create({
     borderColor: T.marginalBorder,
   },
   kindBadgeText: {
-    fontFamily: evidenceMono,
+    fontFamily: fontFamily.mono,
     fontSize: 9.5,
     fontWeight: '700',
     letterSpacing: 0.4,
@@ -443,7 +450,7 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   countdownSub: {
-    fontFamily: evidenceMono,
+    fontFamily: fontFamily.mono,
     fontSize: 10,
     color: T.textMuted,
   },
@@ -462,7 +469,7 @@ const styles = StyleSheet.create({
     borderColor: T.dangerBorder,
   },
   timerValueText: {
-    fontFamily: evidenceMono,
+    fontFamily: fontFamily.mono,
     fontSize: 11,
     fontWeight: '700',
     letterSpacing: 0.3,
@@ -500,10 +507,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   doneBtnText: {
-    fontFamily: evidenceMono,
+    fontFamily: fontFamily.mono,
     fontSize: 13,
     fontWeight: '700',
-    color: '#FFFFFF',
+    color: colors.onAccent,
     letterSpacing: 0.5,
   },
-});
+  });
+};

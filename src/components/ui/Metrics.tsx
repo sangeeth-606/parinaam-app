@@ -6,7 +6,8 @@
 
 import React, { useEffect, useRef } from 'react';
 import { Animated, StyleSheet, Text, View, StyleProp, ViewStyle } from 'react-native';
-import { colors, type, radius, space, duration, badgeTones, type BadgeTone } from '../../theme';
+import { useAppTheme, useThemedStyles } from '../../theme/theme-context';
+import type { Theme, BadgeTone } from '../../theme';
 
 interface StatRowProps {
   label: string;
@@ -17,7 +18,11 @@ interface StatRowProps {
 }
 
 /** label — value line with hairline separators (dense data block inside a card). */
-export const StatRow: React.FC<StatRowProps> = ({ label, value, valueTone = 'default', tone, last }) => (
+export const StatRow: React.FC<StatRowProps> = ({ label, value, valueTone = 'default', tone, last }) => {
+  const { theme } = useAppTheme();
+  const styles = useThemedStyles(createStyles);
+  const { colors, type, badgeTones } = theme;
+  return (
   <View style={[styles.statRow, !last && styles.statRowBorder]}>
     <Text style={styles.statLabel} numberOfLines={1}>{label}</Text>
     <View style={styles.statValueBox}>
@@ -34,14 +39,16 @@ export const StatRow: React.FC<StatRowProps> = ({ label, value, valueTone = 'def
       </Text>
     </View>
   </View>
-);
+  );
+};
 
 /** 2-up grid of big numbers (ΔE, confidence, burst size). */
 export const MetricGrid: React.FC<{ children: React.ReactNode; columns?: number }> = ({
   children,
-}) => (
-  <View style={[styles.grid, { gap: space.md }]}>{children}</View>
-);
+}) => {
+  const styles = useThemedStyles(createStyles);
+  return <View style={[styles.grid, { gap: 12 }]}>{children}</View>;
+};
 
 interface TileProps {
   label: string;
@@ -53,7 +60,11 @@ interface TileProps {
 }
 
 /** mission-control "data tile": overline label, big tabular value, unit, optional tint. */
-export const DataTile: React.FC<TileProps> = ({ label, value, unit, tone, hint, width = '50%' }) => (
+export const DataTile: React.FC<TileProps> = ({ label, value, unit, tone, hint, width = '50%' }) => {
+  const { theme } = useAppTheme();
+  const styles = useThemedStyles(createStyles);
+  const { badgeTones } = theme;
+  return (
   <View style={[styles.tile, { width }]}>
     <Text style={styles.tileLabel}>{label}</Text>
     <View style={styles.tileValueRow}>
@@ -62,7 +73,8 @@ export const DataTile: React.FC<TileProps> = ({ label, value, unit, tone, hint, 
     </View>
     {hint ? <Text style={styles.tileHint}>{hint}</Text> : null}
   </View>
-);
+  );
+};
 
 interface ProgressBarProps {
   value: number; // 0..1
@@ -72,12 +84,9 @@ interface ProgressBarProps {
   style?: StyleProp<ViewStyle>;
 }
 
-const toneColor = {
-  brand: colors.brand,
-  ok: colors.ok,
-  attention: colors.attention,
-  fail: colors.fail,
-} as const;
+function getToneColor(colors: Theme['colors'], tone: 'brand' | 'ok' | 'attention' | 'fail'): string {
+  return { brand: colors.brand, ok: colors.ok, attention: colors.attention, fail: colors.fail }[tone];
+}
 
 export const ProgressBar: React.FC<ProgressBarProps> = ({
   value,
@@ -86,6 +95,9 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({
   animate = true,
   style,
 }) => {
+  const { theme } = useAppTheme();
+  const styles = useThemedStyles(createStyles);
+  const { duration } = theme;
   const width = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     Animated.timing(width, {
@@ -102,7 +114,7 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({
       <Animated.View
         style={[
           styles.progressFill,
-          { width: scaled, backgroundColor: toneColor[tone], height },
+          { width: scaled, backgroundColor: getToneColor(theme.colors, tone), height },
         ]}
       />
     </View>
@@ -118,12 +130,14 @@ interface ConfidenceMeterProps {
 
 /** Confidence display that visibly reflects measurement noise (M3.4). */
 export const ConfidenceMeter: React.FC<ConfidenceMeterProps> = ({ value, label = 'Conformal confidence', abstained, style }) => {
+  const { theme } = useAppTheme();
+  const styles = useThemedStyles(createStyles);
   const tone = abstained ? 'attention' : value >= 0.9 ? 'ok' : value >= 0.85 ? 'brand' : 'attention';
   return (
     <View style={[styles.confidence, style]}>
       <View style={styles.confidenceHead}>
         <Text style={styles.confidenceLabel}>{label}</Text>
-        <Text style={[styles.confidenceValue, { color: toneColor[tone] }]}>
+        <Text style={[styles.confidenceValue, { color: getToneColor(theme.colors, tone) }]}>
           {abstained ? 'abstained' : `${(value * 100).toFixed(0)}%`}
         </Text>
       </View>
@@ -132,7 +146,9 @@ export const ConfidenceMeter: React.FC<ConfidenceMeterProps> = ({ value, label =
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => {
+  const { colors, type, radius, space } = theme;
+  return StyleSheet.create({
   statRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -170,4 +186,5 @@ const styles = StyleSheet.create({
   confidenceHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' },
   confidenceLabel: { ...type.micro, color: colors.textTertiary, fontSize: 10 },
   confidenceValue: { ...type.metricSm, fontVariant: ['tabular-nums' as const] },
-});
+  });
+};

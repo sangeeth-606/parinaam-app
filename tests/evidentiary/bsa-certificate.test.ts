@@ -9,6 +9,7 @@ import {
   BsaCertificateGenerator,
   formatIstTimestamp,
   PRESUMPTIVE_DISCLAIMER_VERBATIM,
+  TO_BE_COMPLETED,
   type DeviceMetadata,
   type CustodianDetails,
 } from '../../src/export/certificate-generator.ts';
@@ -107,5 +108,57 @@ describe('Phase 4: BSA 2023 Section 63(4) Part A & Part B Certificates (Mileston
     assert.ok(!bundle.partAText.includes(['Standing', 'Order', '1/88'].join(' ')));
     assert.ok(!bundle.partBText.includes(['Standing', 'Order', '1/88'].join(' ')));
     assert.ok(bundle.partAText.includes('Rule 10(2) of the NDPS'));
+  });
+
+  /**
+   * Regression guard for the 2026-09-25 P0: the export used to hardcode a device, an
+   * expert, an agency, a court and seizure weights, so a certificate could assert facts
+   * about a seizure that never happened. A court cannot distinguish a plausible
+   * fabrication from a measurement, so any reappearance of a default value is a failure.
+   */
+  it('never invents a statutory value: missing facts read as TO BE COMPLETED / NOT PRESENT', () => {
+    const bareDevice: DeviceMetadata = {
+      make: TO_BE_COMPLETED,
+      model: TO_BE_COMPLETED,
+      colour: TO_BE_COMPLETED,
+      serialNumber: TO_BE_COMPLETED,
+      androidId: TO_BE_COMPLETED,
+      imeiMac: 'NOT CAPTURED',
+      osVersion: 'Android 14',
+      appVersion: 'Parinaam',
+    };
+    const bareCustodian: CustodianDetails = {
+      officerName: 'OFFICER-ADMIN',
+      designation: TO_BE_COMPLETED,
+      badgeNumber: TO_BE_COMPLETED,
+      agency: TO_BE_COMPLETED,
+      station: TO_BE_COMPLETED,
+    };
+    // No expert argument at all: the generator must not appoint one.
+    const bundle = generator.generateCertificates({ ...mockRecord, device_attestation: null }, bareDevice, bareCustodian);
+    const haystack = `${bundle.partAText}\n${bundle.partBText}\n${bundle.partAHtml}\n${bundle.partBHtml}`;
+
+    // No invented expert, and no invented device/agency/serial defaults.
+    for (const fabrication of [
+      /Dr\. V\. K\. Sharma/,
+      /CFSL-/,
+      /Pixel 7a/,
+      /SIM-SERIAL/,
+      /Head Constable/,
+      /Narcotics Control Bureau/,
+      /a91f|4a9b2c8d/,
+      /869234051829304/,
+    ]) {
+      assert.ok(!fabrication.test(haystack), `fabricated value must not appear: ${fabrication}`);
+    }
+
+    // A missing device seal must be reported, not rendered as a broken hex dump.
+    assert.ok(haystack.includes('NOT PRESENT'), 'absent seal must say NOT PRESENT');
+    assert.ok(!/Enclave Integrity Seal/.test(haystack), 'must not claim an enclave seal');
+
+    // The certificate must not certify a verification it never performed.
+    assert.ok(!/secp256r1/.test(haystack), 'must not claim a hardware signature was verified');
+    assert.ok(!/VERIFIED MATCH/.test(haystack), 'must not claim an independent verification match');
+    assert.ok(haystack.includes('NOT PERFORMED BY THIS CERTIFICATE'));
   });
 });

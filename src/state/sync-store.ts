@@ -13,10 +13,23 @@
 
 import { create } from 'zustand';
 import { OutboxSyncService } from '../sync/outbox.ts';
-import { createHttpSyncClient, probeHealth, fetchCaseStatuses } from '../sync/http-client.ts';
+import { createHttpSyncClient, probeHealth, fetchCaseStatuses, verifyServerCredentials } from '../sync/http-client.ts';
 import { openSyncSqlite } from '../sync/db-shim.ts';
-import { getServerCredentials } from '../sync/server-credentials.ts';
-import { pendingCountDb, pendingEntriesDb, appendAuditDb, getAppStateDb, setAppStateDb } from '../db/ledger-repository.ts';
+import {
+  forgetServerCredentials,
+  rememberServerCredentials,
+  resolveServerCredentials,
+  type ServerCredentials,
+} from '../sync/server-credentials.ts';
+import {
+  pendingCountDb,
+  pendingEntriesDb,
+  deadLetteredUuidsDb,
+  markDeadLetteredDb,
+  appendAuditDb,
+  getAppStateDb,
+  setAppStateDb,
+} from '../db/ledger-repository.ts';
 import { useLedgerStore } from '../state/ledger-store.ts';
 import { createCameraEngineClient, DEFAULT_CAMERA_ENGINE_URL } from '../capture/camera-engine-client.ts';
 
@@ -58,21 +71,41 @@ export interface SyncSummary {
   error?: string;
 }
 
+/**
+ * Why the app currently holds no usable API session.
+ * 'rejected' is the important one: the server answered and said the credential is wrong,
+ * so the officer must be told — "server up" is not good enough, because the health probe
+ * is public and never authenticates.
+ */
+export type ServerAuthState = 'unknown' | 'unset' | 'accepted' | 'rejected' | 'unreachable';
+
+/** What Settings › Server account reports back after an explicit save. */
+export interface ServerCredentialCheck {
+  ok: boolean;
+  reason: 'accepted' | 'rejected' | 'unreachable' | 'malformed';
+  source?: 'officer' | 'launcher';
+}
+
 interface SyncState {
   ready: boolean;
   serverUrl: string;
   cameraEngineUrl: string;
   cameraEngineReachability: 'unknown' | 'up' | 'down';
   reachability: 'unknown' | 'up' | 'down';
+  serverAuth: ServerAuthState;
+  serverAuthSource: 'officer' | 'launcher' | null;
   busy: boolean;
   needsLogin: boolean;
   pendingCount: number;
+  deadLetterCount: number;
   lastSync: SyncSummary | null;
   caseStatus: Record<string, CaseStatusEntry>;
   statusFetchedAt: string | null;
   init: () => Promise<void>;
   setServerUrl: (url: string) => Promise<void>;
   setCameraEngineUrl: (url: string) => Promise<void>;
+  saveServerCredentials: (creds: ServerCredentials) => Promise<ServerCredentialCheck>;
+  clearServerCredentials: () => Promise<void>;
   testConnection: () => Promise<boolean>;
   testCameraEngine: () => Promise<boolean>;
   syncNow: () => Promise<SyncSummary>;
@@ -86,12 +119,14 @@ async function buildEngine(url: string): Promise<OutboxSyncService | null> {
   shimDb = await openSyncSqlite();
   const db = shimDb;
   if (!db) return null;
-  const creds = await getServerCredentials();
-  const { client, ensureToken, currentToken } = createHttpSyncClient({
+  const { credentials } = await resolveServerCredentials();
+  const { client, ensureToken, currentToken, authFailure } = createHttpSyncClient({
     serverUrl: url,
-    credentials: creds,
+    credentials,
     getRecord: (uuid) => useLedgerStore.getState().records.find((r) => r.record_uuid === uuid) ?? null,
   });
+  // Surface a rejected credential to the store; "server up" must not mask "you cannot log in".
+  authFailureObserver = authFailure;
   // expose for refreshCases / revoke
   tokenProvider = ensureToken;
   tokenCached = currentToken;
@@ -100,6 +135,7 @@ async function buildEngine(url: string): Promise<OutboxSyncService | null> {
 
 let tokenProvider: (() => Promise<string | null>) | null = null;
 let tokenCached: (() => string | null) | null = null;
+let authFailureObserver: (() => 'none' | 'rejected' | 'unreachable' | 'unset') | null = null;
 
 export const useSyncStore = create<SyncState>((set, get) => ({
   ready: false,
@@ -107,9 +143,12 @@ export const useSyncStore = create<SyncState>((set, get) => ({
   cameraEngineUrl: DEFAULT_CAMERA_ENGINE_URL,
   cameraEngineReachability: 'unknown',
   reachability: 'unknown',
+  serverAuth: 'unknown',
+  serverAuthSource: null,
   busy: false,
   needsLogin: false,
   pendingCount: 0,
+  deadLetterCount: 0,
   lastSync: null,
   caseStatus: {},
   statusFetchedAt: null,
@@ -132,12 +171,45 @@ export const useSyncStore = create<SyncState>((set, get) => ({
     if (serverUrl !== savedServer) await setAppStateDb(SERVER_URL_PREF, serverUrl);
     if (cameraEngineUrl !== savedEngine) await setAppStateDb(CAMERA_ENGINE_URL_PREF, cameraEngineUrl);
     enginePromise = null;
+    const { credentials, origin } = await resolveServerCredentials();
     set({
       serverUrl,
       cameraEngineUrl,
       ready: true,
       pendingCount: await pendingCountDb(),
+      deadLetterCount: (await deadLetteredUuidsDb()).length,
+      serverAuth: credentials ? 'unknown' : 'unset',
+      serverAuthSource: origin?.source ?? null,
     });
+  },
+
+  saveServerCredentials: async (creds) => {
+    const username = creds.username.trim().toLowerCase();
+    if (!username || !creds.password) {
+      set({ serverAuth: 'unset', serverAuthSource: null });
+      return { ok: false, reason: 'malformed' };
+    }
+    // Verify BEFORE storing so a wrong password is reported here, not hours later as a
+    // queue that silently never drains.
+    const check = await verifyServerCredentials(get().serverUrl, { username, password: creds.password });
+    if (!check.ok) {
+      set({
+        serverAuth: check.reason === 'rejected' ? 'rejected' : 'unreachable',
+        serverAuthSource: null,
+        needsLogin: check.reason === 'rejected',
+      });
+      return check;
+    }
+    await rememberServerCredentials({ username, password: creds.password });
+    enginePromise = null;
+    set({ serverAuth: 'accepted', serverAuthSource: 'officer', needsLogin: false });
+    return { ok: true, reason: 'accepted', source: 'officer' as const };
+  },
+
+  clearServerCredentials: async () => {
+    await forgetServerCredentials();
+    enginePromise = null;
+    set({ serverAuth: 'unset', serverAuthSource: null, needsLogin: true });
   },
 
   setServerUrl: async (url) => {
@@ -178,12 +250,12 @@ export const useSyncStore = create<SyncState>((set, get) => ({
     if (state.busy) return state.lastSync ?? { at: new Date().toISOString(), synced: 0, failed: 0, deadLettered: 0, skippedBackoff: false };
     set({ busy: true });
     try {
-      const creds = await getServerCredentials();
-      if (!creds) {
-        set({ needsLogin: true, busy: false });
-        return { at: new Date().toISOString(), synced: 0, failed: 0, deadLettered: 0, skippedBackoff: false, error: 'sign-in required for server access' };
+      const { credentials, origin } = await resolveServerCredentials();
+      if (!credentials) {
+        set({ needsLogin: true, serverAuth: 'unset', serverAuthSource: null, busy: false });
+        return { at: new Date().toISOString(), synced: 0, failed: 0, deadLettered: 0, skippedBackoff: false, error: 'no API account — save one in Settings › Server account' };
       }
-      set({ needsLogin: false });
+      set({ needsLogin: false, serverAuthSource: origin?.source ?? null });
       if (!enginePromise) enginePromise = buildEngine(get().serverUrl);
       const engine = await enginePromise;
       if (!engine) {
@@ -213,12 +285,30 @@ export const useSyncStore = create<SyncState>((set, get) => ({
       const succeeded = [...before].filter((u) => !stillQueued.has(u));
       if (succeeded.length > 0) useLedgerStore.getState().markSynced(succeeded);
 
-      // Dead-letter sweep: [permanent] rejections can never succeed by retry.
-      const deadLettered = after.filter((e) => (e.last_error ?? '').includes('[permanent]'));
-      for (const dl of deadLettered) {
-        // sync_queue is a mutable queue, not evidence — deleting a dead-letter row is legal.
-        shimDb?.prepare('DELETE FROM sync_queue WHERE id = ?').run(dl.id);
+      // Dead-letter a permanently-rejected record: keep the queue row, mark it terminal,
+      // and reflect that in the ledger. Deleting the row here used to make an unuploaded
+      // record disappear while the UI reported "outbox clear" — silent evidence loss that
+      // looked like success.
+      const deadLetteredRows = after.filter((e) => (e.last_error ?? '').includes('[permanent]'));
+      const deadLetteredUuids: string[] = [];
+      for (const dl of deadLetteredRows) {
+        await markDeadLetteredDb(dl.id, new Date().toISOString());
+        deadLetteredUuids.push(dl.record_uuid);
         await appendAuditDb('sync-service', 'dead-letter', dl.last_error ?? '', dl.record_uuid);
+      }
+      if (deadLetteredUuids.length > 0) useLedgerStore.getState().markDeadLettered(deadLetteredUuids);
+
+      // A rejected credential must be visible even though the health probe is public and
+      // unauthenticated: "server up" alone would hide a queue that can never drain.
+      const authFailure = authFailureObserver ? authFailureObserver() : 'none';
+      if (authFailure === 'rejected') {
+        set({ serverAuth: 'rejected', needsLogin: true });
+      } else if (authFailure === 'unset') {
+        set({ serverAuth: 'unset', needsLogin: true });
+      } else if (authFailure === 'unreachable') {
+        set({ serverAuth: 'unreachable' });
+      } else if (result.syncedCount > 0 || authFailure === 'none') {
+        set({ serverAuth: 'accepted' });
       }
 
       if (result.syncedCount > 0 || (await probeHealth(get().serverUrl)).ok) {
@@ -231,10 +321,15 @@ export const useSyncStore = create<SyncState>((set, get) => ({
         at: new Date().toISOString(),
         synced: result.syncedCount,
         failed: result.failureCount,
-        deadLettered: deadLettered.length,
+        deadLettered: deadLetteredUuids.length,
         skippedBackoff: false,
       };
-      set({ busy: false, lastSync: summary, pendingCount: await pendingCountDb() });
+      set({
+        busy: false,
+        lastSync: summary,
+        pendingCount: await pendingCountDb(),
+        deadLetterCount: (await deadLetteredUuidsDb()).length,
+      });
       return summary;
     } catch (err) {
       set({ busy: false });

@@ -7,7 +7,8 @@
 import React, { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import Svg, { Line, Circle, Polyline } from 'react-native-svg';
-import { colors, type, radius, space } from '../../theme';
+import { useAppTheme, useThemedStyles } from '../../theme/theme-context';
+import type { Theme } from '../../theme';
 import type { KineticPoint } from '../../types/domain';
 
 interface KineticsChartProps {
@@ -26,6 +27,9 @@ export const KineticsChart: React.FC<KineticsChartProps> = ({
   threshold,
   windowMs = 30000,
 }) => {
+  const { theme } = useAppTheme();
+  const { colors } = theme;
+  const styles = useThemedStyles(createStyles);
   const geom = useMemo(() => {
     if (!points.length) return null;
     // SVG needs a fixed width; charts live full-bleed in cards — 320 is the min layout
@@ -88,7 +92,9 @@ export const KineticsChart: React.FC<KineticsChartProps> = ({
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => {
+  const { colors, type, radius, space } = theme;
+  return StyleSheet.create({
   wrap: { alignSelf: 'center' },
   empty: {
     height: 110,
@@ -106,4 +112,5 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.xs,
   },
   axisLabel: { ...type.micro, fontSize: 9, color: colors.textTertiary },
-});
+  });
+};

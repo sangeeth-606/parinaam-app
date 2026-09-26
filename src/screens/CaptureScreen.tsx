@@ -7,7 +7,7 @@
  * Colorimetry law: the VIEWFINDER STAYS DARK — camera UI must never introduce
  * light glare into the scene, and AE/AWB/gates run inside CameraView unchanged.
  * Only the surrounding chrome migrates to the light evidentiary language
- * (src/theme/evidence.ts + EvidenceBits). No pipeline logic lives here.
+ * (src/theme (useAppTheme + useThemedStyles) + EvidenceBits). No pipeline logic lives here.
  */
 
 import React, { useState } from 'react';
@@ -21,12 +21,16 @@ import { WizardHeader } from '../components/ui/WizardHeader';
 import { useSessionStore } from '../state/session-store';
 import { GUIDANCE_TEXTS, useGuidance } from '../state/guidance';
 import type { BurstAcquisitionResult } from '../capture/burst-manager';
-import { evidenceTheme as T, evidenceMono } from '../theme/evidence';
+import { useAppTheme, useThemedStyles } from '../theme/theme-context';
+import type { Theme } from '../theme';
 import { REAGENT_LABEL } from '../domain/outcome-copy';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
 export const CaptureScreen: React.FC = () => {
+  const { theme } = useAppTheme();
+  const T = theme.colors;
+  const styles = useThemedStyles(createStyles);
   const navigation = useNavigation<Nav>();
   const { setup, setBurst, setStep, patchSetup } = useSessionStore();
   const guidanceSeen = useGuidance((g) => !!g.seen.capture);
@@ -136,7 +140,10 @@ export const CaptureScreen: React.FC = () => {
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => {
+  const T = theme.colors;
+  const evidenceMono = theme.fontFamily.mono;
+  return StyleSheet.create({
   ctxChip: { flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 1, borderColor: T.borderStrong, borderRadius: 6, paddingHorizontal: 10, minHeight: 48, justifyContent: 'center' },
   ctxChipText: { fontFamily: evidenceMono, fontSize: 11, letterSpacing: 0.5, color: T.accent },
   quickEdit: { backgroundColor: T.card, borderBottomWidth: 1, borderBottomColor: T.border, paddingHorizontal: 16, paddingVertical: 12, gap: 8 },
@@ -146,7 +153,7 @@ const styles = StyleSheet.create({
   quickEditInput: { fontFamily: evidenceMono, fontSize: 13, color: T.textPrimary, borderWidth: 1, borderColor: T.border, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 8, minWidth: 110, backgroundColor: T.cardSubtle },
   quickEditActions: { flexDirection: 'row', gap: 10 },
   quickEditApply: { backgroundColor: T.accent, borderRadius: 6, paddingHorizontal: 16, minHeight: 48, justifyContent: 'center' },
-  quickEditApplyText: { fontFamily: evidenceMono, fontSize: 12, color: '#FFFFFF', letterSpacing: 0.5 },
+  quickEditApplyText: { fontFamily: evidenceMono, fontSize: 12, color: T.onAccent, letterSpacing: 0.5 },
   quickEditFull: { borderWidth: 1, borderColor: T.borderStrong, borderRadius: 6, paddingHorizontal: 14, minHeight: 48, justifyContent: 'center' },
   quickEditFullText: { fontFamily: evidenceMono, fontSize: 12, color: T.textPrimary, letterSpacing: 0.5 },
   helpRow: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: T.cardSubtle, borderBottomWidth: 1, borderBottomColor: T.border, paddingHorizontal: 16, paddingVertical: 10 },
@@ -197,7 +204,8 @@ const styles = StyleSheet.create({
   contextLabel: { fontSize: 9, fontWeight: '700', color: T.textMuted, letterSpacing: 0.6 },
   contextMono: { fontSize: 12, fontWeight: '700', color: T.textPrimary, fontFamily: evidenceMono },
   contextSep: { fontSize: 12, color: T.textMuted },
-  cameraHost: { flex: 1, backgroundColor: '#000000' },
-});
+  cameraHost: { flex: 1, backgroundColor: T.cameraBackdrop },
+  });
+};
 
 export default CaptureScreen;

@@ -11,12 +11,12 @@
  *   keystore signature present vs honest chain-only — no fabricated security tier.
  * - Outbox wording never claims live government-system contact (offline-first).
  *
- * Design Language: src/theme/evidence.ts + EvidenceBits + LightTabBar (WCAG AAA light,
+ * Design Language: src/theme (useAppTheme + useThemedStyles) + EvidenceBits + LightTabBar (tokens in both modes,
  * tri-modal states, mono digests, ≥48 dp targets, terminal boxes for tenderable values).
  */
 
 import React, { useEffect, useState } from 'react';
-import { ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/AppNavigator';
@@ -28,23 +28,27 @@ import { TamperDemoSection } from './TamperDemoScreen';
 import { useLedgerStore } from '../state/ledger-store';
 import { useSyncStore } from '../state/sync-store';
 import { auditCountDb } from '../db/ledger-repository';
-import { evidenceTheme as T, evidenceMono } from '../theme/evidence';
+import { useAppTheme, useThemedStyles } from '../theme/theme-context';
+import type { Theme } from '../theme';
 import { abbreviateHash, formatIst } from '../domain/outcome-copy';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
 type LinkStatus = 'OK' | 'BROKEN' | 'UNVERIFIABLE' | 'PENDING';
 
-const statusStyle = (s: LinkStatus) =>
+const statusStyle = (colors: Theme['colors'], s: LinkStatus) =>
   s === 'OK'
-    ? { bg: T.successSurface, border: T.successBorder, text: T.successText, icon: 'check' as const }
+    ? { bg: colors.successSurface, border: colors.successBorder, text: colors.successText, icon: 'check' as const }
     : s === 'BROKEN'
-      ? { bg: T.dangerSurface, border: T.dangerBorder, text: T.dangerText, icon: 'alert' as const }
+      ? { bg: colors.dangerSurface, border: colors.dangerBorder, text: colors.dangerText, icon: 'alert' as const }
       : s === 'UNVERIFIABLE'
-        ? { bg: T.marginalSurface, border: T.marginalBorder, text: T.marginalText, icon: 'link' as const }
-        : { bg: T.cardSubtle, border: T.border, text: T.textSecondary, icon: 'clock' as const };
+        ? { bg: colors.marginalSurface, border: colors.marginalBorder, text: colors.marginalText, icon: 'link' as const }
+        : { bg: colors.cardSubtle, border: colors.border, text: colors.textSecondary, icon: 'clock' as const };
 
 export const IntegrityScreen: React.FC = () => {
+  const { theme } = useAppTheme();
+  const T = theme.colors;
+  const styles = useThemedStyles(createStyles);
   const navigation = useNavigation<Nav>();
   const { records, verification, verifying, demoCorrupted, reverify, persistence } =
     useLedgerStore();
@@ -60,6 +64,10 @@ export const IntegrityScreen: React.FC = () => {
   // Demo seeds are local-only fixtures: they are neither queued nor "synced" —
   // the outbox actions below must never imply they were uploaded.
   const demoSeeded = records.filter((r) => r.syncStatus === 'demo-seed').length;
+  // Permanently refused by the server. They are retained on the device, NOT uploaded,
+  // and must never be folded into an "outbox clear" message.
+  const deadLettered = records.filter((r) => r.syncStatus === 'dead-letter');
+  const serverAuth = useSyncStore((s) => s.serverAuth);
   const latest = records[records.length - 1];
   const attestedCount = records.filter((r) => r.deviceAttestation !== null).length;
 
@@ -111,7 +119,6 @@ export const IntegrityScreen: React.FC = () => {
 
   return (
     <View style={styles.screen}>
-      <StatusBar barStyle="dark-content" />
 
       {/* Official Evidentiary Header */}
       <View style={styles.header}>
@@ -186,7 +193,7 @@ export const IntegrityScreen: React.FC = () => {
               </View>
               {records.map((r, i) => {
                 const st = linkStatus(i);
-                const tone = statusStyle(st);
+                const tone = statusStyle(T, st);
                 return (
                   <TouchableOpacity
                     key={r.record_uuid}
@@ -295,11 +302,23 @@ export const IntegrityScreen: React.FC = () => {
             Queue drains when connectivity returns — the app works fully offline. Records upload only
             to the configured self-hosted API; no live government system is contacted.
           </Text>
+          {serverAuth === 'rejected' ? (
+            <View style={styles.rejectBox}>
+              <Icon name="alert" size={18} color={T.dangerText} strokeWidth={2.2} />
+              <Text style={styles.rejectText}>
+                The server rejected the stored API account, so nothing can upload until it is
+                corrected. The health probe above is public and does not authenticate — "server up"
+                does not mean "signed in". Open Settings › Server account.
+              </Text>
+            </View>
+          ) : null}
           {queued.length === 0 ? (
             <View style={styles.clearBox}>
               <Icon name="wifiOff" size={18} color={T.textSecondary} strokeWidth={2.2} />
               <Text style={styles.clearText}>
-                Outbox clear — no records waiting to upload.{demoSeeded > 0 ? ` ${demoSeeded} demo-seed record${demoSeeded === 1 ? ' is' : 's are'} local-only and never uploaded.` : ''}
+                {deadLettered.length > 0
+                  ? `Nothing is waiting in the queue, but ${deadLettered.length} record${deadLettered.length === 1 ? ' was' : 's were'} permanently rejected by the server and ${deadLettered.length === 1 ? 'is' : 'are'} still only on this device.`
+                  : `Outbox clear — no records waiting to upload.${demoSeeded > 0 ? ` ${demoSeeded} demo-seed record${demoSeeded === 1 ? ' is' : 's are'} local-only and never uploaded.` : ''}`}
               </Text>
             </View>
           ) : (
@@ -327,7 +346,7 @@ export const IntegrityScreen: React.FC = () => {
                 accessibilityRole="button"
                 accessibilityLabel={`Synchronize ${queued.length} queued records with the configured API`}
               >
-                <Icon name="refresh" size={18} color="#FFFFFF" strokeWidth={2.5} />
+                <Icon name="refresh" size={18} color={T.onAccent} strokeWidth={2.5} />
                 <Text style={styles.primaryBtnText}>{syncing ? 'SYNCING…' : `SYNC NOW (${queued.length})`}</Text>
               </TouchableOpacity>
               {syncNote ? (
@@ -362,7 +381,10 @@ export const IntegrityScreen: React.FC = () => {
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => {
+  const T = theme.colors;
+  const evidenceMono = theme.fontFamily.mono;
+  return StyleSheet.create({
   syncNote: { fontFamily: evidenceMono, fontSize: 11, color: T.textSecondary, marginTop: 8, textAlign: 'center' },
   screen: { flex: 1, backgroundColor: T.canvas },
   scroll: { flex: 1 },
@@ -416,7 +438,7 @@ const styles = StyleSheet.create({
     marginTop: 12,
     paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(15, 23, 42, 0.12)',
+    borderTopColor: T.borderSubtle,
   },
 
   /* Chain walk table */
@@ -447,7 +469,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     borderBottomWidth: 1,
     borderBottomColor: T.border,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: T.surface,
     minHeight: 52,
     gap: 6,
   },
@@ -496,6 +518,18 @@ const styles = StyleSheet.create({
     padding: 12,
   },
   clearText: { flex: 1, fontSize: 12, fontWeight: '600', color: T.successText, lineHeight: 18 },
+  rejectBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: T.dangerSurface,
+    borderWidth: 1,
+    borderColor: T.dangerBorder,
+    borderRadius: 6,
+    padding: 12,
+    marginBottom: 10,
+  },
+  rejectText: { flex: 1, fontSize: 12, color: T.dangerText, lineHeight: 18 },
   queueRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -520,7 +554,7 @@ const styles = StyleSheet.create({
     backgroundColor: T.accent,
     marginTop: 12,
   },
-  primaryBtnText: { fontSize: 13, fontWeight: '700', color: '#FFFFFF', letterSpacing: 0.4 },
+  primaryBtnText: { fontSize: 13, fontWeight: '700', color: T.onAccent, letterSpacing: 0.4 },
   btnDisabled: { opacity: 0.6 },
   secondaryBtn: {
     flexDirection: 'row',
@@ -534,6 +568,7 @@ const styles = StyleSheet.create({
     backgroundColor: T.card,
   },
   secondaryBtnText: { fontSize: 13, fontWeight: '700', color: T.accent, letterSpacing: 0.3 },
-});
+  });
+};
 
 export default IntegrityScreen;

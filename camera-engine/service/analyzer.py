@@ -31,7 +31,10 @@ import yaml
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 SCHEMA_VERSION = "parinaam-camera-engine-v1"
-MAX_IMAGE_BYTES = 5 * 1024 * 1024
+# A 12 MP phone JPEG at the app's capture quality is ~5-6 MB, so the previous
+# 5 MB ceiling rejected ordinary field captures.  The pixel ceiling below is the
+# real protection for the decoder; this byte cap only stops unbounded uploads.
+MAX_IMAGE_BYTES = 12 * 1024 * 1024
 MAX_IMAGE_PIXELS = 20_000_000
 MIN_MARKERS = 3
 REQUIRED_MARKERS = (0, 1, 2, 3)

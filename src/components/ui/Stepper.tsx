@@ -7,14 +7,19 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { Icon } from './Icon';
-import { colors, type, space, fontWeight, badgeTones } from '../../theme';
+import { useAppTheme, useThemedStyles } from '../../theme/theme-context';
+import type { Theme } from '../../theme';
 
 interface StepperProps {
   steps: readonly string[];
   current: number; // 0-based index
 }
 
-export const Stepper: React.FC<StepperProps> = ({ steps, current }) => (
+export const Stepper: React.FC<StepperProps> = ({ steps, current }) => {
+  const { theme } = useAppTheme();
+  const { colors } = theme;
+  const styles = useThemedStyles(createStyles);
+  return (
   <View style={styles.wrap} accessibilityRole="summary" accessibilityLabel={`Step ${current + 1} of ${steps.length}: ${steps[current]}`}>
     {steps.map((label, i) => {
       const done = i < current;
@@ -46,9 +51,12 @@ export const Stepper: React.FC<StepperProps> = ({ steps, current }) => (
       );
     })}
   </View>
-);
+  );
+};
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => {
+  const { colors, type, space, fontWeight, badgeTones } = theme;
+  return StyleSheet.create({
   wrap: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -76,4 +84,5 @@ const styles = StyleSheet.create({
   labelDone: { color: colors.textSecondary },
   connector: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: colors.borderStrong, marginBottom: 12 },
   connectorDone: { backgroundColor: badgeTones.ok.border },
-});
+  });
+};

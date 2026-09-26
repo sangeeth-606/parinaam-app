@@ -13,7 +13,8 @@
 
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { colors, type, radius, space, badgeTones } from '../theme';
+import { useThemedStyles } from '../theme/theme-context';
+import type { Theme } from '../theme';
 import {
   STATUTORY_DEADLINES,
   calculateRemainingHours,
@@ -27,6 +28,7 @@ export interface StatutoryClockProps {
 export { STATUTORY_DEADLINES, calculateRemainingHours, type DeadlineItem };
 
 export const StatutoryClock: React.FC<StatutoryClockProps> = ({ seizureTimestampIso }) => {
+  const styles = useThemedStyles(createStyles);
   return (
     <View style={styles.container}>
       <Text style={styles.header}>Procedural Statutory Timers & Legal Deadlines</Text>
@@ -99,7 +101,9 @@ export const StatutoryClock: React.FC<StatutoryClockProps> = ({ seizureTimestamp
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => {
+  const { colors, type, radius, space, badgeTones } = theme;
+  return StyleSheet.create({
   container: { gap: space.md },
   header: { ...type.subhead, color: colors.textPrimary },
   subHeader: { ...type.caption, color: colors.textSecondary },
@@ -152,4 +156,5 @@ const styles = StyleSheet.create({
   timerValue: { ...type.captionStrong, fontVariant: ['tabular-nums'] },
   timerActive: { color: colors.ok },
   timerExpired: { color: colors.fail },
-});
+  });
+};

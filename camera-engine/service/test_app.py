@@ -7,7 +7,7 @@ import unittest
 
 from PIL import Image
 
-from app import app
+from app import app, MAX_IMAGE_BYTES
 
 
 class HttpContractTests(unittest.TestCase):
@@ -57,12 +57,15 @@ class HttpContractTests(unittest.TestCase):
         self.assertIn("bytes", body["image"])
 
     def test_oversized_request_is_413(self) -> None:
+        # Derived from the module limit so raising the cap cannot silently turn
+        # this contract test into a different (format) assertion.
         response = self.client.post(
             "/v1/analyze",
-            data=b"x" * (5 * 1024 * 1024 + 1),
+            data=b"x" * (MAX_IMAGE_BYTES + 1),
             content_type="image/jpeg",
         )
         self.assertEqual(response.status_code, 413)
+        self.assertEqual(response.get_json()["error"], "IMAGE_TOO_LARGE")
 
 
 if __name__ == "__main__":

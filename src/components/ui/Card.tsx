@@ -16,7 +16,8 @@ import {
   ViewStyle,
 } from 'react-native';
 import { PressableScale } from './PressableScale';
-import { colors, type, radius, space, lineWidth } from '../../theme';
+import { useAppTheme, useThemedStyles } from '../../theme/theme-context';
+import type { Theme } from '../../theme';
 
 interface CardProps {
   children: React.ReactNode;
@@ -35,6 +36,7 @@ export const Card: React.FC<CardProps> = ({
   style,
   accessibilityLabel,
 }) => {
+  const styles = useThemedStyles(createStyles);
   const inner = (
     <View
       style={[
@@ -79,35 +81,46 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
   actionLabel,
   onAction,
   style,
-}) => (
-  <View style={[styles.sectionRow, style]}>
-    <View style={styles.sectionText}>
-      {eyebrow ? <Text style={[type.micro, styles.eyebrow]}>{eyebrow}</Text> : null}
-      <Text style={[type.subhead, styles.sectionTitle]} accessibilityRole="header">
-        {title}
-      </Text>
-      {subtitle ? <Text style={[type.caption, styles.sectionSubtitle]}>{subtitle}</Text> : null}
+}) => {
+  const { theme } = useAppTheme();
+  const styles = useThemedStyles(createStyles);
+  const { type } = theme;
+  return (
+    <View style={[styles.sectionRow, style]}>
+      <View style={styles.sectionText}>
+        {eyebrow ? <Text style={[type.micro, styles.eyebrow]}>{eyebrow}</Text> : null}
+        <Text style={[type.subhead, styles.sectionTitle]} accessibilityRole="header">
+          {title}
+        </Text>
+        {subtitle ? <Text style={[type.caption, styles.sectionSubtitle]}>{subtitle}</Text> : null}
+      </View>
+      {actionLabel && onAction ? (
+        <PressableScale
+          onPress={onAction}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel={actionLabel}
+        >
+          <Text style={[type.captionStrong, styles.sectionAction]}>{actionLabel}</Text>
+        </PressableScale>
+      ) : null}
     </View>
-    {actionLabel && onAction ? (
-      <PressableScale
-        onPress={onAction}
-        hitSlop={8}
-        accessibilityRole="button"
-        accessibilityLabel={actionLabel}
-      >
-        <Text style={[type.captionStrong, styles.sectionAction]}>{actionLabel}</Text>
-      </PressableScale>
-    ) : null}
-  </View>
-);
+  );
+};
 
-export const Divider: React.FC<{ style?: StyleProp<ViewStyle> }> = ({ style }) => (
-  <View style={[styles.divider, style]} />
-);
+export const Divider: React.FC<{ style?: StyleProp<ViewStyle> }> = ({ style }) => {
+  const styles = useThemedStyles(createStyles);
+  return <View style={[styles.divider, style]} />;
+};
 
-export const GroupGap: React.FC = () => <View style={styles.groupGap} />;
+export const GroupGap: React.FC = () => {
+  const styles = useThemedStyles(createStyles);
+  return <View style={styles.groupGap} />;
+};
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => {
+  const { colors, radius, space, lineWidth } = theme;
+  return StyleSheet.create({
   card: {
     backgroundColor: colors.surface,
     borderRadius: radius.md,
@@ -133,6 +146,7 @@ const styles = StyleSheet.create({
   sectionTitle: { color: colors.textPrimary },
   sectionSubtitle: { color: colors.textSecondary, marginTop: space.xs },
   sectionAction: { color: colors.brand, paddingBottom: 2 },
-});
+  });
+};
 
 export type CardTextStyle = TextStyle;

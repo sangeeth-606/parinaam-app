@@ -9,8 +9,9 @@ import { StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PressableScale } from './PressableScale';
 import { Icon, IconName } from './Icon';
-import { colors, type, radius, space, fontWeight } from '../../theme';
-import { elevation, target, tabbarHeight } from '../../theme';
+import { useAppTheme, useThemedStyles } from '../../theme/theme-context';
+import { elevation } from '../../theme';
+import type { Theme } from '../../theme';
 
 export type TabKey = 'duty' | 'records' | 'integrity';
 
@@ -34,6 +35,9 @@ interface TabBarProps {
 }
 
 export const TabBar: React.FC<TabBarProps> = ({ active, onTab, onNewTest, recordsBadge }) => {
+  const { theme } = useAppTheme();
+  const { colors, space } = theme;
+  const styles = useThemedStyles(createStyles);
   const insets = useSafeAreaInsets();
   const leftTabs = TABS.slice(0, 1);
   const rightTabs = TABS.slice(1);
@@ -86,7 +90,9 @@ export const TabBar: React.FC<TabBarProps> = ({ active, onTab, onNewTest, record
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => {
+  const { colors, type, radius, space, fontWeight, target } = theme;
+  return StyleSheet.create({
   bar: {
     backgroundColor: colors.surfaceRaised,
     borderTopWidth: StyleSheet.hairlineWidth,
@@ -95,7 +101,7 @@ const styles = StyleSheet.create({
   inner: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    height: tabbarHeight,
+    height: theme.layout.tabbarHeight,
     paddingHorizontal: space.lg,
   },
   tab: {
@@ -135,4 +141,5 @@ const styles = StyleSheet.create({
     marginTop: -22,
   },
   fabLabel: { ...type.micro, fontSize: 9, letterSpacing: 0.5, color: colors.textSecondary, marginTop: 2, fontWeight: fontWeight.semibold },
-});
+  });
+};

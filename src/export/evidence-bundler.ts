@@ -10,7 +10,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { CertifiedBundle, CertifyModule } from '../types/contracts.ts';
 import type { TestRecordEntity } from '../types/domain.ts';
-import { BsaCertificateGenerator, type CustodianDetails, type DeviceMetadata, type ExpertDetails } from './certificate-generator.ts';
+import {
+  BsaCertificateGenerator,
+  TO_BE_COMPLETED,
+  type CustodianDetails,
+  type DeviceMetadata,
+  type ExpertDetails,
+} from './certificate-generator.ts';
 import { NdpsFormsGenerator, type SeizureCaseDetails } from './ndps-forms.ts';
 import { CourtPdfBundleGenerator } from './pdf-bundle.ts';
 import { ManifestGenerator } from './manifest-generator.ts';
@@ -55,44 +61,53 @@ export class EvidenceBundlerService implements CertifyModule {
     const bundleDir = path.join(this.outputBaseDir, recordUuid);
     fs.mkdirSync(bundleDir, { recursive: true });
 
+    // Nothing below is invented. This module writes a bundle from whatever the sealed
+    // record actually contains; any statutory particular it cannot know is emitted as an
+    // explicit TO_BE_COMPLETED line for the human who signs. The previous version
+    // hardcoded a second, contradictory set of facts (a different expert, badge, device,
+    // court and 520 g weight) which is exactly the kind of plausible fabrication a court
+    // cannot detect.
     const device: DeviceMetadata = {
-      make: 'Samsung / Motorola',
-      model: record.device_model || 'Galaxy-M34 / Moto-G54',
-      colour: 'Deep Navy Blue',
-      serialNumber: record.device_serial || 'SN-2026-IND-9941',
-      androidId: '4a9b2c8d1e0f3456',
-      imeiMac: '869234051829304',
-      osVersion: 'Android 14 (API 34)',
-      appVersion: '1.0.0',
+      make: TO_BE_COMPLETED,
+      model: record.device_model || TO_BE_COMPLETED,
+      colour: TO_BE_COMPLETED,
+      serialNumber: record.device_serial || TO_BE_COMPLETED,
+      androidId: TO_BE_COMPLETED,
+      imeiMac: 'NOT CAPTURED — this build does not read hardware identifiers',
+      osVersion: TO_BE_COMPLETED,
+      appVersion: 'Parinaam (version as installed on this device)',
     };
 
     const custodian: CustodianDetails = {
-      officerName: 'Inspector Rajesh Kumar',
-      designation: 'Intelligence Officer',
-      badgeNumber: 'NCB-DEL-4091',
-      agency: 'Narcotics Control Bureau',
-      station: 'Delhi Zonal Unit, R.K. Puram, New Delhi',
+      officerName: record.operator_id,
+      designation: TO_BE_COMPLETED,
+      badgeNumber: TO_BE_COMPLETED,
+      agency: TO_BE_COMPLETED,
+      station: TO_BE_COMPLETED,
     };
 
     const expert: ExpertDetails = {
-      expertName: 'Dr. V. K. Sharma',
-      qualification: 'M.Sc. (Forensic Science), Ph.D., Cyber Examiner',
-      institution: 'Central Forensic Science Laboratory, Directorate of Forensic Science Services',
-      registrationNumber: 'CFSL-DFSS-2026-0482',
+      expertName: TO_BE_COMPLETED,
+      qualification: TO_BE_COMPLETED,
+      institution: TO_BE_COMPLETED,
+      registrationNumber: TO_BE_COMPLETED,
     };
 
     const seizure: SeizureCaseDetails = {
-      caseCrimeNo: record.case_ref || 'NCB/DZU/CR-14/2026',
-      panchnamaRef: record.panchnama_ref || 'PCH-2026-089',
-      seizingAgency: 'Narcotics Control Bureau (DZU)',
+      caseCrimeNo: record.case_ref ?? TO_BE_COMPLETED,
+      panchnamaRef: record.panchnama_ref || 'NOT RECORDED',
+      seizingAgency: TO_BE_COMPLETED,
       seizingOfficer: custodian.officerName,
       officerDesignation: custodian.designation,
-      placeOfSeizure: 'Cargo Terminal 3, IGI Airport, New Delhi',
-      dateOfSeizure: '2026-09-13',
-      magistrateCourtName: 'Court of Special Judge (NDPS Act), Patiala House Courts, New Delhi',
+      placeOfSeizure:
+        record.gps_lat != null && record.gps_lon != null
+          ? `GPS ${record.gps_lat.toFixed(4)}, ${record.gps_lon.toFixed(4)} — WRITTEN PLACE NOT CAPTURED BY THIS APP`
+          : 'NOT CAPTURED',
+      dateOfSeizure: record.created_at,
+      magistrateCourtName: TO_BE_COMPLETED,
       allegedDescription: 'Presumptive colorimetric spot-tested substance in sealed transit package',
-      grossWeightGrams: 520.0,
-      netWeightGrams: 500.0,
+      grossWeightGrams: null,
+      netWeightGrams: null,
     };
 
     // 1. Generate BSA Certificates

@@ -10,8 +10,8 @@ import React from 'react';
 import { ActivityIndicator, StyleSheet, Text, View, StyleProp, ViewStyle } from 'react-native';
 import { PressableScale } from './PressableScale';
 import { Icon, IconName } from './Icon';
-import { colors, radius, space, fontWeight } from '../../theme';
-import { target } from '../../theme';
+import { useAppTheme, useThemedStyles } from '../../theme/theme-context';
+import { type Theme, type ThemeColors, radius, space, fontWeight, target } from '../../theme';
 
 export type ButtonVariant = 'primary' | 'secondary' | 'tonal' | 'ghost' | 'danger';
 export type ButtonSize = 'lg' | 'md' | 'sm';
@@ -49,8 +49,11 @@ export const Button: React.FC<ButtonProps> = ({
   style,
   accessibilityLabel,
 }) => {
+  const { theme } = useAppTheme();
+  const colors = theme.colors;
+  const styles = useThemedStyles(createStyles);
   const s = sizeStyles[size];
-  const palette = variantStyles[variant];
+  const palette = getVariantStyles(colors, variant);
   const iconColor = palette.text;
 
   return (
@@ -87,22 +90,26 @@ export const Button: React.FC<ButtonProps> = ({
   );
 };
 
-const variantStyles: Record<ButtonVariant, { container: ViewStyle; text: string }> = {
-  primary: { container: { backgroundColor: colors.brandSolid }, text: colors.onBrandSolid },
-  secondary: {
-    container: {
-      backgroundColor: colors.surfaceRaised,
-      borderWidth: 1,
-      borderColor: colors.borderStrong,
+function getVariantStyles(colors: ThemeColors, variant: ButtonVariant): { container: ViewStyle; text: string } {
+  const variants: Record<ButtonVariant, { container: ViewStyle; text: string }> = {
+    primary: { container: { backgroundColor: colors.brandSolid }, text: colors.onBrandSolid },
+    secondary: {
+      container: {
+        backgroundColor: colors.surfaceRaised,
+        borderWidth: 1,
+        borderColor: colors.borderStrong,
+      },
+      text: colors.textPrimary,
     },
-    text: colors.textPrimary,
-  },
-  tonal: { container: { backgroundColor: colors.brandDim }, text: colors.brand },
-  ghost: { container: { backgroundColor: 'transparent' }, text: colors.brand },
-  danger: { container: { backgroundColor: colors.failDim }, text: colors.fail },
-};
+    tonal: { container: { backgroundColor: colors.brandDim }, text: colors.brand },
+    ghost: { container: { backgroundColor: 'transparent' }, text: colors.brand },
+    danger: { container: { backgroundColor: colors.failDim }, text: colors.fail },
+  };
+  return variants[variant];
+}
 
-const styles = StyleSheet.create({
+const createStyles = (_theme: Theme) =>
+  StyleSheet.create({
   base: { borderRadius: radius.sm, overflow: 'hidden' },
   full: { alignSelf: 'stretch' },
   row: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
@@ -110,4 +117,4 @@ const styles = StyleSheet.create({
   labelWithIcon: { marginHorizontal: space.sm },
   spinner: { marginRight: 0 },
   trailing: { marginLeft: space.xs },
-});
+  });

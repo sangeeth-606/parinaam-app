@@ -88,6 +88,12 @@ const expoEnv = {
   ...process.env,
   EXPO_PUBLIC_API_URL: apiUrl,
   EXPO_PUBLIC_CAMERA_ENGINE_URL: engineUrl,
+  // The API account is the SERVER's own seeded account — never the device-gate
+  // credential (admin/adminpass), which the API rejects. Sourced from the same compose
+  // variables the server starts with, so the two always agree. An officer can override
+  // it in-app under Settings › Server account.
+  EXPO_PUBLIC_API_USERNAME: process.env.PARINAAM_API_ADMIN_USER ?? 'admin',
+  EXPO_PUBLIC_API_PASSWORD: process.env.PARINAAM_API_ADMIN_PASSWORD ?? 'parinaam-admin-2026',
 };
 if (flags.go) expoEnv.EXPO_NO_REDIRECT_PAGE = '1';
 

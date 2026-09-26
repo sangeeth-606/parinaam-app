@@ -9,7 +9,7 @@
  * field holds the ECDSA SIGNATURE hex, not a level.)
  *
  * Store wiring (app-store language/operator/audio/reset, ledger resetDemo) is
- * unchanged; presentation migrated to src/theme/evidence.ts + EvidenceBits.
+ * unchanged; presentation migrated to src/theme (useAppTheme + useThemedStyles) + EvidenceBits.
  */
 
 import React, { useEffect, useRef, useState, type ComponentRef } from 'react';
@@ -17,7 +17,6 @@ import {
   Modal,
   Pressable,
   ScrollView,
-  StatusBar,
   StyleSheet,
   Switch,
   Text,
@@ -35,7 +34,8 @@ import { useAuthStore } from '../state/auth-store';
 import { useLedgerStore } from '../state/ledger-store';
 import { useSyncStore } from '../state/sync-store';
 import { evidenceStorageFacts } from '../capture/evidence-image';
-import { evidenceTheme as T, evidenceMono } from '../theme/evidence';
+import { useAppTheme, useThemedStyles } from '../theme/theme-context';
+import type { Theme, ThemePreference } from '../theme';
 import { abbreviateHash } from '../domain/outcome-copy';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -68,6 +68,9 @@ const ABOUT_ITEMS: { icon: IconName; label: string; description: string }[] = [
 ];
 
 export const SettingsScreen: React.FC = () => {
+  const { theme, preference, setPreference } = useAppTheme();
+  const T = theme.colors;
+  const styles = useThemedStyles(createStyles);
   const navigation = useNavigation<Nav>();
   const { language, setLanguage, audioCoaching, setAudioCoaching } = useAppStore();
   const officer = useAuthStore((s) => s.officer);
@@ -81,11 +84,38 @@ export const SettingsScreen: React.FC = () => {
   }, []);
   const reachability = useSyncStore((x) => x.reachability);
   const pendingCount = useSyncStore((x) => x.pendingCount);
+  const deadLetterCount = useSyncStore((x) => x.deadLetterCount);
   const lastSync = useSyncStore((x) => x.lastSync);
   const needsLogin = useSyncStore((x) => x.needsLogin);
+  const serverAuth = useSyncStore((x) => x.serverAuth);
+  const serverAuthSource = useSyncStore((x) => x.serverAuthSource);
   const serverUrl = useSyncStore((x) => x.serverUrl);
   const cameraEngineUrl = useSyncStore((x) => x.cameraEngineUrl);
   const cameraEngineReachability = useSyncStore((x) => x.cameraEngineReachability);
+
+  /* Server account — the API credential is SEPARATE from the device gate password.
+     The gate credential (admin/adminpass) is not an API account and is rejected with
+     HTTP 401, which used to be invisible because the health probe is public. */
+  const [apiUser, setApiUser] = useState('');
+  const [apiPass, setApiPass] = useState('');
+  const [apiNote, setApiNote] = useState<string | null>(null);
+  const [apiBusy, setApiBusy] = useState(false);
+  const saveApiAccount = async () => {
+    setApiBusy(true);
+    setApiNote(null);
+    const check = await useSyncStore.getState().saveServerCredentials({ username: apiUser, password: apiPass });
+    setApiBusy(false);
+    setApiPass('');
+    setApiNote(
+      check.ok
+        ? 'API ACCOUNT ACCEPTED — uploads will authenticate'
+        : check.reason === 'rejected'
+          ? 'REJECTED — the server answered and refused this username/password'
+          : check.reason === 'malformed'
+            ? 'Enter both a username and a password'
+            : 'NO ANSWER — the server could not be reached (check the URL and network)',
+    );
+  };
   const [urlDraft, setUrlDraft] = useState(serverUrl);
   const [engineUrlDraft, setEngineUrlDraft] = useState(cameraEngineUrl);
   const [engineNote, setEngineNote] = useState<string | null>(null);
@@ -122,8 +152,6 @@ export const SettingsScreen: React.FC = () => {
 
   return (
     <View style={styles.screen}>
-      <StatusBar barStyle="dark-content" />
-
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerTop}>
@@ -141,7 +169,7 @@ export const SettingsScreen: React.FC = () => {
           </View>
         </View>
         <Text style={styles.screenTitle}>Settings</Text>
-        <Text style={styles.headerSub}>Session · coaching · demo controls · about</Text>
+        <Text style={styles.headerSub}>Session · appearance · coaching · demo controls</Text>
       </View>
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
@@ -163,6 +191,42 @@ export const SettingsScreen: React.FC = () => {
             <Icon name="lock" size={16} color={T.dangerText} strokeWidth={2.5} />
             <Text style={[styles.secondaryBtnText, { color: T.dangerText }]}>SIGN OUT</Text>
           </TouchableOpacity>
+        </View>
+
+        {/* ============ APPEARANCE ============ */}
+        <View style={styles.card} accessibilityLabel="Appearance settings">
+          <Text style={styles.cardEyebrow}>APPEARANCE</Text>
+          <Text style={styles.cardHeading}>Choose how Parinaam looks</Text>
+          <Text style={styles.cardSubtext}>
+            Your choice is saved on this device and applies to every screen.
+          </Text>
+          <View style={styles.appearanceRow} accessibilityRole="radiogroup">
+            {([
+              { value: 'light', label: 'Light', icon: 'sun' },
+              { value: 'dark', label: 'Dark', icon: 'moon' },
+            ] as const satisfies ReadonlyArray<{
+              value: ThemePreference;
+              label: string;
+              icon: 'sun' | 'moon';
+            }>).map((option) => {
+              const selected = preference === option.value;
+              return (
+                <Pressable
+                  key={option.value}
+                  style={[styles.appearanceOption, selected && styles.appearanceOptionActive]}
+                  onPress={() => setPreference(option.value)}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected }}
+                  accessibilityLabel={`${option.label} appearance`}
+                >
+                  <Icon name={option.icon} size={18} color={selected ? T.onAccent : T.textSecondary} />
+                  <Text style={[styles.appearanceLabel, selected && styles.appearanceLabelActive]}>
+                    {option.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
         </View>
 
         {/* ============ SYNC · SERVER (v2) ============ */}
@@ -209,11 +273,71 @@ export const SettingsScreen: React.FC = () => {
           {syncNote ? <Text style={styles.syncNote} accessibilityLiveRegion="polite">{syncNote}</Text> : null}
           <Text style={styles.sealNote}>
             QUEUED {pendingCount} · LAST PASS {lastSync ? `${lastSync.synced} up / ${lastSync.failed} retry @ ${new Date(lastSync.at).toLocaleTimeString('en-IN')}` : 'none this session'}
-            {needsLogin ? ' · SIGN-IN REQUIRED FOR SERVER ACCESS' : ''}
-            {'\n'}This build caches the sign-in credential on-device (expo-secure-store) so
-            background sync can hold an API session — a prototype shortcut replaced by device-bound
-            tokens at the backend hardening pass.
+            {deadLetterCount > 0 ? ` · ${deadLetterCount} REJECTED BY SERVER (retained on device, never uploaded)` : ''}
+            {needsLogin ? ' · API ACCOUNT NEEDED' : ''}
+            {'\n'}The API account is stored on this device only (expo-secure-store) so background sync can
+            hold a server session. It is NOT the phone unlock password — a device-bound token replaces
+            this shortcut at the backend hardening pass.
           </Text>
+
+          {/* ---------- API ACCOUNT (separate from the device gate) ---------- */}
+          <View style={styles.subCard}>
+            <Text style={styles.rowTitle}>API account</Text>
+            <Text style={styles.rowSub}>
+              {serverAuth === 'rejected'
+                ? 'The server refused the stored account — uploads cannot authenticate until it is replaced.'
+                : serverAuth === 'accepted'
+                  ? `Server session established${serverAuthSource === 'launcher' ? ' (local-stack account)' : ' (officer-entered)'}.`
+                  : serverAuth === 'unset'
+                    ? 'No API account saved. The phone unlock password is not an API account.'
+                    : 'Not verified yet this session.'}
+            </Text>
+            <View style={styles.apiRow}>
+              <TextInput
+                style={styles.apiInput}
+                value={apiUser}
+                onChangeText={setApiUser}
+                placeholder="API username"
+                placeholderTextColor={T.textMuted}
+                autoCapitalize="none"
+                autoCorrect={false}
+                accessibilityLabel="API username"
+              />
+            </View>
+            <View style={styles.apiRow}>
+              <TextInput
+                style={styles.apiInput}
+                value={apiPass}
+                onChangeText={setApiPass}
+                placeholder="API password"
+                placeholderTextColor={T.textMuted}
+                secureTextEntry
+                autoCapitalize="none"
+                autoCorrect={false}
+                accessibilityLabel="API password"
+              />
+            </View>
+            <View style={styles.syncBtnRow}>
+              <TouchableOpacity
+                style={[styles.syncBtn, apiBusy && { opacity: 0.5 }]}
+                disabled={apiBusy}
+                onPress={() => void saveApiAccount()}
+                accessibilityRole="button"
+                accessibilityLabel="Verify and save the API account"
+              >
+                <Text style={styles.syncBtnText}>{apiBusy ? 'VERIFYING…' : 'VERIFY & SAVE'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.syncBtn}
+                onPress={() => void useSyncStore.getState().clearServerCredentials()}
+                accessibilityRole="button"
+                accessibilityLabel="Forget the stored API account"
+              >
+                <Text style={styles.syncBtnText}>FORGET</Text>
+              </TouchableOpacity>
+            </View>
+            {apiNote ? <Text style={styles.syncNote} accessibilityLiveRegion="polite">{apiNote}</Text> : null}
+          </View>
         </View>
 
         {/* ============ CAMERA ENGINE · LOCAL SERVICE ============ */}
@@ -426,7 +550,10 @@ export const SettingsScreen: React.FC = () => {
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => {
+  const T = theme.colors;
+  const evidenceMono = theme.fontFamily.mono;
+  return StyleSheet.create({
   syncState: { fontFamily: evidenceMono, fontSize: 11, letterSpacing: 0.6, color: T.textSecondary, marginTop: 6 },
   urlInput: {
     fontFamily: evidenceMono,
@@ -441,6 +568,26 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   syncBtnRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
+  subCard: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: T.border,
+    gap: 6,
+  },
+  apiRow: { flexDirection: 'row', gap: 8, marginTop: 8 },
+  apiInput: {
+    flex: 1,
+    backgroundColor: T.cardSubtle,
+    borderWidth: 1,
+    borderColor: T.border,
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    fontFamily: evidenceMono,
+    fontSize: 12,
+    color: T.textPrimary,
+  },
   syncBtn: { borderWidth: 1, borderColor: T.borderStrong, borderRadius: 6, paddingHorizontal: 12, paddingVertical: 8 },
   syncBtnText: { fontFamily: evidenceMono, fontSize: 11, letterSpacing: 0.6, color: T.textPrimary },
   syncNote: { fontFamily: evidenceMono, fontSize: 11, color: T.accent, marginTop: 8 },
@@ -499,6 +646,22 @@ const styles = StyleSheet.create({
   cardHeading: { fontSize: 17, fontWeight: '700', color: T.textPrimary },
   cardSubtext: { fontSize: 13, color: T.textSecondary, lineHeight: 19, marginBottom: 6 },
 
+  appearanceRow: { flexDirection: 'row', gap: 8, marginTop: 4 },
+  appearanceOption: {
+    flex: 1,
+    minHeight: 64,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: T.border,
+    backgroundColor: T.cardSubtle,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+  },
+  appearanceOptionActive: { backgroundColor: T.accent, borderColor: T.accent },
+  appearanceLabel: { fontSize: 12, fontWeight: '700', color: T.textSecondary },
+  appearanceLabelActive: { color: T.onAccent },
+
   fieldLabel: { fontSize: 10, fontWeight: '700', color: T.textMuted, letterSpacing: 0.6 },
   fieldInput: {
     minHeight: 52,
@@ -550,9 +713,9 @@ const styles = StyleSheet.create({
   },
   segmentTileActive: { backgroundColor: T.accent, borderColor: T.accent },
   segmentCode: { fontSize: 14, fontWeight: '700', color: T.textPrimary, letterSpacing: 0.5 },
-  segmentCodeActive: { color: '#FFFFFF' },
+  segmentCodeActive: { color: T.onAccent },
   segmentName: { fontSize: 9, fontWeight: '600', color: T.textSecondary, textAlign: 'center' },
-  segmentNameActive: { color: '#FFFFFF' },
+  segmentNameActive: { color: T.onAccent },
 
   switchRow: {
     flexDirection: 'row',
@@ -614,7 +777,7 @@ const styles = StyleSheet.create({
   },
   aboutBtnText: { fontSize: 12, fontWeight: '700', color: T.accent, letterSpacing: 0.4 },
 
-  scrim: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.55)', justifyContent: 'flex-end' },
+  scrim: { flex: 1, backgroundColor: T.scrim, justifyContent: 'flex-end' },
   sheet: {
     backgroundColor: T.card,
     borderTopLeftRadius: 16,
@@ -659,6 +822,7 @@ const styles = StyleSheet.create({
     padding: 12,
     marginTop: 6,
   },
-});
+  });
+};
 
 export default SettingsScreen;

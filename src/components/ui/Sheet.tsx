@@ -1,7 +1,7 @@
 /**
  * BottomSheet — Modal-based action/detail sheet. Core Animated only (reanimated is
  * version-mismatched at 3.16 vs RN 0.87 — see docs/redesign/03-design-system.md §5).
- * Motion: in 250 ms decelerate / out 200 ms accelerate; scrim rgba(0,0,0,0.85) class.
+ * Motion: in 250 ms decelerate / out 200 ms accelerate; scrim uses the theme scrim token.
  * Also exposes `SheetAction` rows for export/consume menus and a destructive confirm
  * recipe (WCAG 3.3.4 consequential-action gate).
  */
@@ -19,8 +19,9 @@ import {
   View,
 } from 'react-native';
 import { Icon, IconName } from './Icon';
-import { colors, type, radius, space, duration, z } from '../../theme';
-import { elevation, target } from '../../theme';
+import { useAppTheme, useThemedStyles } from '../../theme/theme-context';
+import { elevation } from '../../theme';
+import type { Theme } from '../../theme';
 
 interface BottomSheetProps {
   visible: boolean;
@@ -39,6 +40,9 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({
   children,
   footer,
 }) => {
+  const { theme } = useAppTheme();
+  const { colors, duration } = theme;
+  const styles = useThemedStyles(createStyles);
   const translate = useRef(new Animated.Value(0)).current;
   const fade = useRef(new Animated.Value(0)).current;
   const [mounted, setMounted] = useState(visible);
@@ -137,6 +141,9 @@ export const SheetAction: React.FC<SheetActionProps> = ({
   disabled,
   badge,
 }) => {
+  const { theme } = useAppTheme();
+  const { colors } = theme;
+  const styles = useThemedStyles(createStyles);
   const tint = destructive ? colors.fail : colors.textPrimary;
   return (
     <Pressable
@@ -163,11 +170,14 @@ export const SheetAction: React.FC<SheetActionProps> = ({
 };
 
 /** Small centered label under sheets for statutory notes (non-dismissible copy lives above). */
-export const SheetFootnote: React.FC<{ text: string }> = ({ text }) => (
-  <Text style={styles.footnote}>{text}</Text>
-);
+export const SheetFootnote: React.FC<{ text: string }> = ({ text }) => {
+  const styles = useThemedStyles(createStyles);
+  return <Text style={styles.footnote}>{text}</Text>;
+};
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => {
+  const { colors, type, radius, space, z, target } = theme;
+  return StyleSheet.create({
   backdropHost: { flex: 1, justifyContent: 'flex-end' },
   scrim: { flex: 1, backgroundColor: colors.scrim },
   sheet: {
@@ -238,4 +248,5 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     paddingTop: space.xs,
   },
-});
+  });
+};

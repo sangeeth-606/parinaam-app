@@ -16,6 +16,12 @@ import type { AddressInfo } from 'node:net';
 
 const dbFile = join(tmpdir(), `parinaam-e-${randomBytes(4).toString('hex')}.db`);
 process.env.PARINAAM_DB_FILE = dbFile;
+// The API account is deliberately NOT the device-gate credential. Bootstrapping the
+// test server with the real stack's account value (and syncing with it) is what makes
+// this suite prove the separation rather than assume it.
+const API_USER = 'admin';
+const API_PASSWORD = 'parinaam-admin-2026';
+process.env.PARINAAM_API_ADMIN_PASSWORD = API_PASSWORD;
 
 const repo = await import('../../src/db/ledger-repository.ts');
 const { useLedgerStore } = await import('../../src/state/ledger-store.ts');
@@ -35,7 +41,7 @@ describe('Phase E — real sync (device outbox ⇄ API server)', () => {
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     await seedDemo(apiDb);
     await useLedgerStore.getState().seed();
-    await rememberServerCredentials({ username: 'admin', password: 'adminpass' });
+    await rememberServerCredentials({ username: API_USER, password: API_PASSWORD });
     await useSyncStore.getState().init();
     await useSyncStore.getState().setServerUrl(base);
   });
@@ -129,17 +135,65 @@ describe('Phase E — real sync (device outbox ⇄ API server)', () => {
     await repo.queueForSync('ghost-record-uuid', 'ghost-record-uuid');
     const sum = await useSyncStore.getState().syncNow();
     assert.equal(sum.deadLettered, 1);
+    // Out of the *pending* set, but still retained: the row is marked terminal, never
+    // deleted, so an unuploaded record can never be mistaken for an uploaded one.
     assert.equal(await repo.pendingCountDb(), 0);
+    assert.deepEqual(await repo.deadLetteredUuidsDb(), ['ghost-record-uuid']);
+    assert.equal(useSyncStore.getState().deadLetterCount, 1);
     assert.ok((await repo.auditCountDb()) > 0);
     assert.ok(sum.failed <= 1);
   });
 
-  it('without cached credentials, sync reports needsLogin instead of looping', async () => {
+  it('without an API account, sync says so instead of looping', async () => {
     const { setPref } = await import('../../src/auth/session-token.ts');
     await setPref('server_credentials', ''); // force real absence via the pref layer
-    const sum = await useSyncStore.getState().syncNow();
-    assert.match(sum.error ?? '', /sign-in required/i);
-    assert.equal(useSyncStore.getState().needsLogin, true);
+    // The launcher env is a separate fallback; the test runs without one, so the
+    // honest outcome is "no API account" rather than the old "sign-in required".
+    const previousUser = process.env.EXPO_PUBLIC_API_USERNAME;
+    const previousPass = process.env.EXPO_PUBLIC_API_PASSWORD;
+    delete process.env.EXPO_PUBLIC_API_USERNAME;
+    delete process.env.EXPO_PUBLIC_API_PASSWORD;
+    try {
+      const sum = await useSyncStore.getState().syncNow();
+      assert.match(sum.error ?? '', /no API account/i);
+      assert.equal(useSyncStore.getState().needsLogin, true);
+      assert.equal(useSyncStore.getState().serverAuth, 'unset');
+    } finally {
+      if (previousUser !== undefined) process.env.EXPO_PUBLIC_API_USERNAME = previousUser;
+      if (previousPass !== undefined) process.env.EXPO_PUBLIC_API_PASSWORD = previousPass;
+    }
+  });
+
+  it('rejects a credential the server refuses, and says so while the health probe still passes', async () => {
+    const { setPref } = await import('../../src/auth/session-token.ts');
+    const previousUser = process.env.EXPO_PUBLIC_API_USERNAME;
+    const previousPass = process.env.EXPO_PUBLIC_API_PASSWORD;
+    delete process.env.EXPO_PUBLIC_API_USERNAME;
+    delete process.env.EXPO_PUBLIC_API_PASSWORD;
+    try {
+      const check = await useSyncStore.getState().saveServerCredentials({
+        username: 'admin',
+        password: 'not-the-api-password',
+      });
+      assert.equal(check.ok, false);
+      assert.equal(check.reason, 'rejected');
+      // The public health probe still reports the server as up — which is exactly why
+      // the credential state has to be surfaced separately.
+      assert.equal(await useSyncStore.getState().testConnection(), true);
+      assert.equal(useSyncStore.getState().serverAuth, 'rejected');
+      assert.equal(useSyncStore.getState().needsLogin, true);
+    } finally {
+      await setPref('server_credentials', '');
+      if (previousUser !== undefined) process.env.EXPO_PUBLIC_API_USERNAME = previousUser;
+      if (previousPass !== undefined) process.env.EXPO_PUBLIC_API_PASSWORD = previousPass;
+    }
+  });
+
+  it('accepts the real API account and clears needsLogin', async () => {
+    const check = await useSyncStore.getState().saveServerCredentials({ username: API_USER, password: API_PASSWORD });
+    assert.equal(check.ok, true, 'the seeded API account must be accepted');
+    assert.equal(useSyncStore.getState().serverAuth, 'accepted');
+    assert.equal(useSyncStore.getState().needsLogin, false);
   });
 });
 
@@ -149,7 +203,7 @@ async function token(): Promise<string> {
   const res = await fetch(base + '/api/v1/auth/login', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ username: 'admin', password: 'adminpass' }),
+    body: JSON.stringify({ username: API_USER, password: API_PASSWORD }),
   });
   const data = (await res.json()) as { token: string };
   cachedToken = data.token;

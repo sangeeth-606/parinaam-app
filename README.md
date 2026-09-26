@@ -116,6 +116,12 @@ not the normal app command.
 
 ## App development
 
+The officer app has one theme model with light and dark palettes and a
+**Light / Dark** control in **Settings → Appearance**, persisted on the
+device. The token model, the fixed camera/terminal/export surfaces, and the
+runtime API are documented in
+[`docs/appearance-theme.md`](docs/appearance-theme.md).
+
 ```bash
 npx expo prebuild
 npx expo run:android

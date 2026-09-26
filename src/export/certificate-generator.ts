@@ -5,7 +5,7 @@
  * Implements:
  * 1. Schedule to BSA 2023 s. 63(4):
  *    - Part A: Certificate by Person having Lawful Control of Device (Seizing Officer)
- *    - Part B: Certificate by Forensic / Cyber Expert (per Pune Bar Association v. UOI SC 2026)
+ *    - Part B: Certificate by Forensic / Cyber Expert
  * 2. Statutory Fields:
  *    - Device Make, Model, and COLOUR (mandatory statutory field)
  *    - Serial Number, Android ID, IMEI/MAC
@@ -13,7 +13,18 @@
  *    - SHA-256 hash digest (SHA-1 and MD5 left explicitly blank per forensic best practice)
  *    - 24-hour Indian Standard Time (IST, UTC+05:30) timestamp
  * 3. Mandatory Statutory Presumptive Disclaimer.
+ *
+ * NOTHING HERE IS INVENTED. Every field the app cannot measure is emitted as an explicit
+ * `TO BE COMPLETED` line for the human who signs the certificate. A certificate that
+ * silently carries a plausible-looking device, weight, badge or expert is worse than a
+ * visibly incomplete one, because a court cannot tell the difference.
  */
+
+/**
+ * Placeholder for any statutory field this build cannot measure. The officer signs; the
+ * app never guesses. Rule: an unknown fact is stated as unknown, never substituted.
+ */
+export const TO_BE_COMPLETED = '— TO BE COMPLETED BY THE SIGNING OFFICER —';
 
 import type { TestRecordEntity } from '../types/domain.ts';
 
@@ -91,11 +102,14 @@ export class BsaCertificateGenerator {
     const timestampIst = formatIstTimestamp(record.device_clock_iso || record.created_at);
     const generationTimeIst = formatIstTimestamp(new Date().toISOString());
 
+    // No default expert. Part B is sworn by a real forensic/cyber expert; this app
+    // cannot appoint one, and an invented name with an invented registration number is
+    // a forged credential on a statutory document.
     const defaultExpert: ExpertDetails = expert ?? {
-      expertName: 'Dr. V. K. Sharma',
-      qualification: 'M.Sc. (Forensic Science), Ph.D., Forensic Examiner',
-      institution: 'Central Forensic Science Laboratory / State FSL Cyber Division',
-      registrationNumber: 'CFSL-CYB-2026-8841',
+      expertName: TO_BE_COMPLETED,
+      qualification: TO_BE_COMPLETED,
+      institution: TO_BE_COMPLETED,
+      registrationNumber: TO_BE_COMPLETED,
     };
 
     const partAText = this.renderPartAText(record, device, custodian, timestampIst);
@@ -156,7 +170,11 @@ PART A — TO BE FILLED BY THE PERSON PRODUCING THE ELECTRONIC RECORD
 
 4. PROVENANCE & DEVICE ATTESTATION:
    - Hardware Security Level : ${record.security_level}
-   - Device Attestation Seal : ${record.device_attestation}
+   - Device Attestation Seal : ${
+     record.device_attestation
+       ? `${record.device_attestation.slice(0, 64)}… (recorded, not verified by this certificate)`
+       : 'NOT PRESENT — no device key was available; the SHA-256 chain below is the integrity evidence'
+   }
    - Timestamp of Seizure    : ${timestampIst}
 
 Signature: ___________________________
@@ -196,15 +214,18 @@ PART B — TO BE FILLED BY THE FORENSIC / CYBER EXPERT
    associated with Record UUID: ${record.record_uuid} and certify that:
    (a) The cryptographic hash chain is unbroken and sequential; no database UPDATE or DELETE
        mutations are possible per append-only database schema triggers.
-   (b) The hardware key integrity seal was verified using secp256r1 (P-256) ECDSA-SHA256,
-       originating from hardware-backed keystore keystore enclave (${record.security_level}).
+   (b) Device integrity seal status as recorded by the capturing device:
+       ${record.device_attestation ? `SEAL PRESENT (${record.security_level}) — NOT cryptographically verified by this certificate` : 'NO DEVICE SEAL PRESENT — this build records the hash chain only'}.
+       This app does not verify a hardware-backed key signature, and this certificate does
+       not assert one. Reproduce the chain independently before relying on it.
    (c) Colorimetric measurement was executed via transparent corrected CIELAB and CIEDE2000
        distance analysis; no neural network or substance-identity assertion was used.
    (d) The presumptive classification outcome recorded is: ${record.outcome}.
 
 3. HASH DIGEST VERIFICATION:
    - Stored Payload Digest   : ${record.payload_sha256}
-   - Independent Verification: VERIFIED MATCH via SHA-256 (RFC 8785 Canonical JSON)
+   - Independent Verification: NOT PERFORMED BY THIS CERTIFICATE — reproduce it with the
+     bundled verify.sh (RFC 8785 Canonical JSON, SHA-256) or POST /records/:uuid/verify
    - Sequential Chain Hash   : ${record.chain_hash}
    - Previous Block Hash     : ${record.prev_hash}
 
@@ -238,7 +259,11 @@ Date     : ${timestampIst}
     <tr><th>SHA-256 Hash Digest</th><td><code>${record.payload_sha256}</code></td></tr>
     <tr><th>Chain Hash</th><td><code>${record.chain_hash}</code></td></tr>
     <tr><th>Hardware Security Level</th><td>${record.security_level}</td></tr>
-    <tr><th>Device Attestation (Seal)</th><td class="hex-dump"><code>${record.device_attestation.slice(0, 48)}...</code></td></tr>
+    <tr><th>Device Attestation (Seal)</th><td class="hex-dump"><code>${
+      record.device_attestation
+        ? `${record.device_attestation.slice(0, 48)}...`
+        : 'NOT PRESENT — chain-only seal; see the Integrity screen'
+    }</code></td></tr>
   </table>
   <div class="affirmation-box">
     <p>I, <strong>${custodian.officerName}</strong> (${custodian.designation}), solemnly affirm that I had lawful custody of the device, which was operating normally without compromise.</p>
@@ -272,7 +297,11 @@ Date     : ${timestampIst}
     <tr><th>Confidence / Candidate Set</th><td>${(record.confidence * 100).toFixed(1)}% / ${record.conformal_set}</td></tr>
     <tr><th>Verified SHA-256 Digest</th><td><code>${record.payload_sha256}</code></td></tr>
     <tr><th>Chain Hash Linkage</th><td><code>${record.chain_hash}</code></td></tr>
-    <tr><th>Hardware Attestation Type</th><td>${record.security_level} Enclave Integrity Seal</td></tr>
+    <tr><th>Device Integrity Seal</th><td>${
+      record.device_attestation
+        ? `Present, recorded as ${record.security_level} — NOT verified by this certificate`
+        : 'NOT PRESENT — this build records the hash chain only'
+    }</td></tr>
     <tr><th>Examination Timestamp</th><td><strong>${timestampIst}</strong></td></tr>
   </table>
   <div class="sig-block">

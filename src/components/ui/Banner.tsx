@@ -7,7 +7,8 @@
 import React from 'react';
 import { StyleSheet, Text, View, StyleProp, ViewStyle } from 'react-native';
 import { Icon, IconName } from './Icon';
-import { badgeTones, BadgeTone, colors, type, radius, space } from '../../theme';
+import { useAppTheme, useThemedStyles } from '../../theme/theme-context';
+import type { Theme, BadgeTone } from '../../theme';
 
 export type BannerTone = Extract<BadgeTone, 'brand' | 'ok' | 'attention' | 'fail' | 'neutral' | 'warning' | 'danger'>;
 
@@ -33,7 +34,10 @@ interface BannerProps {
 }
 
 export const Banner: React.FC<BannerProps> = ({ tone, title, body, icon, meta, style, children }) => {
-  const t = badgeTones[tone];
+  const { theme } = useAppTheme();
+  const { colors, type } = theme;
+  const styles = useThemedStyles(createStyles);
+  const t = theme.badgeTones[tone];
   return (
     <View
       style={[styles.banner, { backgroundColor: t.bg, borderColor: t.border }, style]}
@@ -54,7 +58,9 @@ export const Banner: React.FC<BannerProps> = ({ tone, title, body, icon, meta, s
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => {
+  const { type, radius, space } = theme;
+  return StyleSheet.create({
   banner: {
     flexDirection: 'row',
     borderRadius: radius.md,
@@ -68,4 +74,5 @@ const styles = StyleSheet.create({
   title: { ...type.bodyStrong },
   meta: { opacity: 0.9 },
   body: { ...type.caption },
-});
+  });
+};

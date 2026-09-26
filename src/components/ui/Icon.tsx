@@ -6,7 +6,7 @@
 
 import React from 'react';
 import Svg, { Path, Circle, Rect, Line, G } from 'react-native-svg';
-import { colors } from '../../theme';
+import { useAppTheme } from '../../theme/theme-context';
 
 export type IconName =
   | 'duty'
@@ -37,7 +37,9 @@ export type IconName =
   | 'document'
   | 'link'
   | 'key'
-  | 'minus';
+  | 'minus'
+  | 'sun'
+  | 'moon';
 
 interface IconProps {
   name: IconName;
@@ -190,10 +192,18 @@ const shapes: Record<IconName, React.ReactNode> = {
     </G>
   ),
   minus: <Path d="M5 12h14" />,
+  sun: (
+    <G>
+      <Circle cx="12" cy="12" r="3.5" />
+      <Path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M18.7 5.3l-1.4 1.4M6.7 17.3l-1.4 1.4" />
+    </G>
+  ),
+  moon: <Path d="M19.5 14.2A7.7 7.7 0 0 1 9.8 4.5 8.3 8.3 0 1 0 19.5 14.2Z" />,
 };
 
 export const Icon: React.FC<IconProps> = ({ name, size = 22, color, strokeWidth = 1.8 }) => {
-  const stroke = color ?? colors.textPrimary;
+  const { theme } = useAppTheme();
+  const stroke = color ?? theme.colors.textPrimary;
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
       <G

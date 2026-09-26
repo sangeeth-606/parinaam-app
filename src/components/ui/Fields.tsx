@@ -18,8 +18,8 @@ import {
 } from 'react-native';
 import { PressableScale } from './PressableScale';
 import { Icon } from './Icon';
-import { colors, type, radius, space, fontWeight } from '../../theme';
-import { target } from '../../theme';
+import { useAppTheme, useThemedStyles } from '../../theme/theme-context';
+import type { Theme } from '../../theme';
 
 interface TextFieldProps {
   label: string;
@@ -55,6 +55,9 @@ export const TextField: React.FC<TextFieldProps> = ({
   style,
   accessibilityLabel,
 }) => {
+  const { theme } = useAppTheme();
+  const { colors, type } = theme;
+  const styles = useThemedStyles(createStyles);
   const [touched, setTouched] = useState(false);
   const [focused, setFocused] = useState(false);
   const error = touched && validate ? validate(value) : null;
@@ -125,8 +128,12 @@ export const SearchField: React.FC<SearchFieldProps> = ({
   onChangeText,
   placeholder = 'Search',
   style,
-}) => (
-  <View style={[styles.searchShell, style]}>
+}) => {
+  const { theme } = useAppTheme();
+  const { colors } = theme;
+  const styles = useThemedStyles(createStyles);
+  return (
+    <View style={[styles.searchShell, style]}>
     <Icon name="search" size={18} color={colors.textTertiary} />
     <TextInput
       value={value}
@@ -149,8 +156,9 @@ export const SearchField: React.FC<SearchFieldProps> = ({
         <Icon name="close" size={14} color={colors.textSecondary} strokeWidth={2.2} />
       </PressableScale>
     ) : null}
-  </View>
-);
+    </View>
+  );
+};
 
 interface SegmentedOption<T extends string> {
   value: T;
@@ -174,6 +182,7 @@ export function SegmentedControl<T extends string>({
   style,
   accessibilityLabel,
 }: SegmentedControlProps<T>): React.ReactElement {
+  const styles = useThemedStyles(createStyles);
   return (
     <View style={[styles.segShell, style]} accessibilityRole="tablist" accessibilityLabel={accessibilityLabel}>
       {options.map((opt) => {
@@ -201,7 +210,9 @@ export function SegmentedControl<T extends string>({
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => {
+  const { colors, type, radius, space, fontWeight, target } = theme;
+  return StyleSheet.create({
   field: { gap: space.xs },
   label: { color: colors.textTertiary },
   inputShell: {
@@ -266,6 +277,7 @@ const styles = StyleSheet.create({
   segLabel: { ...type.caption, color: colors.textSecondary, fontWeight: fontWeight.semibold },
   segLabelActive: { color: colors.textPrimary },
   segCaption: { ...type.micro, fontSize: 9, color: colors.textTertiary },
-});
+  });
+};
 
 export type FieldTextStyle = TextStyle;

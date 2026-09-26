@@ -203,7 +203,7 @@ export class CourtPdfBundleGenerator {
       <tr><th>Seizing Officer</th><td>${custodian.officerName} (${custodian.designation}, Badge: ${custodian.badgeNumber})</td></tr>
       <tr><th>Date & Place of Seizure</th><td>${seizure.dateOfSeizure}, ${seizure.placeOfSeizure}</td></tr>
       <tr><th>Statutory Seizure Rule</th><td>Rule 10(2) of NDPS Rules 2022 (G.S.R. 899(E))</td></tr>
-      <tr><th>Package Number</th><td><strong>${record.package_no}</strong> (Gross: ${seizure.grossWeightGrams}g, Net: ${seizure.netWeightGrams}g)</td></tr>
+      <tr><th>Package Number</th><td><strong>${record.package_no}</strong> (Gross: ${seizure.grossWeightGrams ?? 'NOT RECORDED'}g, Net: ${seizure.netWeightGrams ?? 'NOT RECORDED'}g)</td></tr>
     </table>
 
     <h2>2. Field Test Event & Presumptive Outcome</h2>

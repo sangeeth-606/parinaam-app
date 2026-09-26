@@ -8,7 +8,8 @@ import React from 'react';
 import { ScrollView, StyleSheet, Text, View, StyleProp, ViewStyle } from 'react-native';
 import { PressableScale } from './PressableScale';
 import { Icon, IconName } from './Icon';
-import { badgeTones, BadgeTone, colors, type, radius, space, fontWeight, target } from '../../theme';
+import { useAppTheme, useThemedStyles } from '../../theme/theme-context';
+import type { Theme, BadgeTone } from '../../theme';
 
 interface ChipProps {
   label: string;
@@ -31,7 +32,10 @@ export const Chip: React.FC<ChipProps> = ({
   style,
   count,
 }) => {
-  const t = badgeTones[selected ? tone : 'neutral'];
+  const { theme } = useAppTheme();
+  const styles = useThemedStyles(createStyles);
+  const { colors } = theme;
+  const t = theme.badgeTones[selected ? tone : 'neutral'];
   return (
     <PressableScale
       onPress={onPress}
@@ -71,6 +75,7 @@ interface ChipRowProps {
 }
 
 export const ChipRow: React.FC<ChipRowProps> = ({ children, scroll = false, style }) => {
+  const styles = useThemedStyles(createStyles);
   if (scroll) {
     return (
       <ScrollView
@@ -86,7 +91,9 @@ export const ChipRow: React.FC<ChipRowProps> = ({ children, scroll = false, styl
   return <View style={[styles.rowWrap, style]}>{children}</View>;
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => {
+  const { colors, type, radius, space, fontWeight, target } = theme;
+  return StyleSheet.create({
   chip: {
     minHeight: target.chipMin,
     flexDirection: 'row',
@@ -107,4 +114,5 @@ const styles = StyleSheet.create({
   row: { flexGrow: 0 },
   rowInner: { flexDirection: 'row', gap: space.sm },
   rowWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
-});
+  });
+};

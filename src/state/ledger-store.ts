@@ -38,6 +38,7 @@ import {
   persistEngineResult,
   queueForSync,
   markSyncedDb,
+  markDeadLetterStateDb,
   resetLedgerFile,
   type LedgerDbMeta,
 } from '../db/ledger-repository.ts';
@@ -78,7 +79,12 @@ export interface LedgerRecord {
   chainHash: string;
   deviceAttestation: string | null;
   sealState: SealOutcome['sealState'];
-  syncStatus: 'demo-seed' | 'queued' | 'synced';
+  /**
+   * Upload state. 'dead-letter' means the server permanently refused this record:
+   * it was never uploaded, it is retained locally rather than dropped, and the UI
+   * must say so instead of reporting an empty outbox.
+   */
+  syncStatus: 'demo-seed' | 'queued' | 'synced' | 'dead-letter';
 }
 
 type SealOutcome = Awaited<ReturnType<typeof buildSealedRecord>> extends { seal: infer S } ? S : never;
@@ -114,6 +120,7 @@ interface LedgerState {
   simulateTamper: (index: number) => Promise<ChainVerificationResult>;
   resetDemo: () => Promise<void>;
   markSynced: (uuids: string[]) => void;
+  markDeadLettered: (uuids: string[], reason?: string) => void;
 }
 
 function chainItems(records: LedgerRecord[]): HashChainRecordItem[] {
@@ -294,6 +301,25 @@ export const useLedgerStore = create<LedgerState>((set, get) => ({
       ),
     }));
     for (const uuid of eligible) void markSyncedDb(uuid).catch(() => undefined);
+  },
+
+  /**
+   * The server permanently refused these records. They stay in the ledger and stay in
+   * the queue table (marked terminal) — nothing is deleted, because a record that never
+   * reached the server must never look like a record that did.
+   */
+  markDeadLettered: (uuids, reason) => {
+    const eligible = new Set(
+      get().records
+        .filter((record) => uuids.includes(record.record_uuid) && record.syncStatus === 'queued')
+        .map((record) => record.record_uuid)
+    );
+    set((s) => ({
+      records: s.records.map((r) =>
+        eligible.has(r.record_uuid) ? { ...r, syncStatus: 'dead-letter' as const } : r
+      ),
+    }));
+    for (const uuid of eligible) void markDeadLetterStateDb(uuid, reason ?? null).catch(() => undefined);
   },
 }));
 

@@ -26,6 +26,30 @@ export const slate = {
   50: '#F7FAFD',
 } as const;
 
+/** Deep navy ramp used by the institutional dark theme. */
+export const navy = {
+  950: '#041321',
+  900: '#061B2E',
+  850: '#08243A',
+  800: '#0D2945',
+  750: '#123250',
+  700: '#1B405D',
+  600: '#2A5878',
+  500: '#416B88',
+  400: '#6E8DA5',
+  300: '#A8BECF',
+  200: '#D0DCE6',
+  100: '#F2F6FA',
+} as const;
+
+/** Restrained warm accent for dark-mode actions and selected states. */
+export const gold = {
+  300: '#FFE2A1',
+  400: '#F5B83D',
+  500: '#E6A72A',
+  600: '#C98913',
+} as const;
+
 export const sky = {
   400: '#38BDF8',
   500: '#0EA5E9',

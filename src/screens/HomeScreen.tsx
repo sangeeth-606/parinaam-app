@@ -10,13 +10,12 @@
  * Red is reserved for integrity failure (active tamper demo). Missed procedural
  * deadlines are amber (administrative guidance), never alarm-red.
  *
- * Design Language: src/theme/evidence.ts + EvidenceBits + LightTabBar (WCAG AAA
- * light; ≥48 dp targets; mono technical metadata; duty instrument, not consumer
- * dashboard). Amber disclaimer banner retired owner-side 2026-09-16 (rule 3).
+ * Design Language: src/theme (useAppTheme + useThemedStyles) + EvidenceBits + LightTabBar (high contrast; ≥48 dp targets;
+ * mono technical metadata; duty instrument, not consumer dashboard). Amber disclaimer banner retired owner-side 2026-09-16 (rule 3).
  */
 
 import React from 'react';
-import { ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/AppNavigator';
@@ -30,12 +29,16 @@ import { useSyncStore } from '../state/sync-store';
 import { useSessionStore } from '../state/session-store';
 import { useCaseContext, testedPackagesFor, suggestNextPackageFor } from '../state/case-context';
 import { useAuthStore } from '../state/auth-store';
-import { evidenceTheme as T, evidenceMono } from '../theme/evidence';
+import { useAppTheme, useThemedStyles } from '../theme/theme-context';
+import type { Theme } from '../theme';
 import { formatTimeIst, relativeIst, OFFICER_READING_SHORT, REAGENT_LABEL } from '../domain/outcome-copy';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
 export const HomeScreen: React.FC = () => {
+  const { theme } = useAppTheme();
+  const T = theme.colors;
+  const styles = useThemedStyles(createStyles);
   const navigation = useNavigation<Nav>();
   const { records, seeded, verification, demoCorrupted } = useLedgerStore();
   const reachability = useSyncStore((s) => s.reachability);
@@ -53,7 +56,6 @@ export const HomeScreen: React.FC = () => {
 
   return (
     <View style={styles.screen}>
-      <StatusBar barStyle="dark-content" />
 
       {/* Duty Header */}
       <View style={styles.header}>
@@ -226,7 +228,7 @@ export const HomeScreen: React.FC = () => {
             accessibilityRole="button"
             accessibilityLabel={hasDraft ? 'Continue the unfinished test' : activeCase ? `Test the next package ${nextPkg} for ${activeCase.caseRef}` : 'Open a case to start a field test'}
           >
-            <Icon name="camera" size={22} color="#FFFFFF" strokeWidth={2.2} />
+            <Icon name="camera" size={22} color={T.onAccent} strokeWidth={2.2} />
             <Text style={styles.primaryBtnText}>
               {hasDraft ? 'CONTINUE CURRENT TEST' : activeCase ? `FIELD TEST — ${nextPkg}` : 'OPEN CASE TO START TESTING'}
             </Text>
@@ -241,7 +243,7 @@ export const HomeScreen: React.FC = () => {
               accessibilityLabel="Resume the unfinished test capture"
             >
               <View style={styles.draftIcon}>
-                <Icon name="refresh" size={18} color="#FFFFFF" strokeWidth={2.5} />
+                <Icon name="refresh" size={18} color={T.onAccent} strokeWidth={2.5} />
               </View>
               <View style={styles.draftText}>
                 <Text style={styles.draftTitle}>Unfinished test in progress</Text>
@@ -335,6 +337,24 @@ export const HomeScreen: React.FC = () => {
                         <Icon name="chevronRight" size={16} color={T.textMuted} strokeWidth={2.4} />
                       </View>
                     </View>
+
+                    {/* This is the first screen after login: a synthetic record must never
+                        read here as a real seizure, however real its numbers look. */}
+                    {r.isDemo || r.syncStatus === 'demo-seed' ? (
+                      <View style={styles.recentDemoTag} accessibilityRole="alert">
+                        <Icon name="flask" size={11} color={T.marginalText} strokeWidth={2.4} />
+                        <Text style={styles.recentDemoTagText}>
+                          SIMULATED DEMONSTRATION RECORD — synthetic values, no device seal, never uploaded
+                        </Text>
+                      </View>
+                    ) : r.syncStatus === 'dead-letter' ? (
+                      <View style={styles.recentDemoTag}>
+                        <Icon name="alert" size={11} color={T.dangerText} strokeWidth={2.4} />
+                        <Text style={[styles.recentDemoTagText, { color: T.dangerText }]}>
+                          SERVER REJECTED — retained on this device, never uploaded
+                        </Text>
+                      </View>
+                    ) : null}
                   </TouchableOpacity>
                 ))}
               </View>
@@ -396,7 +416,10 @@ export const HomeScreen: React.FC = () => {
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: Theme) => {
+  const T = theme.colors;
+  const evidenceMono = theme.fontFamily.mono;
+  return StyleSheet.create({
   activeCaseCard: { backgroundColor: T.card, borderRadius: 8, borderWidth: 1, borderColor: T.border, padding: 14, gap: 12 },
   activeCaseHead: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
   activeCaseRef: { fontFamily: evidenceMono, fontSize: 17, fontWeight: '700', color: T.textPrimary, marginTop: 2 },
@@ -514,7 +537,7 @@ const styles = StyleSheet.create({
     backgroundColor: T.accent,
     paddingHorizontal: 16,
   },
-  primaryBtnText: { fontSize: 15, fontWeight: '700', color: '#FFFFFF', letterSpacing: 0.5 },
+  primaryBtnText: { fontSize: 15, fontWeight: '700', color: T.onAccent, letterSpacing: 0.5 },
 
   entranceWrap: { gap: 14 },
 
@@ -631,6 +654,22 @@ const styles = StyleSheet.create({
     marginLeft: 'auto',
     paddingLeft: 4,
   },
+  recentDemoTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginTop: 8,
+    paddingTop: 7,
+    borderTopWidth: 1,
+    borderTopColor: T.border,
+  },
+  recentDemoTagText: {
+    flex: 1,
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+    color: T.marginalText,
+  },
 
   actionRow: {
     flexDirection: 'row',
@@ -668,6 +707,7 @@ const styles = StyleSheet.create({
     color: T.accent,
     letterSpacing: 0.2,
   },
-});
+  });
+};
 
 export default HomeScreen;
