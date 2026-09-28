@@ -144,4 +144,37 @@ describe('Honesty guards: nothing may assert a fact it did not measure', () => {
       assert.ok(/dead_lettered_at/.test(repo), 'the ledger must record the dead-letter marker');
     });
   });
+
+  describe('Rule 4/7 — a missing measurement is absent, never defaulted', () => {
+    const results = code('src/screens/ResultsScreen.tsx');
+
+    it('does not substitute a neutral-grey CIE-Lab triple for an unmeasured capture', () => {
+      assert.ok(
+        !/l:\s*50(\.0)?\s*,\s*a:\s*0(\.0)?\s*,\s*b:\s*0(\.0)?/.test(results),
+        'a capture the engine could not measure returns normalized_color:null; that absence must be ' +
+          'refused, never sealed as {l:50,a:0,b:0}'
+      );
+    });
+
+    it('never invents a calibration grade', () => {
+      assert.ok(
+        !/grade:\s*'GOOD'/.test(results),
+        "grade 'GOOD' must come from the calibration card result, never from a literal fallback"
+      );
+    });
+
+    it('never invents a delta-E residual with a numeric fallback', () => {
+      assert.ok(
+        !/(meanDeltaE|maxDeltaE):[^,}\n]*\?\?\s*\d/.test(results),
+        'delta-E residuals must not carry numeric ?? fallbacks — absent is absent'
+      );
+    });
+
+    it('refuses to seal when no measurement exists', () => {
+      assert.ok(
+        /!\s*measuredLab\s*\|\|\s*!\s*measuredResidual/.test(results),
+        'the seal path must block on a missing Lab measurement or calibration residual'
+      );
+    });
+  });
 });

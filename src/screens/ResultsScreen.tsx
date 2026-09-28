@@ -30,6 +30,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/AppNavigator';
+import type { LabValue, CalibrationResidual } from '../types/contracts';
 
 import { Icon } from '../components/ui/Icon';
 import { LightTabBar } from '../components/ui/evidentiary/LightTabBar';
@@ -131,7 +132,41 @@ export const ResultsScreen: React.FC = () => {
       );
       const geo = await acquireGeoTag();
 
+      // v4 phase 1 — truthful measurement extraction.
+      //
+      // A capture that the engine could not measure returns `normalized_color: null` and
+      // `calibration: null` (verified live: IMAGE_QUALITY_FAILED yields exactly that). The
+      // previous code substituted a neutral-grey Lab triple and a `grade: 'GOOD'` residual,
+      // which sealed fabricated science into an append-only, hash-chained record that the
+      // server cannot distinguish from a real measurement. Absence must stay absence.
       const engineLab = burst?.engineResult?.normalizedColor?.lab;
+      const calib = burst?.engineResult?.calibration;
+
+      const measuredLab: LabValue | null = engineLab
+        ? { l: engineLab.L, a: engineLab.a, b: engineLab.b }
+        : null;
+
+      // `residual` from the session store is preferred (it carries the calibration-card
+      // decision). Otherwise derive it from the engine's calibration fit. The engine reports
+      // `fitResidualDeltaE00: number | null` — an explicit null means the fit produced no
+      // residual measurement, so there is nothing to seal and we refuse rather than invent one.
+      const measuredResidual: CalibrationResidual | null = residual
+        ? residual
+        : calib && calib.fitResidualDeltaE00 != null
+          ? {
+              meanDeltaE: calib.fitResidualDeltaE00,
+              maxDeltaE: calib.maxFitResidualDeltaE00 ?? calib.fitResidualDeltaE00,
+              // A fit residual without a card grade is not evidence of a good calibration.
+              grade: 'DEGRADED',
+            }
+          : null;
+
+      if (!measuredLab || !measuredResidual) {
+        throw new Error(
+          'No measurement was taken — the calibration card was not read, so this capture ' +
+            'cannot be sealed. Retake the assay with the reference card in frame.'
+        );
+      }
 
       const created = await appendRecord({
         imageRef: ev.saved?.ref ?? null,
@@ -145,18 +180,8 @@ export const ResultsScreen: React.FC = () => {
         kit_test_name: suspectedDrug,
         kit_make: 'Anchor Forensic',
         kit_lot_no: kitLotExpiry,
-        lab: engineLab
-          ? {
-              l: engineLab.L,
-              a: engineLab.a,
-              b: engineLab.b,
-            }
-          : { l: 50.0, a: 0.0, b: 0.0 },
-        residual: residual || {
-          meanDeltaE: burst?.engineResult?.calibration?.fitResidualDeltaE00 ?? 1.2,
-          maxDeltaE: burst?.engineResult?.calibration?.maxFitResidualDeltaE00 ?? 2.4,
-          grade: 'GOOD',
-        },
+        lab: measuredLab,
+        residual: measuredResidual,
         outcome: outcomeKind as any,
         confidence: Number(confidencePercent) / 100,
         deltaE: deltaEVal,

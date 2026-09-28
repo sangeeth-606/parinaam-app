@@ -30,6 +30,45 @@ export interface GeoTagDeps {
   } | null>;
 }
 
+/**
+ * v4 phase 4 — the achieved quality of a fix, never an assumed one (rule 10 in spirit).
+ *
+ * A handheld GNSS fix is only usable as a *position* when the receiver reports a tight
+ * accuracy circle. Beyond `GPS_POOR_ACCURACY_M` the coordinates are a region hint and must
+ * never be presented as where a seizure happened. A fix with no reported accuracy is
+ * MARGINAL rather than GOOD — absence of a measurement is not evidence of quality.
+ */
+export type GeoQuality = 'GOOD' | 'MARGINAL' | 'POOR' | 'MOCKED' | 'NONE';
+
+export const GPS_GOOD_ACCURACY_M = 10;
+export const GPS_POOR_ACCURACY_M = 100;
+
+export function gradeGeo(geo: SealGeoTag | null): GeoQuality {
+  if (!geo) return 'NONE';
+  if (geo.mocked) return 'MOCKED';
+  const a = geo.accuracyM;
+  if (a == null || !Number.isFinite(a)) return 'MARGINAL';
+  if (a <= GPS_GOOD_ACCURACY_M) return 'GOOD';
+  if (a <= GPS_POOR_ACCURACY_M) return 'MARGINAL';
+  return 'POOR';
+}
+
+/** One-line honest description of a fix, for UI. Never claims more than was measured. */
+export function describeGeo(geo: SealGeoTag | null): string {
+  switch (gradeGeo(geo)) {
+    case 'GOOD':
+      return `Fix ${geo!.lat.toFixed(6)}, ${geo!.lon.toFixed(6)} · ±${Math.round(geo!.accuracyM ?? 0)} m`;
+    case 'MARGINAL':
+      return `Approximate fix ${geo!.lat.toFixed(6)}, ${geo!.lon.toFixed(6)} · accuracy marginal`;
+    case 'POOR':
+      return `Region-level fix only · accuracy beyond ${GPS_POOR_ACCURACY_M} m`;
+    case 'MOCKED':
+      return 'Mock-provider coordinates — not a real GNSS fix';
+    default:
+      return 'No GNSS fix — record seals without coordinates';
+  }
+}
+
 export async function geoTagFromPosition(
   pos: Awaited<ReturnType<GeoTagDeps['readPosition']>>
 ): Promise<SealGeoTag | null> {

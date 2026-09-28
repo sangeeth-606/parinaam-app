@@ -15,6 +15,25 @@ something the code cannot back up) · 🧩 incomplete (module exists, wiring/ass
 
 ---
 
+## 0. version4 baseline (recorded before the v4 program)
+
+The v4 execution program is specified in [`version4.md`](../version4.md) at the repository root.
+This block is the rollback reference for every phase after it.
+
+| Fact | Value |
+|---|---|
+| Base commit | `fdf4c1507e2ea75b6a0b5486cb151ac824be471a` |
+| `npx tsc --noEmit` | **2 errors**, both `IconName`: `CaptureScreen.tsx(250,25)` and `(264,25)` — `Type '"image"' is not assignable to type 'IconName'` |
+| `npm test` | **259 tests, 259 pass, 0 fail** |
+| `npm run lint` | clean |
+| `npm run typecheck:server` | clean |
+
+There is no server-schema version beyond `1` (`LATEST_SCHEMA_VERSION`). **Do not add server DDL
+before v4 phase 14** — the migration checksum is computed over all current DDL, so any column
+addition makes the server refuse to boot against an already-migrated database.
+
+---
+
 ## 1. Citation that is NOT verified (⚠️ misleading — read before shipping any export)
 
 `src/export/certificate-generator.ts:196` (text) and `:287` (HTML) print:
