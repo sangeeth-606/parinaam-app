@@ -97,10 +97,12 @@ async function makeLive(
 }
 
 before(async () => {
+  process.env.PARINAAM_SEED_PASSWORD = 'Parinaam#2026';
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   await seedDemo(db);
   const admin = await login('admin', 'Parinaam#2026');
+  console.log('ADMIN LOGIN RESULT:', admin.status, admin.json);
   adminToken = String(admin.json.token);
   juniorToken = String((await login('gill', 'Parinaam#2026')).json.token);
   supervisorToken = String((await login('supervisor', 'Parinaam#2026')).json.token);

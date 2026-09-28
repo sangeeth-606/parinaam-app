@@ -41,6 +41,7 @@ async function serverApi(method: string, path: string, body?: unknown, auth = tr
 
 describe('v2 H3 — end-to-end acceptance matrix vs live API', () => {
   before(async () => {
+    process.env.PARINAAM_SEED_PASSWORD = 'Parinaam#2026';
     await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     await seedDemo(apiDb);

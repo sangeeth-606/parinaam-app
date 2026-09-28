@@ -5,7 +5,8 @@ import { randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { ServerDb, hashPassword, insertOfficer } from './db.ts';
 import { authenticate } from './auth.ts';
-import { routes, type ApiResponse, type Ctx } from './routes.ts';
+import { routes, ROUTE_PERMISSIONS, LEGACY_ROUTE_CODES, type ApiResponse, type Ctx } from './routes.ts';
+import { requirePermission } from './rbac.ts';
 import { subscribe, subscriberCount } from './bus.ts';
 import { seedDemo } from './seed.ts';
 import { ApiError, apiErrorBody } from '../../src/contracts/api-errors.ts';
@@ -15,7 +16,7 @@ const JSON_BODY_LIMIT = 1_000_000;
 const MAX_SSE_CLIENTS = 100;
 const PUBLIC_ROUTES = new Set(['GET /api/v1/health', 'POST /api/v1/auth/login']);
 
-type RouteMatch = { handler: (ctx: Ctx) => Promise<ApiResponse> | ApiResponse; params: Record<string, string> };
+type RouteMatch = { key: string; handler: (ctx: Ctx) => Promise<ApiResponse> | ApiResponse; params: Record<string, string> };
 
 function matchRoute(method: string, pathname: string): RouteMatch | null {
   const routeTable: Record<string, (ctx: Ctx) => Promise<ApiResponse> | ApiResponse> = routes;
@@ -42,7 +43,7 @@ function matchRoute(method: string, pathname: string): RouteMatch | null {
         break;
       }
     }
-    if (matched) return { handler, params };
+    if (matched) return { key, handler, params };
   }
   return null;
 }
@@ -232,14 +233,18 @@ export async function createApiServer(target?: string): Promise<{
         const authed = PUBLIC_ROUTES.has(routeKey) ? null : await authenticate(db, request.headers.authorization);
         if (!PUBLIC_ROUTES.has(routeKey) && !authed) throw new ApiError(401, 'AUTH_REQUIRED', 'authentication required');
 
-        if (stream && authed) {
-          if (authed.role === 'JUNIOR') {
-            throw new ApiError(403, 'STREAM_ROLE_REQUIRED', 'the live stream is restricted to reviewer roles', false);
-          }
-          openSse(request, response, requestId, origin, authed.officerCode);
+        if (stream) {
+          requirePermission(authed, 'event.stream', 'STREAM_ROLE_REQUIRED');
+          openSse(request, response, requestId, origin, authed!.officerCode);
           return;
         }
         if (!matched) throw new ApiError(404, 'ROUTE_NOT_FOUND', 'API route not found');
+
+        if (!PUBLIC_ROUTES.has(routeKey)) {
+          const perm = ROUTE_PERMISSIONS[matched.key];
+          const needed = perm !== undefined ? perm : 'record.read.own';
+          if (needed) requirePermission(authed, needed, LEGACY_ROUTE_CODES[matched.key]);
+        }
 
         let body: Record<string, unknown> | null = null;
         let rawBody: Uint8Array | null = null;

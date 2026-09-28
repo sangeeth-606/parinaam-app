@@ -5,14 +5,7 @@ import { hashPassword } from './db.ts';
 import { OFFICER_ROSTER, type OfficerRosterEntry } from '../../src/demo/officer-roster.ts';
 
 export function getSeedPassword(): string {
-  const isTest =
-    process.env.NODE_ENV === 'test' ||
-    process.execArgv.includes('--test') ||
-    process.argv.some((a) => a.includes('test'));
-  const password =
-    process.env.PARINAAM_SEED_PASSWORD ??
-    process.env.PARINAAM_API_ADMIN_PASSWORD ??
-    (isTest ? 'Parinaam#2026' : undefined);
+  const password = process.env.PARINAAM_SEED_PASSWORD ?? process.env.PARINAAM_API_ADMIN_PASSWORD;
   if (!password) {
     throw new Error('PARINAAM_SEED_PASSWORD must be set before seeding (see .env.example)');
   }

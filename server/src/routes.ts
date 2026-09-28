@@ -37,7 +37,45 @@ export interface ApiResponse {
   };
 }
 
-type RouteHandler = (ctx: Ctx) => Promise<ApiResponse> | ApiResponse;
+export type RouteHandler = (ctx: Ctx) => Promise<ApiResponse> | ApiResponse;
+
+import type { Permission } from '../../src/contracts/officer-roles.ts';
+import { requirePermission } from './rbac.ts';
+
+export const ROUTE_PERMISSIONS: Readonly<Record<string, Permission | null>> = {
+  'GET /api/v1/health':                     null,
+  'POST /api/v1/auth/login':                null,
+  'POST /api/v1/auth/logout':               null,
+  'GET /api/v1/auth/me':                    null,
+  'POST /api/v1/records':                   'record.ingest',
+  'GET /api/v1/records':                    'record.read.own',
+  'GET /api/v1/records/:uuid':              'record.read.own',
+  'GET /api/v1/records/:uuid/verify':       'record.verify',
+  'POST /api/v1/records/verify':            'record.verify',
+  'PUT /api/v1/records/:uuid/evidence':     'record.ingest',
+  'GET /api/v1/records/:uuid/evidence':     'record.read.own',
+  'GET /api/v1/cases':                      'record.read.own',
+  'GET /api/v1/cases/:caseRef':             'record.read.own',
+  'PATCH /api/v1/cases/:caseRef/status':    'case.review',
+  'PATCH /api/v1/cases/:caseRef/panchnama': 'case.review',
+  'GET /api/v1/cases/:caseRef/export':      'record.read.own',
+  'GET /api/v1/stats':                      'analytics.read',
+  'GET /api/v1/users':                      'account.manage',
+  'POST /api/v1/users':                     'account.manage',
+  'PATCH /api/v1/users/:username':          'account.manage',
+  'GET /api/v1/audit':                      'audit.read',
+};
+
+export const LEGACY_ROUTE_CODES: Readonly<Record<string, string>> = {
+  'POST /api/v1/records':                   'INGEST_ROLE_REQUIRED',
+  'PUT /api/v1/records/:uuid/evidence':     'INGEST_ROLE_REQUIRED',
+  'PATCH /api/v1/cases/:caseRef/status':    'REVIEW_ROLE_REQUIRED',
+  'PATCH /api/v1/cases/:caseRef/panchnama': 'REVIEW_ROLE_REQUIRED',
+  'GET /api/v1/users':                      'ADMIN_REQUIRED',
+  'POST /api/v1/users':                     'ADMIN_REQUIRED',
+  'PATCH /api/v1/users/:username':          'ADMIN_REQUIRED',
+  'GET /api/v1/audit':                      'AUDIT_ROLE_REQUIRED',
+};
 
 function officer(ctx: Ctx): AuthedOfficer {
   if (!ctx.officer) throw new ApiError(401, 'AUTH_REQUIRED', 'authentication required');
@@ -45,11 +83,7 @@ function officer(ctx: Ctx): AuthedOfficer {
 }
 
 function writer(ctx: Ctx): AuthedOfficer {
-  const authed = officer(ctx);
-  if (authed.role !== 'ADMIN' && authed.role !== 'SENIOR' && authed.role !== 'JUNIOR') {
-    throw new ApiError(403, 'INGEST_ROLE_REQUIRED', 'record ingestion is restricted to junior, senior, and admin officers');
-  }
-  return authed;
+  return requirePermission(ctx.officer, 'record.ingest', 'INGEST_ROLE_REQUIRED');
 }
 
 async function verifyStoredRecord(
