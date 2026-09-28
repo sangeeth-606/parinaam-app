@@ -101,7 +101,7 @@ const expoEnv = {
   // credential (admin/adminpass), which the API rejects. Sourced from the same
   // compose variables the server starts with, so the two always agree.
   EXPO_PUBLIC_API_USERNAME: process.env.PARINAAM_API_ADMIN_USER ?? 'admin',
-  EXPO_PUBLIC_API_PASSWORD: process.env.PARINAAM_API_ADMIN_PASSWORD ?? 'parinaam-admin-2026',
+  EXPO_PUBLIC_API_PASSWORD: process.env.PARINAAM_SEED_PASSWORD ?? process.env.PARINAAM_API_ADMIN_PASSWORD ?? 'Parinaam#2026',
 };
 if (flags.go) expoEnv.EXPO_NO_REDIRECT_PAGE = '1';
 

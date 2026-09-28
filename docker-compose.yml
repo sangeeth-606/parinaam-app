@@ -53,8 +53,8 @@ services:
       PARINAAM_DB: postgres
       # In-network DSN: service name `db`, internal port 5432.
       DATABASE_URL: postgres://${POSTGRES_USER:-parinaam}:${POSTGRES_PASSWORD:-parinaam}@db:5432/${POSTGRES_DB:-parinaam}
-      # Demo officer seeded on first boot.
-      PARINAAM_API_ADMIN_PASSWORD: ${PARINAAM_API_ADMIN_PASSWORD:-parinaam-admin-2026}
+      # Demo officers seeded on first boot.
+      PARINAAM_SEED_PASSWORD: ${PARINAAM_SEED_PASSWORD:-Parinaam#2026}
       # Internal listen port is fixed; the host mapping below is what you change.
       PARINAAM_API_PORT: 8571
       # Opt-in: load the realistic demo dataset when the database is empty.
@@ -142,7 +142,7 @@ services:
       NODE_ENV: production
       PARINAAM_DB: postgres
       DATABASE_URL: postgres://${POSTGRES_USER:-parinaam}:${POSTGRES_PASSWORD:-parinaam}@db:5432/${POSTGRES_DB:-parinaam}
-      PARINAAM_API_ADMIN_PASSWORD: ${PARINAAM_API_ADMIN_PASSWORD:-parinaam-admin-2026}
+      PARINAAM_SEED_PASSWORD: ${PARINAAM_SEED_PASSWORD:-Parinaam#2026}
     command: ["node", "--experimental-strip-types", "server/src/seed.ts"]
     restart: "no"
     # No host port: an init-style job, run on demand (`docker compose run --rm seed`).

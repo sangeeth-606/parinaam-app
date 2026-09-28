@@ -37,9 +37,9 @@ export interface Officer {
 /** The single seeded device profile (admin/adminpass) — honest demo identity. */
 export const DEMO_OFFICER: Officer = {
   id: 'OFFICER-ADMIN',
-  name: 'IC-9007 Gill',
-  rank: 'Duty Officer',
-  badge: 'IC-9007',
+  name: 'Anil Kumar Verma',
+  rank: 'Deputy Commissioner',
+  badge: 'OFFICER-ADMIN',
   role: 'ADMIN',
   username: 'admin',
 };

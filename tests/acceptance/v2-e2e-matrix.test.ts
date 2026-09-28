@@ -44,10 +44,10 @@ describe('v2 H3 — end-to-end acceptance matrix vs live API', () => {
     await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     await seedDemo(apiDb);
-    const login = await serverApi('POST', '/api/v1/auth/login', { username: 'admin', password: 'adminpass' }, false);
+    const login = await serverApi('POST', '/api/v1/auth/login', { username: 'admin', password: 'Parinaam#2026' }, false);
     adminToken = String(login.json.token);
     await useLedgerStore.getState().seed();
-    await rememberServerCredentials({ username: 'admin', password: 'adminpass' });
+    await rememberServerCredentials({ username: 'admin', password: 'Parinaam#2026' });
     await useSyncStore.getState().init();
     await useSyncStore.getState().setServerUrl(base);
   });

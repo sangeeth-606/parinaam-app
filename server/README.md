@@ -88,20 +88,22 @@ as uploaded by the officer app.
 
 ### Seed accounts
 
-The following are **local demonstration credentials only**. On Compose, the
-admin account is created from `PARINAAM_API_ADMIN_PASSWORD` before the seed
-runs; if that variable is changed, the Compose default below is not used.
-The other accounts are created by `server/src/seed.ts` with these passwords.
+The following are **local demonstration credentials only**. All seeded demo
+accounts share the demo password from `PARINAAM_SEED_PASSWORD` (set in `.env`).
+On initial seed, the complete credential card is written to `server/data/DEMO-CREDENTIALS.txt` (gitignored).
 
-| Username | Password | Role | Access summary |
-|---|---|---|---|
-| `admin` | `parinaam-admin-2026` (or `PARINAAM_API_ADMIN_PASSWORD`) | `ADMIN` | Full account, analytics, audit, ingest, and review access |
-| `supervisor` | `parinaam-super-2026` | `SUPERVISOR` | Read, analytics, audit, and case review; no account management |
-| `judiciary` | `parinaam-jud-2026` | `JUDICIARY` | Read, verification, and export access only |
-| `sharma` | `parinaam-officer-2026` | `SENIOR` | Ingest as self, read all, verify, and review |
-| `gill` | `parinaam-officer-2026` | `JUNIOR` | Ingest as self and read only attributed records/cases |
-| `mukherjee` | `parinaam-officer-2026` | `SENIOR` | Ingest as self, read all, verify, and review |
-| `rao` | `parinaam-officer-2026` | `SENIOR` | Ingest as self, read all, verify, and review |
+| Username | Role | Officer Code | Display Name | Unit |
+|---|---|---|---|---|
+| `admin` | `ADMIN` | `OFFICER-ADMIN` | Anil Kumar Verma | NCB Headquarters, New Delhi |
+| `supervisor` | `SUPERVISOR` | `OFFICER-SUPERVISOR` | Farah Nasim Qureshi | NCB Zonal Office, Mumbai |
+| `iyer` | `SUPERVISOR` | `AC-7788` | Meenakshi Iyer | NCB Zonal Office, Bengaluru |
+| `sharma` | `SENIOR` | `HC-4412` | Baljinder Singh Sidhu | NCB Zonal Office, Delhi |
+| `mukherjee` | `SENIOR` | `SI-5521` | Priya Mukherjee | Kolkata Railway Parcel Intelligence Unit |
+| `rao` | `SENIOR` | `INSP-1044` | Venkateswara Rao | NCB Intelligence Bureau, Bengaluru |
+| `kapoor` | `SENIOR` | `DSP-3310` | Ranjeet Singh Kapoor | Delhi Police Crime Branch, Central District |
+| `patel` | `SENIOR` | `IC-2264` | Hetalben Patel | Air Cargo Intelligence Cell, Delhi |
+| `gill` | `JUNIOR` | `IC-9007` | Sukhdev Singh Gill | NCB Zonal Office, Delhi |
+| `reddy` | `JUDICIARY` | `JM-5501` | Ananya Reddy | Fast Track Court, Hyderabad |
 
 New accounts created through the API start as `PENDING`, must be approved by
 an `ADMIN`, and cannot log in until approved. Suspended or pending accounts
@@ -245,7 +247,7 @@ installed only by the local seed process.
 BASE=http://127.0.0.1:8571/api/v1
 ADMIN_TOKEN=$(curl -fsS -X POST "$BASE/auth/login" \
   -H 'content-type: application/json' \
-  -d '{"username":"admin","password":"parinaam-admin-2026"}' | jq -r .token)
+  -d '{"username":"admin","password":"'"${PARINAAM_SEED_PASSWORD:-Parinaam#2026}"'"}' | jq -r .token)
 
 curl -fsS -H "Authorization: Bearer $ADMIN_TOKEN" "$BASE/stats" | jq
 curl -fsS -H "Authorization: Bearer $ADMIN_TOKEN" \

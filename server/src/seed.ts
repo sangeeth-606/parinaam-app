@@ -1,7 +1,6 @@
 /** Deterministic self-hosted demo accounts, cases, and evidence for local use only. */
 
-import { ServerDb, type OfficerRole } from './db.ts';
-import { hashPassword, insertOfficer } from './db.ts';
+import { ServerDb } from './db.ts';
 import {
   buildDemoFieldTestRecords,
   DEMO_CASES,
@@ -12,49 +11,14 @@ import {
 import { canonicalizeJson } from '../../src/crypto/canonical-json.ts';
 import { verifyFieldTestRecord } from './verify.ts';
 
-interface DemoAccount {
-  username: string;
-  password: string;
-  displayName: string;
-  role: OfficerRole;
-  officerCode: string;
-}
-
-export const DEMO_ACCOUNTS: readonly DemoAccount[] = [
-  { username: 'admin', password: 'parinaam-admin-2026', displayName: 'System Administrator', role: 'ADMIN', officerCode: 'OFFICER-ADMIN' },
-  { username: 'supervisor', password: 'parinaam-super-2026', displayName: 'Review Supervisor', role: 'SUPERVISOR', officerCode: 'OFFICER-SUPERVISOR' },
-  { username: 'judiciary', password: 'parinaam-jud-2026', displayName: 'Judiciary Reviewer', role: 'JUDICIARY', officerCode: 'OFFICER-JUDICIARY' },
-  { username: 'sharma', password: 'parinaam-officer-2026', displayName: 'Head Constable R. Sharma', role: 'SENIOR', officerCode: 'HC-4412' },
-  { username: 'gill', password: 'parinaam-officer-2026', displayName: 'Intelligence Officer S. Gill', role: 'JUNIOR', officerCode: 'IC-9007' },
-  { username: 'mukherjee', password: 'parinaam-officer-2026', displayName: 'Sub-Inspector A. Mukherjee', role: 'SENIOR', officerCode: 'SI-5521' },
-  { username: 'rao', password: 'parinaam-officer-2026', displayName: 'Inspector V. Rao', role: 'SENIOR', officerCode: 'INSP-1044' },
-] as const;
+import { seedOfficers } from './seed-officers.ts';
+export { OFFICER_ROSTER } from '../../src/demo/officer-roster.ts';
 
 export interface SeedResult {
   accountsCreated: number;
   recordsInserted: number;
   casesInserted: number;
   datasetVersion: typeof DEMO_DATASET_VERSION;
-}
-
-async function ensureAccount(db: ServerDb, account: DemoAccount): Promise<boolean> {
-  const existing = await db.store.get<{ id: number | string }>(
-    'SELECT id FROM officers WHERE username = ?',
-    account.username
-  );
-  if (existing) return false;
-  const salt = await hashPassword(account.password);
-  await insertOfficer(
-    db,
-    account.username,
-    salt.salt,
-    salt.hash,
-    account.displayName,
-    account.role,
-    account.officerCode,
-    'ACTIVE'
-  );
-  return true;
 }
 
 export async function seedDemo(db: ServerDb): Promise<SeedResult> {
@@ -71,10 +35,7 @@ export async function seedDemo(db: ServerDb): Promise<SeedResult> {
     if (!verified.ok) throw new Error(`shared demo record ${record.seq} failed verification: ${verified.code}`);
   }
 
-  let accountsCreated = 0;
-  for (const account of DEMO_ACCOUNTS) {
-    if (await ensureAccount(db, account)) accountsCreated += 1;
-  }
+  const accountsCreated = await seedOfficers(db);
 
   const demoFlag = db.engine === 'postgres' ? true : 1;
   const result = await db.store.transaction(async (tx) => {
@@ -101,15 +62,16 @@ export async function seedDemo(db: ServerDb): Promise<SeedResult> {
     for (const record of records) {
       await tx.run(
         `INSERT INTO field_test (
-          seq, record_uuid, case_ref, package_no, operator_id, operator_name, outcome, confidence,
+          seq, record_uuid, case_ref, package_no, officer_code, operator_id, operator_name, outcome, confidence,
           reagent, kit_type, kit_batch, region, department, location_label,
           created_at, received_at, payload_jcs, record_hash, prev_hash, chain_hash,
           device_attestation, image_ref, image_sha256, is_demo, body
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         record.seq,
         record.record_uuid,
         record.case_ref,
         record.package_no,
+        record.operator_id,
         record.operator_id,
         record.operator_name,
         record.outcome,
