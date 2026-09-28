@@ -13,6 +13,22 @@ platform. The API does not write to any government system.
 The normative HTTP description is [`openapi.yaml`](openapi.yaml). The shared
 record contract is [`../src/contracts/field-test-record.ts`](../src/contracts/field-test-record.ts).
 
+### Documentation Guides for Dashboard & Integration Teams
+For complete specifications beyond the HTTP interface, consult:
+- [**Data Model Reference**](../docs/data-model-reference.md) — Comprehensive guide to all 10 server tables, constraints, append-only triggers, and projection columns.
+- [**Mobile-to-Server Ingestion Contract**](../docs/mobile-to-server-contract.md) — The 28-key wire format, two-step ingestion protocol, and what stays on the mobile phone.
+- [**Integration Gotchas**](../docs/integration-gotchas.md) — 16 non-obvious integration gotchas for web and dashboard engineers.
+
+### Role-Based Access Control (RBAC)
+Role definitions, capability matrices, and endpoint access controls are consolidated in:
+- [`src/contracts/officer-roles.ts`](../src/contracts/officer-roles.ts) — Canonical roles (`JUNIOR`, `SENIOR`, `ADMIN`, `SUPERVISOR`, `JUDICIARY`) and capability definitions.
+- [`server/src/rbac.ts`](src/rbac.ts) — Guard functions (`can()`, `requirePermission()`, `visibilityScope()`) used across API route dispatch.
+
+### Demo Credentials Card
+When the server seeds synthetic demo accounts on first boot or via `docker compose run --rm seed`, credentials
+are generated from `PARINAAM_SEED_PASSWORD` and printed to the terminal. They are also written to a gitignored credentials card at:
+`server/data/DEMO-CREDENTIALS.txt` (local inspection only; never committed).
+
 ## Run with PostgreSQL
 
 Requirements: Docker Compose v2 and Node.js 22+ (Node is only needed for the
