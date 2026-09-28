@@ -132,15 +132,16 @@ export async function ingestRecord(
     const receivedAt = new Date().toISOString();
     await tx.run(
       `INSERT INTO field_test (
-        seq, record_uuid, case_ref, package_no, operator_id, operator_name, outcome, confidence,
+        seq, record_uuid, case_ref, package_no, officer_code, operator_id, operator_name, outcome, confidence,
         reagent, kit_type, kit_batch, region, department, location_label,
         created_at, received_at, payload_jcs, record_hash, prev_hash, chain_hash,
         device_attestation, image_ref, image_sha256, is_demo, body
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       record.seq,
       record.record_uuid,
       record.case_ref,
       record.package_no,
+      officer.officerCode,
       record.operator_id,
       record.operator_name,
       record.outcome,

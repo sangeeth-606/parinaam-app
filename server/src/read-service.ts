@@ -348,10 +348,18 @@ export async function getStats(db: ServerDb, officer: AuthedOfficer, query: URLS
   const head = await db.store.get<{ seq: number; chain_hash: string; updated_at: string }>(
     'SELECT seq, chain_hash, updated_at FROM ledger_head WHERE id = 1'
   );
-  const accountRows = await db.store.all<{ status: string; count: number }>(
-    'SELECT status, COUNT(*) AS count FROM officers GROUP BY status'
-  );
-  const accounts = Object.fromEntries(accountRows.map((row) => [row.status, Number(row.count)]));
+  let accounts: { active: number; pending: number; suspended: number } | undefined;
+  if (officer.role === 'ADMIN' || officer.role === 'SUPERVISOR') {
+    const accountRows = await db.store.all<{ status: string; count: number }>(
+      'SELECT status, COUNT(*) AS count FROM officers GROUP BY status'
+    );
+    const counts = Object.fromEntries(accountRows.map((row) => [row.status, Number(row.count)]));
+    accounts = {
+      active: Number(counts.ACTIVE ?? 0),
+      pending: Number(counts.PENDING ?? 0),
+      suspended: Number(counts.SUSPENDED ?? 0),
+    };
+  }
   return {
     totals: {
       records: Number(totals?.records ?? 0),
@@ -363,10 +371,6 @@ export async function getStats(db: ServerDb, officer: AuthedOfficer, query: URLS
     records_by_outcome: Object.fromEntries(byOutcome.map((row) => [row.outcome, Number(row.count)])),
     cases_by_region: Object.fromEntries(byRegion.map((row) => [row.region, { cases: Number(row.case_count), records: Number(row.count) }])),
     ledger_head: head ? { seq: Number(head.seq), chain_hash: head.chain_hash, updated_at: head.updated_at } : null,
-    accounts: {
-      active: Number(accounts.ACTIVE ?? 0),
-      pending: Number(accounts.PENDING ?? 0),
-      suspended: Number(accounts.SUSPENDED ?? 0),
-    },
+    ...(accounts ? { accounts } : {}),
   };
 }

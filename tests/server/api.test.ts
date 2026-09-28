@@ -223,6 +223,10 @@ describe('Parinaam self-hosted API contract', () => {
     const stats = await api('GET', '/api/v1/stats');
     assert.equal(stats.status, 200);
     assert.ok((stats.json.totals as { records: number }).records >= 18);
+    assert.ok(stats.json.accounts, 'admin should see accounts breakdown in stats');
+    const juniorStats = await api('GET', '/api/v1/stats', { token: juniorToken });
+    assert.equal(juniorStats.status, 200);
+    assert.equal(juniorStats.json.accounts, undefined, 'junior should not see accounts breakdown in stats');
     const exported = await api('GET', '/api/v1/cases/LIVE%2FAPI%2FCR-01%2F2026/export?formats=pdf,docx,xlsx');
     assert.equal(exported.status, 200);
     assert.deepEqual(exported.json.requested_formats, ['pdf', 'docx', 'xlsx']);

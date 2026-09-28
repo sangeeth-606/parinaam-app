@@ -10,10 +10,10 @@
 import { createHash } from 'node:crypto';
 import type { SqlEngine, SqlStore } from './storage.ts';
 
-export const LATEST_SCHEMA_VERSION = 1;
+export const LATEST_SCHEMA_VERSION = 2;
 export const SCHEMA_MIGRATION_NAME = 'server_schema_v1';
 
-const MIGRATION_IDENTITY = `${LATEST_SCHEMA_VERSION}:${SCHEMA_MIGRATION_NAME}`;
+const MIGRATION_IDENTITY = '1:server_schema_v1';
 const MIGRATION_ALGORITHM = 'transactional-legacy-baseline-v1';
 
 import { OFFICER_ROLES as OFFICER_ROLES_ARRAY } from '../../src/contracts/officer-roles.ts';
@@ -1767,7 +1767,7 @@ async function applyPostgresBaseline(store: SqlStore): Promise<boolean> {
   return false;
 }
 
-function migrationChecksum(): string {
+function v1MigrationChecksum(): string {
   const canonicalSql = JSON.stringify({
     identity: MIGRATION_IDENTITY,
     algorithm: MIGRATION_ALGORITHM,
@@ -1776,6 +1776,99 @@ function migrationChecksum(): string {
   });
   return createHash('sha256').update(canonicalSql, 'utf8').digest('hex');
 }
+
+const SQLITE_V2_COLUMNS = [
+  'ALTER TABLE officers ADD COLUMN rank TEXT',
+  'ALTER TABLE officers ADD COLUMN department TEXT',
+  'ALTER TABLE officers ADD COLUMN unit TEXT',
+  'ALTER TABLE officers ADD COLUMN region_code TEXT',
+  'ALTER TABLE officers ADD COLUMN service_id TEXT',
+  'ALTER TABLE officers ADD COLUMN official_email TEXT',
+  'ALTER TABLE officers ADD COLUMN phone TEXT',
+  'ALTER TABLE officers ADD COLUMN reporting_officer_code TEXT REFERENCES officers(officer_code)',
+  'ALTER TABLE officers ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0',
+  'ALTER TABLE officers ADD COLUMN password_changed_at TEXT',
+  'ALTER TABLE officers ADD COLUMN failed_attempts INTEGER NOT NULL DEFAULT 0',
+  'ALTER TABLE officers ADD COLUMN locked_until TEXT',
+  'ALTER TABLE officers ADD COLUMN mfa_secret TEXT',
+  "ALTER TABLE officers ADD COLUMN pass_algo TEXT NOT NULL DEFAULT 'scrypt-v1'",
+];
+
+const POSTGRES_V2_COLUMNS = [
+  'ALTER TABLE officers ADD COLUMN IF NOT EXISTS rank TEXT',
+  'ALTER TABLE officers ADD COLUMN IF NOT EXISTS department TEXT',
+  'ALTER TABLE officers ADD COLUMN IF NOT EXISTS unit TEXT',
+  'ALTER TABLE officers ADD COLUMN IF NOT EXISTS region_code TEXT',
+  'ALTER TABLE officers ADD COLUMN IF NOT EXISTS service_id TEXT',
+  'ALTER TABLE officers ADD COLUMN IF NOT EXISTS official_email TEXT',
+  'ALTER TABLE officers ADD COLUMN IF NOT EXISTS phone TEXT',
+  'ALTER TABLE officers ADD COLUMN IF NOT EXISTS reporting_officer_code TEXT REFERENCES officers(officer_code)',
+  'ALTER TABLE officers ADD COLUMN IF NOT EXISTS must_change_password INTEGER NOT NULL DEFAULT 0',
+  'ALTER TABLE officers ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMPTZ',
+  'ALTER TABLE officers ADD COLUMN IF NOT EXISTS failed_attempts INTEGER NOT NULL DEFAULT 0',
+  'ALTER TABLE officers ADD COLUMN IF NOT EXISTS locked_until TIMESTAMPTZ',
+  'ALTER TABLE officers ADD COLUMN IF NOT EXISTS mfa_secret TEXT',
+  "ALTER TABLE officers ADD COLUMN IF NOT EXISTS pass_algo TEXT NOT NULL DEFAULT 'scrypt-v1'",
+];
+
+function v2MigrationChecksum(): string {
+  const sql = JSON.stringify({
+    name: 'officer_schema_v2',
+    sqlite: SQLITE_V2_COLUMNS,
+    postgres: POSTGRES_V2_COLUMNS,
+  });
+  return createHash('sha256').update(sql, 'utf8').digest('hex');
+}
+
+async function applySqliteMigrationV2(store: SqlStore): Promise<void> {
+  for (const sql of SQLITE_V2_COLUMNS) {
+    try {
+      await store.run(sql);
+    } catch (e) {
+      if (!/duplicate column name/i.test(String(e))) throw e;
+    }
+  }
+  await store.run("UPDATE cases SET department = 'UNSPECIFIED' WHERE department = 'NCB'");
+}
+
+async function applyPostgresMigrationV2(store: SqlStore): Promise<void> {
+  for (const sql of POSTGRES_V2_COLUMNS) {
+    await store.run(sql);
+  }
+  await store.run("UPDATE cases SET department = 'UNSPECIFIED' WHERE department = 'NCB'");
+}
+
+export interface MigrationStep {
+  version: number;
+  name: string;
+  apply: (store: SqlStore) => Promise<boolean | void>;
+  checksum: () => string;
+}
+
+export const MIGRATIONS: readonly MigrationStep[] = [
+  {
+    version: 1,
+    name: 'server_schema_v1',
+    apply: async (store: SqlStore) => {
+      return store.engine === 'node:sqlite'
+        ? await applySqliteBaseline(store)
+        : await applyPostgresBaseline(store);
+    },
+    checksum: v1MigrationChecksum,
+  },
+  {
+    version: 2,
+    name: 'officer_schema_v2',
+    apply: async (store: SqlStore) => {
+      if (store.engine === 'node:sqlite') {
+        await applySqliteMigrationV2(store);
+      } else {
+        await applyPostgresMigrationV2(store);
+      }
+    },
+    checksum: v2MigrationChecksum,
+  },
+];
 
 function safeMigrationMessage(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
@@ -1796,7 +1889,8 @@ async function readAppliedVersion(store: SqlStore): Promise<AppliedMigrationRow[
         `database schema version ${version} is newer than supported version ${LATEST_SCHEMA_VERSION}`,
       );
     }
-    if (version === LATEST_SCHEMA_VERSION && (row.name !== SCHEMA_MIGRATION_NAME || row.checksum !== migrationChecksum())) {
+    const step = MIGRATIONS.find((m) => m.version === version);
+    if (!step || row.name !== step.name || row.checksum !== step.checksum()) {
       throw new MigrationError(`schema migration ${version} does not match this server build`);
     }
   }
@@ -1807,8 +1901,9 @@ export async function runMigrations(store: SqlStore): Promise<MigrationResult> {
   await store.run(migrationTableSql(store.engine));
 
   const existingRows = await readAppliedVersion(store);
-  if (existingRows.some((row) => Number(row.version) === LATEST_SCHEMA_VERSION)) {
-    return { fromVersion: LATEST_SCHEMA_VERSION, toVersion: LATEST_SCHEMA_VERSION, fresh: false };
+  const maxApplied = existingRows.length > 0 ? Math.max(...existingRows.map((r) => Number(r.version))) : 0;
+  if (maxApplied >= LATEST_SCHEMA_VERSION) {
+    return { fromVersion: maxApplied, toVersion: LATEST_SCHEMA_VERSION, fresh: false };
   }
 
   const sqliteForeignKeysDisabled = store.engine === 'node:sqlite';
@@ -1819,22 +1914,30 @@ export async function runMigrations(store: SqlStore): Promise<MigrationResult> {
         await transaction.run('SELECT pg_advisory_xact_lock(1937001, 1)');
       }
       const concurrentRows = await readAppliedVersion(transaction);
-      if (concurrentRows.some((row) => Number(row.version) === LATEST_SCHEMA_VERSION)) {
-        return { fromVersion: LATEST_SCHEMA_VERSION, toVersion: LATEST_SCHEMA_VERSION, fresh: false };
+      let currentVersion = concurrentRows.length > 0 ? Math.max(...concurrentRows.map((r) => Number(r.version))) : 0;
+      if (currentVersion >= LATEST_SCHEMA_VERSION) {
+        return { fromVersion: currentVersion, toVersion: LATEST_SCHEMA_VERSION, fresh: false };
       }
 
-      const fresh =
-        store.engine === 'node:sqlite'
-          ? await applySqliteBaseline(transaction)
-          : await applyPostgresBaseline(transaction);
-      await transaction.run(
-        'INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (?,?,?,?)',
-        LATEST_SCHEMA_VERSION,
-        SCHEMA_MIGRATION_NAME,
-        migrationChecksum(),
-        new Date().toISOString(),
-      );
-      return { fromVersion: 0, toVersion: LATEST_SCHEMA_VERSION, fresh };
+      const fromVersion = currentVersion;
+      let fresh = false;
+
+      for (const step of MIGRATIONS) {
+        if (step.version > currentVersion) {
+          const stepFresh = await step.apply(transaction);
+          if (step.version === 1 && stepFresh === true) fresh = true;
+          await transaction.run(
+            'INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (?,?,?,?)',
+            step.version,
+            step.name,
+            step.checksum(),
+            new Date().toISOString(),
+          );
+          currentVersion = step.version;
+        }
+      }
+
+      return { fromVersion, toVersion: LATEST_SCHEMA_VERSION, fresh };
     });
   } catch (error) {
     if (error instanceof MigrationError) throw error;
