@@ -149,6 +149,7 @@ export const routes = {
       status: 200,
       json: {
         token: authed.token,
+        expires_at: authed.expiresAt,
         officer: {
           id: authed.id,
           officer_code: authed.officerCode,
@@ -163,7 +164,7 @@ export const routes = {
 
   'POST /api/v1/auth/logout': async (ctx: Ctx): Promise<ApiResponse> => {
     const authed = officer(ctx);
-    await logout(ctx.db, authed.token);
+    await logout(ctx.db, authed.token, authed);
     return { status: 200, json: { ok: true } };
   },
 

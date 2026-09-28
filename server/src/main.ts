@@ -4,7 +4,7 @@ import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { ServerDb, hashPassword, insertOfficer } from './db.ts';
-import { authenticate } from './auth.ts';
+import { authenticate, type AuthedOfficer } from './auth.ts';
 import { routes, ROUTE_PERMISSIONS, LEGACY_ROUTE_CODES, type ApiResponse, type Ctx } from './routes.ts';
 import { requirePermission } from './rbac.ts';
 import { subscribe, subscriberCount } from './bus.ts';
@@ -210,6 +210,9 @@ export async function createApiServer(target?: string): Promise<{
     void (async () => {
       const requestId = randomUUID();
       let origin: string | null = null;
+      let currentRouteKey = 'UNKNOWN';
+      let currentAuthed: AuthedOfficer | null = null;
+      const ip = trustedClientIp(request);
       try {
         origin = allowedOrigin(request.headers.origin);
         if (request.method === 'OPTIONS') {
@@ -226,11 +229,13 @@ export async function createApiServer(target?: string): Promise<{
         }
         const method = request.method ?? 'GET';
         const routeKey = `${method} ${url.pathname}`;
+        currentRouteKey = routeKey;
         const stream = method === 'GET' && url.pathname === '/api/v1/stream';
         const matched = stream ? null : matchRoute(method, url.pathname);
         if (!stream && !matched) throw new ApiError(404, 'ROUTE_NOT_FOUND', 'API route not found');
 
-        const authed = PUBLIC_ROUTES.has(routeKey) ? null : await authenticate(db, request.headers.authorization);
+        const authed = PUBLIC_ROUTES.has(routeKey) ? null : await authenticate(db, request.headers.authorization, ip, requestId);
+        currentAuthed = authed;
         if (!PUBLIC_ROUTES.has(routeKey) && !authed) throw new ApiError(401, 'AUTH_REQUIRED', 'authentication required');
 
         if (stream) {
@@ -283,6 +288,14 @@ export async function createApiServer(target?: string): Promise<{
           return;
         }
         if (error instanceof ApiError) {
+          if (error.status === 403) {
+            await db.audit(
+              currentAuthed?.username ?? 'anonymous',
+              'permission-denied',
+              currentRouteKey,
+              `${currentRouteKey}: ${error.message} (${error.code})`
+            ).catch(() => {});
+          }
           sendJson(response, requestId, origin, error.status, apiErrorBody(error, requestId));
           return;
         }

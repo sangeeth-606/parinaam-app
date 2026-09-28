@@ -16,6 +16,7 @@ function mockOfficer(role: (typeof OFFICER_ROLES)[number], officerCode = 'OFFICE
     role,
     status: 'ACTIVE',
     token: 'tok-1',
+    expiresAt: new Date(Date.now() + 3600_000).toISOString(),
   };
 }
 

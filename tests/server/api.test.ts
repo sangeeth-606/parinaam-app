@@ -280,6 +280,7 @@ describe('Parinaam self-hosted API contract', () => {
       role: 'ADMIN',
       status: 'ACTIVE',
       token: adminToken,
+      expiresAt: new Date(Date.now() + 3600_000).toISOString(),
     };
     const outcomes = await Promise.allSettled([
       patchAccount(db, actor, 'admin', { role: 'SENIOR' }),
