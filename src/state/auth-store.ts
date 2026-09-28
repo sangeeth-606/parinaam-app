@@ -57,6 +57,51 @@ async function getLocalAuth(): Promise<typeof import('expo-local-authentication'
   }
 }
 
+import { useSyncStore } from '../state/sync-store.ts';
+
+async function handleFailure(
+  set: (partial: Partial<AuthState>) => void,
+  get: () => AuthState
+): Promise<LoginResult> {
+  const now = Date.now();
+  const failures = get().failures + 1;
+  if (failures >= MAX_FAILED_ATTEMPTS) {
+    const lockedUntil = now + LOCKOUT_MS;
+    set({ failures: 0, lockedUntil });
+    await setPref('parinaam_locked_until_v1', String(lockedUntil));
+    await setPref('parinaam_auth_failures_v1', '0');
+    return 'locked';
+  }
+  set({ failures });
+  await setPref('parinaam_auth_failures_v1', String(failures));
+  return 'bad-credentials';
+}
+
+function checkLockout(get: () => AuthState, set: (partial: Partial<AuthState>) => void): boolean {
+  const now = Date.now();
+  const { lockedUntil } = get();
+  if (lockedUntil && now < lockedUntil) return true;
+  if (lockedUntil && now >= lockedUntil) {
+    set({ lockedUntil: null, failures: 0 });
+    void setPref('parinaam_locked_until_v1', '');
+    void setPref('parinaam_auth_failures_v1', '0');
+  }
+  return false;
+}
+
+async function handleSuccess(
+  officer: Officer,
+  set: (partial: Partial<AuthState>) => void
+): Promise<LoginResult> {
+  const session = await mintSession(officer.id);
+  await saveSession(session);
+  await setPref(BRIEF_SEEN_PREF, true);
+  await setPref('parinaam_locked_until_v1', '');
+  await setPref('parinaam_auth_failures_v1', '0');
+  set({ status: 'unlocked', officer, session, failures: 0, lockedUntil: null, briefSeen: true });
+  return 'ok';
+}
+
 interface AuthState {
   status: 'booting' | 'locked' | 'unlocked';
   isDeviceRegistered: boolean;
@@ -68,6 +113,7 @@ interface AuthState {
   session: SessionRecord | null;
   failures: number;
   lockedUntil: number | null;
+  enrollMpin: (mpin: string) => Promise<void>;
   attempt: (username: string, password: string) => Promise<LoginResult>;
   attemptBiometric: () => Promise<LoginResult>;
   attemptMpin: (mpin: string) => Promise<LoginResult>;
@@ -97,39 +143,41 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     set({ briefSeen: true });
   },
 
+  enrollMpin: async (mpin: string) => {
+    await setPref('parinaam_saved_mpin_v1', mpin);
+  },
+
   restore: async () => {
     const registered = await getPref('parinaam_device_registered_v1');
     const phone = await getPref('parinaam_saved_phone_v1');
+    const rawFailures = await getPref('parinaam_auth_failures_v1');
+    const rawLocked = await getPref('parinaam_locked_until_v1');
+    const failures = Number(rawFailures || 0);
+    const lockedUntil = rawLocked ? Number(rawLocked) : null;
+    const now = Date.now();
+    const isLocked = lockedUntil && now < lockedUntil ? lockedUntil : null;
     set({
       status: 'locked',
       isDeviceRegistered: registered !== false,
       registeredPhone: typeof phone === 'string' ? phone : '98452 01842',
-      officer: DEMO_OFFICER,
+      officer: null,
       session: null,
-      failures: 0,
-      lockedUntil: null,
+      failures: isLocked ? failures : (rawFailures ? failures : 0),
+      lockedUntil: isLocked,
     });
   },
 
   attemptBiometric: async () => {
+    if (checkLockout(get, set)) return 'locked';
     try {
       const LocalAuth = await getLocalAuth();
       if (!LocalAuth) {
-        const session = await mintSession(DEMO_OFFICER.id);
-        await saveSession(session);
-        await setPref(BRIEF_SEEN_PREF, true);
-        set({ status: 'unlocked', officer: DEMO_OFFICER, session, failures: 0, lockedUntil: null, briefSeen: true });
-        return 'ok';
+        return await handleFailure(set, get);
       }
       const hasHardware = await LocalAuth.hasHardwareAsync();
       const isEnrolled = await LocalAuth.isEnrolledAsync();
       if (!hasHardware || !isEnrolled) {
-        // Fallback for emulator / non-biometric environments: proceed with demo authorization
-        const session = await mintSession(DEMO_OFFICER.id);
-        await saveSession(session);
-        await setPref(BRIEF_SEEN_PREF, true);
-        set({ status: 'unlocked', officer: DEMO_OFFICER, session, failures: 0, lockedUntil: null, briefSeen: true });
-        return 'ok';
+        return await handleFailure(set, get);
       }
       const auth = await LocalAuth.authenticateAsync({
         promptMessage: 'Officer Biometric Access (Parinaam)',
@@ -137,58 +185,24 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         disableDeviceFallback: false,
       });
       if (auth.success) {
-        const session = await mintSession(DEMO_OFFICER.id);
-        await saveSession(session);
-        await setPref(BRIEF_SEEN_PREF, true);
-        set({ status: 'unlocked', officer: DEMO_OFFICER, session, failures: 0, lockedUntil: null, briefSeen: true });
-        return 'ok';
+        return await handleSuccess(DEMO_OFFICER, set);
       }
-      return 'bad-credentials';
+      return await handleFailure(set, get);
     } catch {
-      const session = await mintSession(DEMO_OFFICER.id);
-      await saveSession(session);
-      await setPref(BRIEF_SEEN_PREF, true);
-      set({ status: 'unlocked', officer: DEMO_OFFICER, session, failures: 0, lockedUntil: null, briefSeen: true });
-      return 'ok';
+      return await handleFailure(set, get);
     }
   },
 
   attemptMpin: async (mpin: string) => {
-    const savedMpin = (await getPref('parinaam_saved_mpin_v1')) ?? '1234';
-    if (mpin === savedMpin || mpin === '1234' || mpin === '9007') {
-      const session = await mintSession(DEMO_OFFICER.id);
-      await saveSession(session);
-      await setPref(BRIEF_SEEN_PREF, true);
-      set({ status: 'unlocked', officer: DEMO_OFFICER, session, failures: 0, lockedUntil: null, briefSeen: true });
-      return 'ok';
+    if (checkLockout(get, set)) return 'locked';
+    const savedMpin = await getPref('parinaam_saved_mpin_v1');
+    if (savedMpin && mpin === savedMpin) {
+      return await handleSuccess(DEMO_OFFICER, set);
     }
-    return 'bad-credentials';
+    return await handleFailure(set, get);
   },
 
-  attemptPhoneOtp: async (phone: string, otp: string, setMpin?: string) => {
-    if (!otp || otp.length < 4) {
-      return 'bad-credentials';
-    }
-    await setPref('parinaam_device_registered_v1', true);
-    await setPref('parinaam_saved_phone_v1', phone);
-    if (setMpin) {
-      await setPref('parinaam_saved_mpin_v1', setMpin);
-    }
-    const session = await mintSession(DEMO_OFFICER.id);
-    await saveSession(session);
-    await setPref(BRIEF_SEEN_PREF, true);
-    set({
-      status: 'unlocked',
-      isDeviceRegistered: true,
-      registeredPhone: phone,
-      officer: DEMO_OFFICER,
-      session,
-      failures: 0,
-      lockedUntil: null,
-      briefSeen: true,
-    });
-    return 'ok';
-  },
+  attemptPhoneOtp: async () => 'bad-credentials',
 
   resetDeviceRegistration: async () => {
     await clearSession();
@@ -197,26 +211,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   attempt: async (username, password) => {
-    const now = Date.now();
-    const { lockedUntil } = get();
-    if (lockedUntil && now < lockedUntil) return 'locked';
-    if (lockedUntil && now >= lockedUntil) set({ lockedUntil: null, failures: 0 });
-
+    if (checkLockout(get, set)) return 'locked';
     const ok = await verifyCredential(DEMO_OFFICER_VERIFIER, username, password);
     if (!ok) {
-      const failures = get().failures + 1;
-      set(
-        failures >= MAX_FAILED_ATTEMPTS
-          ? { failures: 0, lockedUntil: now + LOCKOUT_MS }
-          : { failures }
-      );
-      return failures >= MAX_FAILED_ATTEMPTS ? 'locked' : 'bad-credentials';
+      return await handleFailure(set, get);
     }
-
-    const session = await mintSession(DEMO_OFFICER.id);
-    await saveSession(session);
-    set({ status: 'unlocked', officer: DEMO_OFFICER, session, failures: 0, lockedUntil: null });
-    return 'ok';
+    return await handleSuccess(DEMO_OFFICER, set);
   },
 
   logout: async () => {
@@ -231,5 +231,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
 /** Convenience for record fields: who signs records right now. */
 export function currentOperatorId(): string {
+  try {
+    const serverOfficer = useSyncStore.getState().serverConfirmedOfficer;
+    if (serverOfficer?.officer_code) {
+      return serverOfficer.officer_code;
+    }
+  } catch {
+    // outside store / initialization context
+  }
   return useAuthStore.getState().officer?.id ?? 'UNAUTHENTICATED';
 }

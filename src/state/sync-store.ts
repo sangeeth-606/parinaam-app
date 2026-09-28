@@ -13,7 +13,13 @@
 
 import { create } from 'zustand';
 import { OutboxSyncService } from '../sync/outbox.ts';
-import { createHttpSyncClient, probeHealth, fetchCaseStatuses, verifyServerCredentials } from '../sync/http-client.ts';
+import {
+  createHttpSyncClient,
+  probeHealth,
+  fetchCaseStatuses,
+  verifyServerCredentials,
+  type ServerConfirmedOfficer,
+} from '../sync/http-client.ts';
 import { openSyncSqlite } from '../sync/db-shim.ts';
 import {
   forgetServerCredentials,
@@ -101,6 +107,7 @@ interface SyncState {
   reachability: 'unknown' | 'up' | 'down';
   serverAuth: ServerAuthState;
   serverAuthSource: 'officer' | 'launcher' | null;
+  serverConfirmedOfficer: ServerConfirmedOfficer | null;
   busy: boolean;
   needsLogin: boolean;
   pendingCount: number;
@@ -131,6 +138,10 @@ async function buildEngine(url: string): Promise<OutboxSyncService | null> {
     serverUrl: url,
     credentials,
     getRecord: (uuid) => useLedgerStore.getState().records.find((r) => r.record_uuid === uuid) ?? null,
+    onOfficerConfirmed: (officer) => {
+      void setAppStateDb('server_confirmed_officer_v1', JSON.stringify(officer));
+      useSyncStore.setState({ serverConfirmedOfficer: officer });
+    },
   });
   // Surface a rejected credential to the store; "server up" must not mask "you cannot log in".
   authFailureObserver = authFailure;
@@ -152,6 +163,7 @@ export const useSyncStore = create<SyncState>((set, get) => ({
   reachability: 'unknown',
   serverAuth: 'unknown',
   serverAuthSource: null,
+  serverConfirmedOfficer: null,
   busy: false,
   needsLogin: false,
   pendingCount: 0,
@@ -161,10 +173,19 @@ export const useSyncStore = create<SyncState>((set, get) => ({
   statusFetchedAt: null,
 
   init: async () => {
-    const [savedServer, savedEngine] = await Promise.all([
+    const [savedServer, savedEngine, savedOfficerJson] = await Promise.all([
       getAppStateDb(SERVER_URL_PREF),
       getAppStateDb(CAMERA_ENGINE_URL_PREF),
+      getAppStateDb('server_confirmed_officer_v1'),
     ]);
+    let serverConfirmedOfficer: ServerConfirmedOfficer | null = null;
+    if (savedOfficerJson) {
+      try {
+        serverConfirmedOfficer = JSON.parse(savedOfficerJson);
+      } catch {
+        serverConfirmedOfficer = null;
+      }
+    }
     const serverUrl = selectLauncherDefault(savedServer, DEFAULT_SERVER_URL);
     let cameraEngineUrl = DEFAULT_CAMERA_ENGINE_URL;
     if (savedEngine && savedEngine.startsWith('http')) {
@@ -182,6 +203,7 @@ export const useSyncStore = create<SyncState>((set, get) => ({
     set({
       serverUrl,
       cameraEngineUrl,
+      serverConfirmedOfficer,
       ready: true,
       pendingCount: await pendingCountDb(),
       deadLetterCount: (await deadLetteredUuidsDb()).length,
@@ -208,15 +230,24 @@ export const useSyncStore = create<SyncState>((set, get) => ({
       return check;
     }
     await rememberServerCredentials({ username, password: creds.password });
+    if (check.officer) {
+      await setAppStateDb('server_confirmed_officer_v1', JSON.stringify(check.officer));
+    }
     enginePromise = null;
-    set({ serverAuth: 'accepted', serverAuthSource: 'officer', needsLogin: false });
+    set({
+      serverAuth: 'accepted',
+      serverAuthSource: 'officer',
+      needsLogin: false,
+      serverConfirmedOfficer: check.officer ?? null,
+    });
     return { ok: true, reason: 'accepted', source: 'officer' as const };
   },
 
   clearServerCredentials: async () => {
     await forgetServerCredentials();
+    await setAppStateDb('server_confirmed_officer_v1', '');
     enginePromise = null;
-    set({ serverAuth: 'unset', serverAuthSource: null, needsLogin: true });
+    set({ serverAuth: 'unset', serverAuthSource: null, needsLogin: true, serverConfirmedOfficer: null });
   },
 
   setServerUrl: async (url) => {

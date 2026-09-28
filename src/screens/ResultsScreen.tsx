@@ -31,6 +31,7 @@ import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/AppNavigator';
 import type { LabValue, CalibrationResidual } from '../types/contracts';
+import type { FieldTestOfficerRole } from '../contracts/field-test-record.ts';
 
 import { Icon } from '../components/ui/Icon';
 import { LightTabBar } from '../components/ui/evidentiary/LightTabBar';
@@ -55,6 +56,7 @@ export const ResultsScreen: React.FC = () => {
   const { setup, burst, decision, residual, setRecord, patchSetup } = useSessionStore();
   const appendRecord = useLedgerStore((s) => s.appendRecord);
   const officer = useAuthStore((s) => s.officer);
+  const serverConfirmedOfficer = useSyncStore((s) => s.serverConfirmedOfficer);
   const reachability = useSyncStore((s) => s.reachability);
 
   const defaultOperator = officer?.name || officer?.badge || 'Duty Officer';
@@ -211,9 +213,9 @@ export const ResultsScreen: React.FC = () => {
         conformalSet: [outcomeKind],
         abstentionReason: null,
         created_at: capturedAt,
-        operator: officer?.id || 'IC-9007',
-        operatorName: operatorName,
-        officerRole: officer?.role ?? 'ADMIN',
+        operator: serverConfirmedOfficer?.officer_code || officer?.id || 'IC-9007',
+        operatorName: serverConfirmedOfficer?.display_name || operatorName,
+        officerRole: (serverConfirmedOfficer?.role || officer?.role || 'JUNIOR') as FieldTestOfficerRole,
         gps: sealGeo ?? undefined,
         isDemo: burst?.engineResult?.profile.demoMode ?? false,
         engineResult: burst?.engineResult,

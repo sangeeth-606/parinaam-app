@@ -279,4 +279,22 @@ describe('Honesty guards: nothing may assert a fact it did not measure', () => {
       );
     });
   });
+
+  describe('Phase 11 — Device gate honesty', () => {
+    const authStore = code('src/state/auth-store.ts');
+    it('no unlock path mints a session without verifying credentials', () => {
+      assert.ok(
+        !/mpin === '1234' \|\| mpin === '9007'/.test(authStore),
+        'attemptMpin must not hardcode 1234 or 9007 bypasses'
+      );
+      assert.ok(
+        !/otp\.length >= 4/.test(authStore),
+        'attemptPhoneOtp must not accept arbitrary OTP strings'
+      );
+      assert.ok(
+        !/officer:\s*DEMO_OFFICER/.test(code('src/state/auth-store.ts').slice(code('src/state/auth-store.ts').indexOf('restore:'))),
+        'restore() must not pre-load DEMO_OFFICER when the phone is locked'
+      );
+    });
+  });
 });
