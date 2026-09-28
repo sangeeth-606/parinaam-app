@@ -175,7 +175,21 @@ export const CaseLogScreen: React.FC = () => {
         }
         renderItem={({ item }) => {
           const isPos = item.outcome === 'CONSISTENT_WITH_REAGENT_POSITIVE';
-          const isPending = !item.deviceAttestation && item.syncStatus !== 'synced';
+          // v4 phase 2 — the integrity pill must describe the seal that actually exists.
+          //
+          // `deviceAttestation` is unavoidably null on device (node:crypto is aliased to a
+          // throwing Metro stub, so the hardware seal degrades to chain-only). The previous
+          // rule treated that as "PENDING SEAL", labelling fully sealed, hash-chained records
+          // as though their seal had not happened — which is why the owner's seal press
+          // appeared to do nothing. A chain-linked record is sealed; only its device tier is
+          // absent, and that absence is stated separately rather than as pending work.
+          const sealLabel =
+            item.syncStatus === 'dead-letter' ? 'DEAD-LETTER'
+            : item.deviceAttestation ? 'SEALED'
+            : item.syncStatus === 'synced' ? 'SYNCED · CHAIN-ONLY'
+            : 'CHAIN-ONLY · NO DEVICE SEAL';
+          const sealOk = item.deviceAttestation != null || item.syncStatus === 'synced';
+          const sealColor = item.syncStatus === 'dead-letter' ? '#B91C1C' : sealOk ? '#15803D' : '#B45309';
           const accentColor = isPos ? '#15803D' : '#D97706';
           const statusText = isPos ? 'CONSISTENT WITH POSITIVE' : 'INCONCLUSIVE';
           const reagentName = REAGENT_LABEL[item.reagent] || item.reagent || 'Field Reagent';
@@ -237,18 +251,13 @@ export const CaseLogScreen: React.FC = () => {
                   <Text style={styles.dataLabel}>INTEGRITY</Text>
                   <View style={styles.integrityWrap}>
                     <Icon
-                      name={isPending ? 'clock' : 'lock'}
+                      name={sealOk ? 'lock' : 'chain'}
                       size={13}
-                      color={isPending ? '#D97706' : '#15803D'}
+                      color={sealColor}
                       strokeWidth={2.4}
                     />
-                    <Text
-                      style={[
-                        styles.integrityText,
-                        { color: isPending ? '#D97706' : '#15803D' },
-                      ]}
-                    >
-                      {isPending ? 'PENDING SEAL' : 'SEALED'}
+                    <Text style={[styles.integrityText, { color: sealColor }]}>
+                      {sealLabel}
                     </Text>
                   </View>
                 </View>

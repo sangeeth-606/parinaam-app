@@ -35,15 +35,15 @@ import type { LabValue, CalibrationResidual } from '../types/contracts';
 import { Icon } from '../components/ui/Icon';
 import { LightTabBar } from '../components/ui/evidentiary/LightTabBar';
 import { useSessionStore } from '../state/session-store';
-import { useLedgerStore } from '../state/ledger-store';
+import { useLedgerStore, type LedgerRecord } from '../state/ledger-store';
 import { useSyncStore } from '../state/sync-store';
 import { saveEvidenceImage } from '../capture/evidence-image';
-import { acquireGeoTag } from '../capture/geotag';
+import { acquireGeoTag, describeGeo, gradeGeo, type SealGeoTag } from '../capture/geotag';
 import { useAuthStore } from '../state/auth-store';
 import { makeRecordUuid } from '../services/analysis-pipeline';
 import { useThemedStyles } from '../theme/theme-context';
 import type { Theme } from '../theme';
-import { formatTimeIst } from '../domain/outcome-copy';
+import { formatTimeIst, abbreviateHash } from '../domain/outcome-copy';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -74,26 +74,47 @@ export const ResultsScreen: React.FC = () => {
   const [kitLotExpiry, setKitLotExpiry] = useState(
     setup.kitLotNo ? `${setup.kitLotNo} · EXP 2027-12` : 'LOT-2026-NS · EXP 2027-12'
   );
-  const [locationStr, setLocationStr] = useState('Acquiring GNSS fix…');
-  const [timestampStr, setTimestampStr] = useState(
-    `${formatTimeIst(new Date().toISOString())} IST · ${new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).toUpperCase()}`
-  );
+  // v4 phase 3 — location and time are RECORDED facts, not form fields. They were editable
+  // TextInputs whose typed value was silently discarded (the seal read a separate
+  // acquireGeoTag() call), so the officer could be shown one location while the record
+  // carried another. Acquired once, rendered read-only.
+  const [geo, setGeo] = useState<SealGeoTag | null>(null);
+  const [geoResolved, setGeoResolved] = useState(false);
+  const [capturedAt, setCapturedAt] = useState(() => new Date().toISOString());
+
+  // v4 phase 2 — the officer must see that the seal happened, on the screen where they
+  // pressed the button. Previously no seq, digest, or integrity state appeared anywhere on
+  // this path, so a successful seal was indistinguishable from a no-op.
+  const [sealed, setSealed] = useState<LedgerRecord | null>(null);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // v4 phase 3 — one acquisition, read by both the display and the sealed payload.
   useEffect(() => {
-    void acquireGeoTag().then((geo) => {
-      if (geo) {
-        const latStr = `${Math.abs(geo.lat).toFixed(4)}° ${geo.lat >= 0 ? 'N' : 'S'}`;
-        const lonStr = `${Math.abs(geo.lon).toFixed(4)}° ${geo.lon >= 0 ? 'E' : 'W'}`;
-        const accStr = geo.accuracyM ? ` (±${geo.accuracyM.toFixed(1)}m)` : '';
-        setLocationStr(`${latStr}, ${lonStr}${accStr}`);
-      } else {
-        setLocationStr('GPS unavailable (manual verification)');
-      }
+    let cancelled = false;
+    void acquireGeoTag().then((fixed) => {
+      if (cancelled) return;
+      setGeo(fixed);
+      setGeoResolved(true);
+      setCapturedAt(new Date().toISOString());
     });
+    return () => { cancelled = true; };
   }, []);
+
+  // v4 phase 4 — honest description of the achieved fix quality (rule 10 in spirit:
+  // record the measurement, never an assumption about it).
+  const geoHint = !geoResolved
+    ? 'Acquiring GNSS fix\u2026'
+    : gradeGeo(geo) === 'GOOD'
+      ? 'Position reliable to within 10 m. Captured from the device receiver and hashed into the record \u2014 it cannot be edited afterwards.'
+      : gradeGeo(geo) === 'MARGINAL'
+        ? 'Approximate position \u2014 accuracy is marginal for evidentiary use. Hashed into the record and not editable.'
+        : gradeGeo(geo) === 'POOR'
+          ? 'Position is a region hint only. Do NOT treat this as the seizure location.'
+          : gradeGeo(geo) === 'MOCKED'
+            ? 'Coordinates came from a mock provider \u2014 not a real GNSS fix.'
+            : 'No GNSS fix obtained. Coordinates are absent from the record, not zero.';
 
   const outcomeKind = decision?.outcome.kind ?? burst?.engineResult?.classification.outcome ?? 'INCONCLUSIVE';
   const isPos = outcomeKind === 'CONSISTENT_WITH_REAGENT_POSITIVE';
@@ -130,7 +151,9 @@ export const ResultsScreen: React.FC = () => {
       const ev = await saveEvidenceImage(
         burst?.photoPath ? { uuid, uri: burst.photoPath } : { uuid }
       );
-      const geo = await acquireGeoTag();
+      // v4 phase 3 — reuse the fix acquired on mount. A second acquisition here meant the
+      // officer could be shown one location while a different one was sealed.
+      const sealGeo = geo;
 
       // v4 phase 1 — truthful measurement extraction.
       //
@@ -187,16 +210,17 @@ export const ResultsScreen: React.FC = () => {
         deltaE: deltaEVal,
         conformalSet: [outcomeKind],
         abstentionReason: null,
-        created_at: new Date().toISOString(),
+        created_at: capturedAt,
         operator: officer?.id || 'IC-9007',
         operatorName: operatorName,
         officerRole: officer?.role ?? 'ADMIN',
-        gps: geo ?? undefined,
+        gps: sealGeo ?? undefined,
         isDemo: burst?.engineResult?.profile.demoMode ?? false,
         engineResult: burst?.engineResult,
       });
 
       setRecord(created);
+      setSealed(created);
       setBusy(false);
 
       // Trigger opportunistic sync pass in background
@@ -267,7 +291,7 @@ export const ResultsScreen: React.FC = () => {
               />
               <Text style={[styles.statusBadgeText, { color: statusColor }]}>{statusText}</Text>
             </View>
-            <Text style={styles.timeBadge}>{timestampStr.split('·')[0].trim()}</Text>
+            <Text style={styles.timeBadge}>{formatTimeIst(capturedAt)} IST</Text>
           </View>
 
           <Text style={styles.drugHeading}>{suspectedDrug}</Text>
@@ -290,13 +314,6 @@ export const ResultsScreen: React.FC = () => {
             </View>
           </View>
         </View>
-
-        {error && (
-          <View style={styles.errorBox}>
-            <Icon name="alert" size={16} color="#DC2626" strokeWidth={2.2} />
-            <Text style={styles.errorText}>{error}</Text>
-          </View>
-        )}
 
         {/* ========================================================================= */}
         {/* EDITABLE FORENSIC DETAILS FORM                                            */}
@@ -403,29 +420,127 @@ export const ResultsScreen: React.FC = () => {
               />
             </View>
 
-            {/* Field 9: Recorded Location */}
+            {/* Field 9: Recorded Location — read-only by design (v4 phase 3).
+                The coordinates are hashed into the sealed record; an editable field here
+                would tell the officer they can change something they cannot. */}
             <View style={styles.fieldRow}>
               <Text style={styles.fieldLabel}>RECORDED GPS LOCATION</Text>
-              <TextInput
-                value={locationStr}
-                onChangeText={setLocationStr}
-                placeholder="e.g. 28.6304° N, 77.2177° E (±6.4m)"
-                style={styles.fieldInput}
-              />
+              <View style={styles.readonlyField}>
+                <Icon name="pin" size={14} color="#475569" strokeWidth={2.2} />
+                <Text style={styles.readonlyValue}>
+                  {geoResolved ? describeGeo(geo) : 'Acquiring GNSS fix…'}
+                </Text>
+              </View>
+              <Text style={styles.readonlyHint}>{geoHint}</Text>
             </View>
 
-            {/* Field 10: Timestamp */}
+            {/* Field 10: Timestamp — also read-only; it is the seal moment, not a form value. */}
             <View style={styles.fieldRow}>
               <Text style={styles.fieldLabel}>RECORDED TIME (IST)</Text>
-              <TextInput
-                value={timestampStr}
-                onChangeText={setTimestampStr}
-                placeholder="e.g. 14:02 IST · 27-SEP-2026"
-                style={styles.fieldInput}
-              />
+              <View style={styles.readonlyField}>
+                <Icon name="clock" size={14} color="#475569" strokeWidth={2.2} />
+                <Text style={styles.readonlyValue}>
+                  {formatTimeIst(capturedAt)} IST · {new Date(capturedAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).toUpperCase()}
+                </Text>
+              </View>
+              <Text style={styles.readonlyHint}>
+                Stamped when the fix was acquired and sealed into the record.
+              </Text>
             </View>
           </View>
         </View>
+
+        {/* v4 phase 2 — Seal confirmation. The officer must see the seal that just happened:
+            ledger position, both digests, the achieved integrity tier, and the upload state.
+            Previously none of this appeared on either sealing screen, so a successful seal
+            looked identical to a no-op. */}
+        {sealed && (
+          <View style={styles.sealedPanel}>
+            <View style={styles.sealedHeaderRow}>
+              <Icon name="shieldCheck" size={18} color="#15803D" strokeWidth={2.3} />
+              <Text style={styles.sealedTitle}>RECORD SEALED</Text>
+              <Text style={styles.sealedSeq}>SEQ #{sealed.seq}</Text>
+            </View>
+
+            <View style={styles.sealedTerminal}>
+              <View style={styles.sealedLine}>
+                <Text style={styles.sealedLabel}>CHAIN HASH</Text>
+                <Text style={styles.sealedValue}>{abbreviateHash(sealed.chainHash, 8, 8)}</Text>
+              </View>
+              <View style={styles.sealedLine}>
+                <Text style={styles.sealedLabel}>PAYLOAD SHA-256</Text>
+                <Text style={styles.sealedValue}>{abbreviateHash(sealed.payloadSha256, 8, 8)}</Text>
+              </View>
+              <View style={styles.sealedLine}>
+                <Text style={styles.sealedLabel}>PREV HASH</Text>
+                <Text style={styles.sealedValue}>{abbreviateHash(sealed.prevHash, 8, 8)}</Text>
+              </View>
+            </View>
+
+            <View style={styles.sealedMetaRow}>
+              <Icon
+                name={sealed.deviceAttestation ? 'lock' : 'chain'}
+                size={13}
+                color={sealed.deviceAttestation ? '#15803D' : '#B45309'}
+                strokeWidth={2.4}
+              />
+              <Text style={sealed.deviceAttestation ? styles.sealedMetaOk : styles.sealedMetaWarn}>
+                {sealed.deviceAttestation
+                  ? 'INTEGRITY SEAL ATTACHED'
+                  : 'CHAIN-ONLY \u2014 NO DEVICE SEAL (this build cannot reach the keystore)'}
+              </Text>
+            </View>
+
+            <View style={styles.sealedMetaRow}>
+              <Icon name="wifi" size={13} color="#475569" strokeWidth={2.4} />
+              <Text style={styles.sealedMetaNeutral}>
+                {sealed.syncStatus === 'synced'
+                  ? 'SYNCED TO SERVER'
+                  : sealed.syncStatus === 'dead-letter'
+                    ? 'DEAD-LETTER \u2014 SERVER REFUSED; RETAINED ON DEVICE'
+                    : 'QUEUED FOR SERVER'}
+              </Text>
+            </View>
+
+            {sealed.persistError ? (
+              <View style={styles.sealedErrorRow}>
+                <Icon name="alert" size={13} color="#B91C1C" strokeWidth={2.4} />
+                <Text style={styles.sealedErrorText}>
+                  NOT WRITTEN TO THE LEDGER FILE \u2014 {sealed.persistError}
+                </Text>
+              </View>
+            ) : null}
+
+            <View style={styles.sealedLinks}>
+              <TouchableOpacity
+                style={styles.sealedLink}
+                onPress={() => navigation.navigate('CaseLog')}
+                accessibilityRole="button"
+                accessibilityLabel="View this record in the case log"
+              >
+                <Text style={styles.sealedLinkText}>VIEW IN CASE LOG</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.sealedLink}
+                onPress={() => navigation.navigate('Integrity')}
+                accessibilityRole="button"
+                accessibilityLabel="View the integrity audit trail"
+              >
+                <Text style={styles.sealedLinkText}>VIEW IN AUDIT TRAIL</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
+        {/* v4 phase 2 — the error box sits immediately above the button that triggers the
+            error. It used to render ~10 screens higher in the same ScrollView, so a failed
+            seal looked like a button that did nothing. */}
+        {error && (
+          <View style={styles.errorBox}>
+            <Icon name="alert" size={16} color="#DC2626" strokeWidth={2.2} />
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        )}
 
         {/* Primary Proceed Action */}
         <TouchableOpacity
@@ -434,14 +549,14 @@ export const ResultsScreen: React.FC = () => {
           activeOpacity={0.88}
           disabled={busy}
           accessibilityRole="button"
-          accessibilityLabel="Confirm and View Full Evidence Dossier"
+          accessibilityLabel="Seal record and view the evidence dossier"
         >
           {busy ? (
             <ActivityIndicator color="#FFFFFF" size="small" />
           ) : (
             <>
               <Icon name="shieldCheck" size={20} color="#FFFFFF" strokeWidth={2.2} />
-              <Text style={styles.proceedBtnText}>CONFIRM & VIEW FULL EVIDENCE DOSSIER</Text>
+              <Text style={styles.proceedBtnText}>SEAL RECORD & VIEW DOSSIER</Text>
               <Icon name="chevronRight" size={18} color="#FFFFFF" strokeWidth={2.5} />
             </>
           )}
@@ -598,6 +713,139 @@ const createStyles = (theme: Theme) => {
       width: 1,
       height: 24,
       backgroundColor: '#CBD5E1',
+    },
+    // v4 phase 2 — seal confirmation panel.
+    sealedPanel: {
+      backgroundColor: '#F0FDF4',
+      borderWidth: 1,
+      borderColor: '#BBF7D0',
+      borderRadius: 12,
+      padding: 14,
+      gap: 10,
+      marginBottom: 12,
+    },
+    sealedHeaderRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    sealedTitle: {
+      fontSize: 13,
+      fontWeight: '800',
+      color: '#15803D',
+      letterSpacing: 0.6,
+      flex: 1,
+    },
+    sealedSeq: {
+      fontSize: 12,
+      fontWeight: '800',
+      color: '#15803D',
+    },
+    sealedTerminal: {
+      backgroundColor: '#0F172A',
+      borderRadius: 8,
+      padding: 10,
+      gap: 5,
+    },
+    sealedLine: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      gap: 10,
+    },
+    sealedLabel: {
+      fontSize: 10,
+      fontWeight: '700',
+      color: '#94A3B8',
+      letterSpacing: 0.7,
+    },
+    sealedValue: {
+      fontSize: 11.5,
+      fontWeight: '700',
+      color: '#E2E8F0',
+      fontFamily: 'monospace',
+    },
+    sealedMetaRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+    },
+    sealedMetaOk: {
+      fontSize: 11.5,
+      fontWeight: '700',
+      color: '#15803D',
+      flex: 1,
+    },
+    sealedMetaWarn: {
+      fontSize: 11.5,
+      fontWeight: '700',
+      color: '#B45309',
+      flex: 1,
+    },
+    sealedMetaNeutral: {
+      fontSize: 11.5,
+      fontWeight: '700',
+      color: '#475569',
+      flex: 1,
+    },
+    sealedErrorRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 6,
+      backgroundColor: '#FEE2E2',
+      borderRadius: 8,
+      padding: 9,
+    },
+    sealedErrorText: {
+      fontSize: 11.5,
+      fontWeight: '700',
+      color: '#B91C1C',
+      flex: 1,
+      lineHeight: 16,
+    },
+    sealedLinks: {
+      flexDirection: 'row',
+      gap: 10,
+      marginTop: 2,
+    },
+    sealedLink: {
+      flex: 1,
+      borderWidth: 1.4,
+      borderColor: '#15803D',
+      borderRadius: 9,
+      paddingVertical: 9,
+      alignItems: 'center',
+    },
+    sealedLinkText: {
+      fontSize: 11,
+      fontWeight: '800',
+      color: '#15803D',
+      letterSpacing: 0.5,
+    },
+    // v4 phase 3 — read-only recorded facts. Deliberately not a TextInput.
+    readonlyField: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      backgroundColor: '#F1F5F9',
+      borderWidth: 1,
+      borderColor: '#E2E8F0',
+      borderRadius: 9,
+      paddingHorizontal: 11,
+      paddingVertical: 11,
+    },
+    readonlyValue: {
+      fontSize: 13,
+      fontWeight: '600',
+      color: '#1E293B',
+      flex: 1,
+    },
+    readonlyHint: {
+      fontSize: 10.5,
+      color: '#64748B',
+      fontWeight: '500',
+      marginTop: 4,
+      lineHeight: 14,
     },
     errorBox: {
       flexDirection: 'row',

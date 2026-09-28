@@ -59,7 +59,11 @@ export const HomeScreen: React.FC = () => {
   }, [records]);
 
   const sealedCount = useMemo(() => {
-    const count = records.filter((r) => r.syncStatus === 'synced' || r.deviceAttestation).length;
+    // v4 phase 2 — "SEALED" means the record is in the append-only chain, which every
+    // appended record is. It previously required `syncStatus === 'synced'` or a device
+    // attestation; the attestation is always null on device and "synced" means "uploaded",
+    // so a freshly sealed record counted as zero sealed on the duty board.
+    const count = records.filter((r) => r.chainHash != null && r.chainHash.length > 0).length;
     return String(count).padStart(2, '0');
   }, [records]);
 

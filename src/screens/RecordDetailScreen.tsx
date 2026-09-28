@@ -51,19 +51,51 @@ export const RecordDetailScreen: React.FC<{ route: DetailRoute }> = ({ route }) 
     s.records.find((r) => r.record_uuid === route.params.uuid)
   );
 
-  const record: Partial<LedgerRecord> = recordFromStore ?? {
-    record_uuid: route.params.uuid,
-    case_ref: 'FIELD-RECORD',
-    package_no: 'PKG-01',
-    reagent: 'duquenois_levine',
-    outcome: 'CONSISTENT_WITH_REAGENT_POSITIVE',
-    operator: 'Duty Officer',
-    operatorName: 'Duty Officer',
-    created_at: new Date().toISOString(),
-    deltaE: 1.48,
-    confidence: 0.942,
-    lab: { l: 41.9, a: 24.5, b: -38.7 },
-  };
+  // v4 phase 2 — never fabricate a record.
+  //
+  // This screen previously fell back to a complete, fully "SEALED", positive dossier
+  // (outcome CONSISTENT_WITH_REAGENT_POSITIVE, confidence 0.942, ΔE 1.48) whenever the uuid
+  // was not in the ledger. A stale uuid, a failed write, or any deep link then rendered
+  // evidence that did not exist. Absence is now an explicit empty state.
+  if (!recordFromStore) {
+    return (
+      <View style={styles.screen}>
+        <View style={[styles.header, { paddingTop: Math.max(insets.top, 16) + 8 }]}>
+          <TouchableOpacity
+            style={styles.backBtn}
+            onPress={() => navigation.goBack()}
+            accessibilityRole="button"
+            accessibilityLabel="Back"
+          >
+            <Icon name="chevronLeft" size={22} color="#0F172A" strokeWidth={2.5} />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Case Detail</Text>
+          <View style={styles.headerRight} />
+        </View>
+
+        <View style={styles.notFoundBlock}>
+          <Icon name="alert" size={30} color="#B45309" strokeWidth={2.2} />
+          <Text style={styles.notFoundTitle}>RECORD NOT FOUND IN THE LOCAL LEDGER</Text>
+          <Text style={styles.notFoundBody}>
+            No sealed record matches this identifier on this device. It may have been sealed on a
+            different device, or the write to the ledger may have failed. Nothing is shown here
+            because nothing was measured.
+          </Text>
+          <TouchableOpacity
+            style={styles.notFoundBtn}
+            onPress={() => navigation.navigate('Integrity')}
+            accessibilityRole="button"
+            accessibilityLabel="View the integrity audit trail"
+          >
+            <Icon name="shieldCheck" size={17} color="#2563EB" strokeWidth={2.3} />
+            <Text style={styles.notFoundBtnText}>VIEW IN AUDIT TRAIL</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
+  const record: LedgerRecord = recordFromStore;
 
   const lab = record.lab;
   const fieldSampleHex = lab
@@ -188,8 +220,17 @@ export const RecordDetailScreen: React.FC<{ route: DetailRoute }> = ({ route }) 
             <View style={styles.gridCell}>
               <Text style={styles.fieldLabel}>INTEGRITY</Text>
               <View style={styles.integrityRow}>
-                <Icon name="lock" size={12} color="#15803D" strokeWidth={2.4} />
-                <Text style={styles.integrityGreen}>SEALED (SHA-256)</Text>
+                <Icon
+                  name={record.deviceAttestation ? 'lock' : 'chain'}
+                  size={12}
+                  color={record.deviceAttestation ? '#15803D' : '#B45309'}
+                  strokeWidth={2.4}
+                />
+                <Text style={record.deviceAttestation ? styles.integrityGreen : styles.integrityWarn}>
+                  {record.deviceAttestation
+                    ? 'INTEGRITY SEAL ATTACHED'
+                    : 'CHAIN-ONLY · NO DEVICE SEAL'}
+                </Text>
               </View>
             </View>
             <View style={styles.gridCell}>
@@ -222,8 +263,12 @@ export const RecordDetailScreen: React.FC<{ route: DetailRoute }> = ({ route }) 
               <Text style={styles.fieldLabel}>LOCATION (GPS)</Text>
               <Text style={styles.fieldValueRegular}>
                 {record.gps
-                  ? `${record.gps.lat.toFixed(4)}, ${record.gps.lon.toFixed(4)} ±${record.gps.accuracyM ? record.gps.accuracyM.toFixed(1) : 5} m`
-                  : 'Acquired on device'}
+                  ? `${record.gps.lat.toFixed(4)}, ${record.gps.lon.toFixed(4)}` +
+                    (record.gps.accuracyM != null
+                      ? ` ±${record.gps.accuracyM.toFixed(1)} m`
+                      : ' · accuracy not reported') +
+                    (record.gps.mocked ? ' · MOCK PROVIDER' : '')
+                  : 'No GNSS fix recorded'}
               </Text>
             </View>
 
@@ -383,28 +428,41 @@ export const RecordDetailScreen: React.FC<{ route: DetailRoute }> = ({ route }) 
           </Text>
         </View>
 
-        {/* Action Buttons */}
+        {/* Action Buttons — a record on this screen is ALREADY sealed (ResultsScreen sealed it
+            before navigating here). These are navigation actions and are labelled as such;
+            v4 phase 2 removed a button that said "SEAL" but only called navigate(). */}
         <View style={styles.actionsBlock}>
           <TouchableOpacity
             style={styles.sealBtn}
             onPress={() => navigation.navigate('CaseLog')}
             activeOpacity={0.88}
             accessibilityRole="button"
-            accessibilityLabel="Seal Evidence and Create Record"
+            accessibilityLabel="View this record in the case log"
           >
-            <Icon name="shield" size={18} color="#FFFFFF" strokeWidth={2.2} />
-            <Text style={styles.sealBtnText}>SEAL EVIDENCE & CREATE RECORD</Text>
+            <Icon name="ledger" size={18} color="#FFFFFF" strokeWidth={2.2} />
+            <Text style={styles.sealBtnText}>VIEW IN CASE LOG</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             style={styles.retakeBtn}
-            onPress={() => navigation.navigate('Capture')}
+            onPress={() => navigation.navigate('Integrity')}
             activeOpacity={0.85}
             accessibilityRole="button"
-            accessibilityLabel="Retake Assay Capture"
+            accessibilityLabel="View the integrity audit trail"
+          >
+            <Icon name="shieldCheck" size={17} color="#2563EB" strokeWidth={2.3} />
+            <Text style={styles.retakeBtnText}>VIEW IN AUDIT TRAIL</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.retakeBtn}
+            onPress={() => navigation.navigate('NewTestSetup')}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="Start a new assay through the intake wizard"
           >
             <Icon name="refresh" size={17} color="#2563EB" strokeWidth={2.3} />
-            <Text style={styles.retakeBtnText}>Retake Assay Capture</Text>
+            <Text style={styles.retakeBtnText}>New Assay Capture</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
@@ -594,6 +652,49 @@ const createStyles = (theme: Theme) => {
       fontWeight: '800',
       color: '#15803D',
       letterSpacing: 0.4,
+    },
+    integrityWarn: {
+      fontSize: 12.5,
+      fontWeight: '800',
+      color: '#B45309',
+      letterSpacing: 0.4,
+    },
+    notFoundBlock: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 28,
+      gap: 12,
+    },
+    notFoundTitle: {
+      fontSize: 14,
+      fontWeight: '800',
+      color: '#B45309',
+      letterSpacing: 0.6,
+      textAlign: 'center',
+    },
+    notFoundBody: {
+      fontSize: 13,
+      lineHeight: 19,
+      color: '#475569',
+      textAlign: 'center',
+    },
+    notFoundBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      borderWidth: 1.5,
+      borderColor: '#2563EB',
+      borderRadius: 10,
+      paddingHorizontal: 16,
+      paddingVertical: 11,
+      marginTop: 6,
+    },
+    notFoundBtnText: {
+      fontSize: 12.5,
+      fontWeight: '800',
+      color: '#2563EB',
+      letterSpacing: 0.5,
     },
     syncedPill: {
       flexDirection: 'row',
