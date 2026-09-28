@@ -90,10 +90,16 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 "calibration: "
                 f"{result['calibration']['grade']} "
-                f"mean ΔE00={result['calibration']['fit_residual_delta_e00']}"
+                f"mean dE00={result['calibration']['fit_residual_delta_e00']}"
             )
+        wells = result.get("wells", [])
+        if wells:
+            print(f"wells detected: {len(wells)}")
+            for w in wells:
+                w_lab = w.get("normalized_color", {}).get("lab", {})
+                print(f"  Well {w.get('well_index')}: r={w.get('radius_px')}px, Calibrated Lab: {w_lab}")
         if result.get("normalized_color"):
-            print(f"normalized Lab: {result['normalized_color']['lab']}")
+            print(f"normalized Lab (Reaction Well): {result['normalized_color']['lab']}")
         print(
             f"classification: {classification['outcome']} "
             f"({classification['status']}; {classification['reason'] or 'no reason'})"

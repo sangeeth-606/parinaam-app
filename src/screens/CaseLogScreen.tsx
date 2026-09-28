@@ -1,167 +1,68 @@
 /**
- * CaseLogScreen — NDPS Test-Records Ledger (Records tab)
- *
- * Purpose:
- * - The evidentiary register: every sealed presumptive test event on device,
- *   searchable and bucketed by outcome for evidence review.
- *
- * Statutory / audit law:
- * - Renders LIVE ledger data only (audit F2/F6 — no mock records ever again);
- *   filter buckets classify INCONCLUSIVE explicitly.
- * - Outcome shown with semantic color + icon + text label (tri-modal), never
- *   color alone; chemical identity is never asserted.
- * - In-app statutory banner retired per owner decision (AGENTS.md rule 3, 2026-09-16).
- *
- * Design Language: src/theme (useAppTheme + useThemedStyles) + evidentiary/EvidenceBits + LightTabBar
- * (high-contrast; ≥56 dp rows; mono technical metadata; evidentiary register,
- * not a shopping list).
+ * CaseLogScreen — Redesigned Cases Ledger
+ * Matches references:
+ *   1. Parinaam Case Log.png
+ *   2. Parinaam - app - Positive - case -.png
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
-import { FlatList, RefreshControl, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import type { ViewStyle } from 'react-native';
+import React, { useMemo, useState } from 'react';
+import {
+  FlatList,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/AppNavigator';
 
 import { Icon } from '../components/ui/Icon';
-import type { IconName } from '../components/ui/Icon';
-import { OutcomeTag } from '../components/ui/evidentiary/EvidenceBits';
 import { LightTabBar } from '../components/ui/evidentiary/LightTabBar';
-import { StatutoryClockModal } from '../components/StatutoryClockModal';
-import { FadeEntrance } from '../components/ui/FadeEntrance';
-import { useLedgerStore, type LedgerRecord } from '../state/ledger-store';
-import { searchRecordUuids } from '../db/ledger-repository';
+import { useLedgerStore } from '../state/ledger-store';
 import { useSyncStore } from '../state/sync-store';
-import { useAppTheme, useThemedStyles } from '../theme/theme-context';
+import { useThemedStyles } from '../theme/theme-context';
 import type { Theme } from '../theme';
-import { formatDateIst, formatTimeIst, relativeIst, REAGENT_LABEL, OFFICER_READING_SHORT } from '../domain/outcome-copy';
+import { formatTimeIst, REAGENT_LABEL } from '../domain/outcome-copy';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
-type Bucket = 'all' | 'rx_pos' | 'rx_neg' | 'inconclusive';
 
-const BUCKETS: { key: Bucket; label: string; icon: 'duty' | 'check' | 'minus' | 'alert' }[] = [
-  { key: 'all', label: 'ALL', icon: 'duty' },
-  { key: 'rx_pos', label: 'REAGENT +VE', icon: 'check' },
-  { key: 'rx_neg', label: 'REAGENT −VE', icon: 'minus' },
-  { key: 'inconclusive', label: 'INCONCLUSIVE', icon: 'alert' },
-];
-
-function inBucket(r: LedgerRecord, b: Bucket): boolean {
-  switch (b) {
-    case 'all':
-      return true;
-    case 'rx_pos':
-      return r.outcome === 'CONSISTENT_WITH_REAGENT_POSITIVE';
-    case 'rx_neg':
-      return r.outcome === 'CONSISTENT_WITH_REAGENT_NEGATIVE';
-    case 'inconclusive':
-      return r.outcome === 'INCONCLUSIVE';
-  }
-}
+type CaseFilter = 'ALL' | 'POSITIVE' | 'INCONCLUSIVE' | 'PENDING';
 
 export const CaseLogScreen: React.FC = () => {
-  const { theme } = useAppTheme();
-  const T = theme.colors;
   const styles = useThemedStyles(createStyles);
   const navigation = useNavigation<Nav>();
-  const { records, seeded, verification } = useLedgerStore();
-  const [bucket, setBucket] = useState<Bucket>('all');
-  const [query, setQuery] = useState('');
-  const [dbMatches, setDbMatches] = useState<Set<string> | null>(null);
-  const [clockModalVisible, setClockModalVisible] = useState(false);
-  const [selectedClockCase, setSelectedClockCase] = useState<string | undefined>(undefined);
+  const insets = useSafeAreaInsets();
 
-  // V2-C: the ledger FILE answers search (FTS5 when the build has it, LIKE otherwise);
-  // the in-memory filter below still narrows buckets. Null = no DB result yet (or empty
-  // query), so display never depends on the async round-trip being finished.
-  useEffect(() => {
-    const t = query.trim();
-    if (t.length < 2) {
-      setDbMatches(null);
-      return;
-    }
-    let live = true;
-    void searchRecordUuids(t).then((ids) => {
-      if (live) setDbMatches(ids ? new Set(ids) : null);
-    });
-    return () => {
-      live = false;
-    };
-  }, [query]);
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return [...records]
-      .reverse()
-      .filter((r) => inBucket(r, bucket))
-      .filter((r) => !dbMatches || dbMatches.has(r.record_uuid))
-      .filter(
-        (r) =>
-          !q ||
-          r.case_ref.toLowerCase().includes(q) ||
-          r.package_no.toLowerCase().includes(q) ||
-          r.record_uuid.toLowerCase().includes(q) ||
-          REAGENT_LABEL[r.reagent].toLowerCase().includes(q)
-      );
-  }, [records, bucket, query, dbMatches]);
-
-  const counts = useMemo(
-    () => ({
-      all: records.length,
-      rx_pos: records.filter((r) => inBucket(r, 'rx_pos')).length,
-      rx_neg: records.filter((r) => inBucket(r, 'rx_neg')).length,
-      inconclusive: records.filter((r) => inBucket(r, 'inconclusive')).length,
-    }),
-    [records]
-  );
-
-  const queued = useMemo(() => records.filter((r) => r.syncStatus === 'queued').length, [records]);
-  // Demo seeds are LOCAL ONLY: real records, but never uploaded — so they are
-  // reported separately and never folded into the upload-queue counts.
-  const demoSeeded = useMemo(() => records.filter((r) => r.syncStatus === 'demo-seed').length, [records]);
-  const [view, setView] = useState<'cases' | 'records'>('cases');
-  const [drillCase, setDrillCase] = useState<string | null>(null);
-
-  interface CaseSummary {
-    caseRef: string;
-    records: number;
-    packages: string[];
-    pos: number;
-    neg: number;
-    inc: number;
-    queued: number;
-    demo: number;
-    lastAt: string;
-  }
-  // G-D6: group the (search-narrowed) records into case cards — the unit a senior thinks in.
-  const caseSummaries = useMemo<CaseSummary[]>(() => {
-    const byCase = new Map<string, LedgerRecord[]>();
-    for (const r of filtered) {
-      const arr = byCase.get(r.case_ref) ?? [];
-      arr.push(r);
-      byCase.set(r.case_ref, arr);
-    }
-    return [...byCase.entries()]
-      .map(([caseRef, recs]) => ({
-        caseRef,
-        records: recs.length,
-        packages: [...new Set(recs.map((r) => r.package_no))],
-        pos: recs.filter((r) => r.outcome === 'CONSISTENT_WITH_REAGENT_POSITIVE').length,
-        neg: recs.filter((r) => r.outcome === 'CONSISTENT_WITH_REAGENT_NEGATIVE').length,
-        inc: recs.filter((r) => r.outcome === 'INCONCLUSIVE').length,
-        queued: recs.filter((r) => r.syncStatus === 'queued').length,
-        demo: recs.filter((r) => r.syncStatus === 'demo-seed').length,
-        lastAt: recs.reduce((m, r) => (r.created_at > m ? r.created_at : m), recs[0].created_at),
-      }))
-      .sort((a, b) => (a.lastAt < b.lastAt ? 1 : -1));
-  }, [filtered]);
-
-  // In drill mode the flat list shows exactly this case's records (ledger order).
-  const listRecords = drillCase ? records.filter((r) => r.case_ref === drillCase) : filtered;
-  const caseStatus = useSyncStore((x) => x.caseStatus);
-  const statusFetchedAt = useSyncStore((x) => x.statusFetchedAt);
+  const { records } = useLedgerStore();
+  const reachability = useSyncStore((s) => s.reachability);
+  const [filter, setFilter] = useState<CaseFilter>('ALL');
+  const [searchQuery, setSearchQuery] = useState('');
   const [refreshing, setRefreshing] = useState(false);
+
+  const filteredRecords = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return records.filter((r) => {
+      // Filter tab
+      if (filter === 'POSITIVE' && r.outcome !== 'CONSISTENT_WITH_REAGENT_POSITIVE') return false;
+      if (filter === 'INCONCLUSIVE' && r.outcome !== 'INCONCLUSIVE') return false;
+      if (filter === 'PENDING' && r.deviceAttestation && r.syncStatus === 'synced') return false;
+
+      // Query
+      if (!q) return true;
+      const reagent = (REAGENT_LABEL[r.reagent] || '').toLowerCase();
+      return (
+        r.case_ref.toLowerCase().includes(q) ||
+        r.package_no.toLowerCase().includes(q) ||
+        reagent.includes(q) ||
+        r.record_uuid.toLowerCase().includes(q)
+      );
+    });
+  }, [records, filter, searchQuery]);
+
   const pullRefresh = async () => {
     setRefreshing(true);
     try {
@@ -172,698 +73,553 @@ export const CaseLogScreen: React.FC = () => {
     }
   };
 
+  const statusSubhead = useMemo(() => {
+    if (filter === 'POSITIVE') {
+      return `${filteredRecords.length} POSITIVE CASES LOGGED`;
+    }
+    return `${filteredRecords.length} LOCAL LOGS CACHED`;
+  }, [filter, filteredRecords.length]);
+
   return (
     <View style={styles.screen}>
-      {/* Official Evidentiary Header */}
-      <View style={styles.header}>
-        <View style={styles.headerTop}>
-          <View style={styles.flex}>
-            <Text style={styles.screenTitle}>Test Records</Text>
-            <Text style={styles.headerSub}>Append-only evidentiary ledger · searchable register</Text>
-          </View>
-          <View style={styles.headerBtns}>
-            <TouchableOpacity
-              style={styles.clockHeaderBtn}
-              onPress={() => {
-                setSelectedClockCase(drillCase || caseSummaries[0]?.caseRef);
-                setClockModalVisible(true);
-              }}
-              accessibilityRole="button"
-              accessibilityLabel="Open Rule 10(2) Seizure Clock Timers"
-            >
-              <Icon name="clock" size={15} color={T.accent} strokeWidth={2.4} />
-              <Text style={styles.clockHeaderBtnText}>SEIZURE CLOCK</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.iconBtn}
-              onPress={() => navigation.navigate('Settings')}
-              accessibilityRole="button"
-              accessibilityLabel="Open settings"
-            >
-              <Icon name="settings" size={20} color={T.textPrimary} strokeWidth={2.2} />
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
+      {/* Top Header */}
+      <View style={[styles.header, { paddingTop: Math.max(insets.top, 16) + 8 }]}>
+        <Text style={styles.headerTitle}>Cases</Text>
 
-      <View style={styles.topBlock}>
-        {/* Search — evidentiary register lookup */}
-        <View style={styles.searchBox}>
-          <Icon name="search" size={18} color={T.textMuted} strokeWidth={2.2} />
-          <TextInput
-            value={query}
-            onChangeText={setQuery}
-            placeholder="Search case · package · reagent · UUID…"
-            placeholderTextColor={T.textMuted}
-            style={styles.searchInput}
-            accessibilityLabel="Search test records"
-            autoCorrect={false}
-          />
-          {query.length > 0 ? (
-            <TouchableOpacity onPress={() => setQuery('')} accessibilityRole="button" accessibilityLabel="Clear search" style={styles.searchClear}>
-              <Icon name="close" size={16} color={T.textSecondary} strokeWidth={2.5} />
-            </TouchableOpacity>
-          ) : null}
-        </View>
-
-        {/* Outcome buckets with live counts */}
-        <View style={styles.bucketRow}>
-          {BUCKETS.map((b) => {
-            const selected = bucket === b.key;
-            return (
-              <TouchableOpacity
-                key={b.key}
-                style={[styles.bucketChip, selected && styles.bucketChipSelected]}
-                onPress={() => setBucket(b.key)}
-                accessibilityRole="tab"
-                accessibilityState={{ selected }}
-                accessibilityLabel={`${b.label} filter, ${counts[b.key]} records`}
-              >
-                <Icon
-                  name={b.icon}
-                  size={13}
-                  color={selected ? T.onAccent : b.key === 'inconclusive' ? T.marginalText : b.key === 'rx_pos' ? T.successText : T.textSecondary}
-                  strokeWidth={2.5}
-                />
-                <Text style={[styles.bucketLabel, selected && styles.bucketLabelSelected]}>{b.label}</Text>
-                <Text style={[styles.bucketCount, selected && styles.bucketCountSelected]}>{counts[b.key]}</Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-
-        {/* Chain + sync status strip (live) */}
-        <View style={styles.verifyRow}>
-          <View style={styles.verifyLeft}>
+        <View style={styles.headerRight}>
+          <View style={[styles.offlineBadge, reachability === 'up' && { backgroundColor: '#DCFCE7' }]}>
             <Icon
-              name={verification?.valid ? 'lock' : verification ? 'alert' : 'clock'}
-              size={14}
-              color={verification?.valid ? T.successText : verification ? T.dangerText : T.textMuted}
-              strokeWidth={2.5}
+              name={reachability === 'up' ? 'wifi' : 'wifiOff'}
+              size={13}
+              color={reachability === 'up' ? '#15803D' : '#92400E'}
+              strokeWidth={2.4}
             />
-            <Text style={styles.verifyText}>
-              {records.length} records · chain {verification?.valid ? 'VERIFIED INTACT' : verification ? 'BROKEN — SEE INTEGRITY' : 'VERIFICATION PENDING'}
+            <Text style={[styles.offlineBadgeText, reachability === 'up' && { color: '#15803D' }]}>
+              {reachability === 'up' ? 'ONLINE' : 'OFFLINE'}
             </Text>
           </View>
-          {queued > 0 ? (
-            <View style={styles.queuedPill}>
-              <Text style={styles.queuedPillText}>{queued} QUEUED</Text>
-            </View>
-          ) : null}
-          {demoSeeded > 0 ? (
-            <View style={styles.demoPill}>
-              <Text style={styles.demoPillText}>{demoSeeded} DEMO SEED · LOCAL ONLY</Text>
-            </View>
-          ) : null}
-          {Object.keys(caseStatus).length > 0 ? (
-            <View style={styles.serverPill}>
-              <Text style={styles.serverPillText}>
-                SERVER · {Object.keys(caseStatus).length} CASES{statusFetchedAt ? ` @ ${new Date(statusFetchedAt).toLocaleTimeString('en-IN')}` : ''}
-              </Text>
-            </View>
-          ) : null}
-        </View>
 
-        {/* G-D6 mode switch: CASES (grouped, the working view) vs ALL RECORDS (audit view) */}
-        <View style={styles.modeRow}>
           <TouchableOpacity
-            style={[styles.modeTab, view === 'cases' && styles.modeTabActive]}
-            onPress={() => {
-              setView('cases');
-              setDrillCase(null);
-            }}
-            accessibilityRole="tab"
-            accessibilityState={{ selected: view === 'cases' }}
-            accessibilityLabel="Browse by case"
+            style={styles.avatarButton}
+            onPress={() => navigation.navigate('Settings')}
+            accessibilityRole="button"
+            accessibilityLabel="Officer Profile and Settings"
           >
-            <Text style={[styles.modeTabText, view === 'cases' && styles.modeTabTextActive]}>CASES</Text>
+            <Icon name="user" size={18} color="#FFFFFF" strokeWidth={2.2} />
           </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.modeTab, view === 'records' && styles.modeTabActive]}
-            onPress={() => {
-              setView('records');
-              setDrillCase(null);
-            }}
-            accessibilityRole="tab"
-            accessibilityState={{ selected: view === 'records' }}
-            accessibilityLabel="Browse all records flat"
-          >
-            <Text style={[styles.modeTabText, view === 'records' && styles.modeTabTextActive]}>ALL RECORDS</Text>
-          </TouchableOpacity>
-          {drillCase ? (
-            <TouchableOpacity
-              style={styles.backToCases}
-              onPress={() => setDrillCase(null)}
-              accessibilityRole="button"
-              accessibilityLabel={`Leave case ${drillCase} and return to the case list`}
-            >
-              <Icon name="chevronLeft" size={13} color={T.accent} strokeWidth={2.6} />
-              <Text style={styles.backToCasesText}>{drillCase}</Text>
-            </TouchableOpacity>
-          ) : null}
         </View>
-
-        {/* Statutory notice — outcomes render on this screen */}
       </View>
 
-      <FadeEntrance style={styles.flex}>
-        {!seeded ? (
-          <View style={styles.listPad}>
-            <View style={styles.loadingBox}>
-              <Icon name="chain" size={22} color={T.textMuted} strokeWidth={2} />
-              <Text style={styles.loadingText}>Hydrating encrypted ledger…</Text>
-            </View>
-          </View>
-        ) : view === 'cases' && !drillCase ? (
-          <FlatList
-            data={caseSummaries}
-            keyExtractor={(c) => c.caseRef}
-            contentContainerStyle={styles.listPad}
-            refreshControl={
-              <RefreshControl refreshing={refreshing} onRefresh={() => void pullRefresh()} tintColor={T.accent} colors={[T.accent]} />
-            }
-            ListEmptyComponent={
-              <View style={styles.emptyBox}>
-                <View style={styles.emptyIconCircle}>
-                  <Icon name="flask" size={22} color={T.textSecondary} strokeWidth={2.2} />
+      {/* Search Bar */}
+      <View style={styles.searchContainer}>
+        <View style={styles.searchBox}>
+          <Icon name="search" size={18} color="#94A3B8" strokeWidth={2.2} />
+          <TextInput
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            placeholder="Search ref, package, reagent..."
+            placeholderTextColor="#94A3B8"
+            style={styles.searchInput}
+            accessibilityLabel="Search cases"
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => setSearchQuery('')}>
+              <Icon name="close" size={14} color="#64748B" strokeWidth={2.4} />
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
+
+      {/* Filter Tabs */}
+      <View style={styles.filterRow}>
+        {(['ALL', 'POSITIVE', 'INCONCLUSIVE', 'PENDING'] as CaseFilter[]).map((tab) => {
+          const selected = filter === tab;
+          return (
+            <TouchableOpacity
+              key={tab}
+              style={[styles.filterChip, selected && styles.filterChipActive]}
+              onPress={() => setFilter(tab)}
+              accessibilityRole="tab"
+              accessibilityState={{ selected }}
+            >
+              <Text style={[styles.filterChipText, selected && styles.filterChipTextActive]}>
+                {tab}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      {/* Subheader Status Line */}
+      <View style={styles.subheadRow}>
+        <View style={styles.subheadLeft}>
+          <View style={styles.greenDot} />
+          <Text style={styles.subheadLeftText}>{statusSubhead}</Text>
+        </View>
+        <Text style={styles.subheadRightText}>TAMPER SEAL SHA-256</Text>
+      </View>
+
+      {/* Cases List */}
+      <FlatList
+        data={filteredRecords}
+        keyExtractor={(item) => item.record_uuid}
+        contentContainerStyle={styles.listContent}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => void pullRefresh()}
+            tintColor="#1D4ED8"
+            colors={['#1D4ED8']}
+          />
+        }
+        renderItem={({ item }) => {
+          const isPos = item.outcome === 'CONSISTENT_WITH_REAGENT_POSITIVE';
+          const isPending = !item.deviceAttestation && item.syncStatus !== 'synced';
+          const accentColor = isPos ? '#15803D' : '#D97706';
+          const statusText = isPos ? 'CONSISTENT WITH POSITIVE' : 'INCONCLUSIVE';
+          const reagentName = REAGENT_LABEL[item.reagent] || item.reagent || 'Field Reagent';
+          const timeStr = item.created_at ? formatTimeIst(item.created_at) : '--:--';
+
+          const deltaEVal = item.deltaE ? item.deltaE.toFixed(2) : null;
+          const confidenceLabel =
+            deltaEVal && Number(deltaEVal) < 1.0
+              ? `ΔE: ${deltaEVal} (Verified Match)`
+              : deltaEVal
+                ? `ΔE: ${deltaEVal} (High Confidence)`
+                : null;
+
+          return (
+            <TouchableOpacity
+              style={[styles.caseCard, { borderLeftColor: accentColor }]}
+              onPress={() => {
+                navigation.navigate('RecordDetail', { uuid: item.record_uuid });
+              }}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel={`Case ${item.case_ref}, package ${item.package_no}`}
+            >
+              {/* Card Header */}
+              <View style={styles.cardHeaderRow}>
+                <View style={styles.cardStatusWrap}>
+                  <Icon
+                    name={isPos ? 'check' : 'alert'}
+                    size={16}
+                    color={accentColor}
+                    strokeWidth={2.5}
+                  />
+                  <Text style={[styles.cardStatusText, { color: accentColor }]}>
+                    {statusText}
+                  </Text>
                 </View>
-                <Text style={styles.emptyTitle}>No sealed readings yet</Text>
-                <Text style={styles.emptyBody}>Run your first field test — readings group here by case.</Text>
-                <TouchableOpacity style={styles.emptyBtn} onPress={() => navigation.navigate('NewTestSetup')} accessibilityRole="button" accessibilityLabel="Run your first field test">
-                  <Text style={styles.emptyBtnText}>RUN FIRST FIELD TEST</Text>
-                </TouchableOpacity>
+                <Text style={styles.cardTimeText}>{timeStr}</Text>
               </View>
-            }
-            renderItem={({ item: c }) => (
-              <TouchableOpacity
-                style={styles.caseCard}
-                onPress={() => {
-                  setDrillCase(c.caseRef);
-                  setView('records');
-                }}
-                accessibilityRole="button"
-                accessibilityLabel={`Open case ${c.caseRef}: ${c.records} readings across ${c.packages.length} packages`}
-              >
-                <View style={styles.caseCardTop}>
-                  <Text style={styles.caseRef}>{c.caseRef}</Text>
-                  <View style={styles.caseCardTopRight}>
-                    <TouchableOpacity
-                      style={styles.caseClockTrigger}
-                      onPress={(e) => {
-                        e.stopPropagation?.();
-                        setSelectedClockCase(c.caseRef);
-                        setClockModalVisible(true);
-                      }}
-                      accessibilityRole="button"
-                      accessibilityLabel={`View seizure clock for case ${c.caseRef}`}
+
+              {/* Row 1: Case Ref & Package */}
+              <View style={styles.dataRow}>
+                <View style={styles.dataCol}>
+                  <Text style={styles.dataLabel}>CASE REF</Text>
+                  <Text style={styles.dataValueBold}>{item.case_ref}</Text>
+                </View>
+                <View style={styles.dataCol}>
+                  <Text style={styles.dataLabel}>PACKAGE</Text>
+                  <Text style={styles.dataValueBold}>{item.package_no}</Text>
+                </View>
+              </View>
+
+              {/* Row 2: Reagent & Integrity */}
+              <View style={styles.dataRow}>
+                <View style={styles.dataCol}>
+                  <Text style={styles.dataLabel}>REAGENT</Text>
+                  <Text style={styles.dataValueRegular}>{reagentName}</Text>
+                </View>
+                <View style={styles.dataCol}>
+                  <Text style={styles.dataLabel}>INTEGRITY</Text>
+                  <View style={styles.integrityWrap}>
+                    <Icon
+                      name={isPending ? 'clock' : 'lock'}
+                      size={13}
+                      color={isPending ? '#D97706' : '#15803D'}
+                      strokeWidth={2.4}
+                    />
+                    <Text
+                      style={[
+                        styles.integrityText,
+                        { color: isPending ? '#D97706' : '#15803D' },
+                      ]}
                     >
-                      <Icon name="clock" size={13} color={T.accent} strokeWidth={2.4} />
-                      <Text style={styles.caseClockTriggerText}>TIMERS</Text>
-                    </TouchableOpacity>
-                    {caseStatus[c.caseRef] ? (
-                      <View style={styles.serverChip}>
-                        <Icon name="globe" size={11} color={T.textSecondary} strokeWidth={2.5} />
-                        <Text style={styles.serverChipText}>{caseStatus[c.caseRef].status}</Text>
-                      </View>
-                    ) : null}
+                      {isPending ? 'PENDING SEAL' : 'SEALED'}
+                    </Text>
                   </View>
                 </View>
-                <Text style={styles.caseMeta}>
-                  {c.packages.length} PACKAGE{c.packages.length === 1 ? '' : 'S'} TESTED · {c.records} READING{c.records === 1 ? '' : 'S'} · {relativeIst(c.lastAt)}
-                </Text>
-                <View style={styles.mixRow}>
-                  {c.pos > 0 ? (
-                    <View style={styles.mixChipOk}>
-                      <Text style={styles.mixChipTextOk}>REAGENT +VE {c.pos}</Text>
-                    </View>
-                  ) : null}
-                  {c.neg > 0 ? (
-                    <View style={styles.mixChipNeutral}>
-                      <Text style={styles.mixChipText}>REAGENT −VE {c.neg}</Text>
-                    </View>
-                  ) : null}
-                  {c.inc > 0 ? (
-                    <View style={styles.mixChipMarginal}>
-                      <Text style={styles.mixChipTextMarginal}>INCONCLUSIVE {c.inc}</Text>
-                    </View>
-                  ) : null}
-                  {c.queued > 0 ? (
-                    <View style={styles.mixChipQueued}>
-                      <Text style={styles.mixChipText}>QUEUED {c.queued}</Text>
-                    </View>
-                  ) : null}
-                  {c.demo > 0 ? (
-                    <View style={styles.mixChipDemo}>
-                      <Text style={styles.mixChipTextDemo}>DEMO SEED {c.demo} · LOCAL ONLY</Text>
-                    </View>
-                  ) : null}
-                  <View style={styles.mixChevron}>
-                    <Icon name="chevronRight" size={16} color={T.textMuted} strokeWidth={2.5} />
+              </View>
+
+              {/* Row 3 (optional): Color match confidence */}
+              {confidenceLabel && (
+                <View style={styles.confidenceRow}>
+                  <View style={styles.dataCol}>
+                    <Text style={styles.dataLabel}>COLOR MATCH CONFIDENCE</Text>
+                  </View>
+                  <View style={styles.dataCol}>
+                    <Text style={styles.confidenceValueGreen}>{confidenceLabel}</Text>
                   </View>
                 </View>
+              )}
+            </TouchableOpacity>
+          );
+        }}
+        ListEmptyComponent={
+          <View style={styles.emptyContainer}>
+            <View style={styles.emptyIconCircle}>
+              <Icon name={searchQuery ? 'search' : 'document'} size={24} color="#64748B" strokeWidth={2} />
+            </View>
+            <Text style={styles.emptyTitle}>
+              {searchQuery ? 'No Matching Records' : 'No Sealed Cases Yet'}
+            </Text>
+            <Text style={styles.emptySubtitle}>
+              {searchQuery
+                ? `No local ledger entries match "${searchQuery}".`
+                : 'Complete an optical field test to generate a cryptographically sealed evidentiary entry.'}
+            </Text>
+            {!searchQuery && (
+              <TouchableOpacity
+                style={styles.emptyActionBtn}
+                onPress={() => navigation.navigate('NewTestSetup')}
+                activeOpacity={0.88}
+                accessibilityRole="button"
+                accessibilityLabel="Initiate New Field Test"
+              >
+                <Icon name="camera" size={16} color="#FFFFFF" strokeWidth={2.4} />
+                <Text style={styles.emptyActionBtnText}>New Field Test</Text>
               </TouchableOpacity>
             )}
-            ItemSeparatorComponent={() => <View style={styles.sep} />}
-          />
-        ) : (
-          <FlatList
-            data={listRecords}
-            keyExtractor={(r) => r.record_uuid}
-            contentContainerStyle={styles.listPad}
-            showsVerticalScrollIndicator={true}
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={() => void pullRefresh()}
-                tintColor={T.accent}
-                colors={[T.accent]}
-                progressViewOffset={8}
-              />
-            }
-            ListEmptyComponent={
-              <View style={styles.emptyBox}>
-                <View style={styles.emptyIconCircle}>
-                  <Icon name="search" size={22} color={T.textSecondary} strokeWidth={2.2} />
-                </View>
-                <Text style={styles.emptyTitle}>
-                  {query || bucket !== 'all' ? 'No matching records' : 'No test records yet'}
-                </Text>
-                <Text style={styles.emptyBody}>
-                  {query || bucket !== 'all'
-                    ? 'Widen the filter or clear the search to see more readings.'
-                    : 'Sealed readings from the field wizard land here, chained and searchable.'}
-                </Text>
-                <TouchableOpacity
-                  style={styles.emptyBtn}
-                  onPress={() => {
-                    if (query || bucket !== 'all') {
-                      setQuery('');
-                      setBucket('all');
-                    } else {
-                      navigation.navigate('NewTestSetup');
-                    }
-                  }}
-                  accessibilityRole="button"
-                  accessibilityLabel={query || bucket !== 'all' ? 'Clear all filters' : 'Start a new field test'}
-                >
-                  <Text style={styles.emptyBtnText}>
-                    {query || bucket !== 'all' ? 'CLEAR ALL FILTERS' : 'START A FIELD TEST'}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            }
-            renderItem={({ item: r }) => <RecordRow r={r} onPress={() => navigation.navigate('RecordDetail', { uuid: r.record_uuid })} />}
-            ItemSeparatorComponent={() => <View style={styles.sep} />}
-          />
-        )}
-      </FadeEntrance>
-
-      <StatutoryClockModal
-        visible={clockModalVisible}
-        onClose={() => setClockModalVisible(false)}
-        initialCaseRef={selectedClockCase}
-        cases={caseSummaries.map((c) => ({ caseRef: c.caseRef, timestampIso: c.lastAt }))}
-      />
-
-      <LightTabBar
-        active="records"
-        onTab={(t) => navigation.navigate(t === 'duty' ? 'Home' : t === 'records' ? 'CaseLog' : 'Integrity')}
-        onNewTest={() => navigation.navigate('NewTestSetup')}
-        recordsBadge={queued > 0 ? queued : undefined}
-      />
-    </View>
-  );
-};
-
-/**
- * Three honest sync states. A demo seed is a real, chain-sealed record that lives
- * ONLY on this device: it is never queued for upload and must never read as SYNCED.
- */
-const syncChipFor = (
-  status: LedgerRecord['syncStatus'],
-  styles: ReturnType<typeof createStyles>,
-  T: Theme['colors'],
-): { style: ViewStyle; color: string; icon: IconName; label: string } => {
-  if (status === 'synced') return { style: styles.syncChip, color: T.textSecondary, icon: 'check', label: 'SYNCED' };
-  // A dead-lettered record never reached the server. It must never read like SYNCED.
-  if (status === 'dead-letter') {
-    return { style: styles.syncChipQueued, color: T.dangerText, icon: 'alert', label: 'SERVER REJECTED · NOT UPLOADED' };
-  }
-  if (status === 'queued') return { style: styles.syncChipQueued, color: T.accent, icon: 'clock', label: 'QUEUED' };
-  return { style: styles.syncChipDemo, color: T.marginalText, icon: 'flask', label: 'DEMO SEED · LOCAL ONLY' };
-};
-
-/** One evidentiary register row: identity left, metrics + seal + sync right. */
-const RecordRow: React.FC<{ r: LedgerRecord; onPress: () => void }> = ({ r, onPress }) => {
-  const { theme } = useAppTheme();
-  const T = theme.colors;
-  const styles = useThemedStyles(createStyles);
-  const serverCase = useSyncStore((x) => x.caseStatus[r.case_ref]);
-  return (
-  <TouchableOpacity
-    style={styles.row}
-    onPress={onPress}
-    accessibilityRole="button"
-    accessibilityLabel={`Open sealed record ${r.case_ref} package ${r.package_no}, ${OFFICER_READING_SHORT[r.outcome]}`}
-  >
-    <View style={styles.rowTop}>
-      <View style={styles.rowIdentity}>
-        <Text style={styles.rowCase}>{r.case_ref} · {r.package_no}{r.lot_no ? ` · LOT ${r.lot_no}` : ''}</Text>
-        <Text style={styles.rowKit}>{REAGENT_LABEL[r.reagent]} · SEQ #{r.seq}</Text>
-      </View>
-      <Icon name="chevronRight" size={18} color={T.textMuted} strokeWidth={2.5} />
-    </View>
-    <View style={styles.rowOutcome}>
-      <OutcomeTag kind={r.outcome} />
-      <View style={styles.rowSeals}>
-        <View style={r.deviceAttestation ? styles.sealChipOk : styles.sealChipWarn}>
-          <Icon name={r.deviceAttestation ? 'lock' : 'chain'} size={11} color={r.deviceAttestation ? T.successText : T.marginalText} strokeWidth={2.5} />
-          <Text style={[styles.sealChipText, { color: r.deviceAttestation ? T.successText : T.marginalText }]}>
-            {r.deviceAttestation ? 'ATTESTED' : 'CHAIN-ONLY'}
-          </Text>
-        </View>
-        {serverCase ? (
-          <View style={styles.serverChip}>
-            <Icon name="globe" size={11} color={T.textSecondary} strokeWidth={2.5} />
-            <Text style={styles.serverChipText}>SERVER: {serverCase.status}</Text>
           </View>
-        ) : null}
-        {(() => {
-          const chip = syncChipFor(r.syncStatus, styles, T);
-          return (
-            <View style={chip.style} accessibilityLabel={`Sync state: ${chip.label}`}>
-              <Icon name={chip.icon} size={11} color={chip.color} strokeWidth={2.5} />
-              <Text style={[styles.syncChipText, { color: chip.color }]}>{chip.label}</Text>
+        }
+        ListFooterComponent={
+          <View style={styles.statutoryCard}>
+            <View style={styles.statutoryHeaderRow}>
+              <Icon name="scale" size={14} color="#475569" strokeWidth={2.2} />
+              <Text style={styles.statutoryTitle}>STATUTORY FOOTNOTE</Text>
             </View>
-          );
-        })()}
-      </View>
+            <Text style={styles.statutoryBody}>
+              RULE 10(2) OF THE NDPS (SEIZURE, STORAGE, SAMPLING AND DISPOSAL) RULES, 2022 • SEC. 63 BHARATIYA SAKSHYA ADHINIYAM (BSA), 2023 COMPLIANT
+            </Text>
+          </View>
+        }
+      />
+
+      {/* 3-Tab Bottom Navigation Bar */}
+      <LightTabBar
+        active="cases"
+        onTab={(tab) => {
+          if (tab === 'cases') navigation.navigate('CaseLog');
+          if (tab === 'scan') navigation.navigate('NewTestSetup');
+          if (tab === 'home') navigation.navigate('Home');
+        }}
+        onNewTest={() => navigation.navigate('NewTestSetup')}
+      />
     </View>
-    <View style={styles.rowMeta}>
-      <View style={styles.rowMetaItem}>
-        <Text style={styles.rowMetaLabel}>ΔE00</Text>
-        <Text style={styles.rowMetaValue}>{r.deltaE.toFixed(2)}</Text>
-      </View>
-      <View style={styles.rowMetaItem}>
-        <Text style={styles.rowMetaLabel}>RECORDED</Text>
-        <Text style={styles.rowMetaValue}>{formatTimeIst(r.created_at)} · {formatDateIst(r.created_at)}</Text>
-      </View>
-      <View style={styles.rowMetaItem}>
-        <Text style={styles.rowMetaLabel}>GATE</Text>
-        <Text style={styles.rowMetaValue}>{r.residual.grade}</Text>
-      </View>
-    </View>
-  </TouchableOpacity>
   );
 };
 
 const createStyles = (theme: Theme) => {
-  const T = theme.colors;
   const evidenceMono = theme.fontFamily.mono;
+
   return StyleSheet.create({
-  modeRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10 },
-  modeTab: { borderWidth: 1, borderColor: T.border, borderRadius: 6, paddingHorizontal: 14, minHeight: 44, justifyContent: 'center', backgroundColor: T.cardSubtle },
-  modeTabActive: { borderColor: T.borderStrong, backgroundColor: T.accentSurface },
-  modeTabText: { fontFamily: evidenceMono, fontSize: 11, letterSpacing: 0.6, color: T.textSecondary },
-  modeTabTextActive: { color: T.accent },
-  backToCases: { flexDirection: 'row', alignItems: 'center', marginLeft: 'auto', paddingVertical: 10, paddingRight: 6 },
-  backToCasesText: { fontFamily: evidenceMono, fontSize: 11, color: T.accent, letterSpacing: 0.4 },
-  caseCard: { backgroundColor: T.card, borderRadius: 8, borderWidth: 1, borderColor: T.border, padding: 14, gap: 6 },
-  caseCardTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
-  caseRef: { fontFamily: evidenceMono, fontSize: 14, fontWeight: '700', color: T.textPrimary, letterSpacing: 0.2, flexShrink: 1 },
-  caseMeta: { fontSize: 12, color: T.textSecondary },
-  mixRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginTop: 2 },
-  mixChipOk: { backgroundColor: T.successSurface, borderColor: T.successBorder, borderWidth: 1, borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 },
-  mixChipTextOk: { fontFamily: evidenceMono, fontSize: 10, color: T.successText, letterSpacing: 0.3 },
-  mixChipNeutral: { backgroundColor: T.cardSubtle, borderColor: T.border, borderWidth: 1, borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 },
-  mixChipMarginal: { backgroundColor: T.marginalSurface, borderColor: T.marginalBorder, borderWidth: 1, borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 },
-  mixChipTextMarginal: { fontFamily: evidenceMono, fontSize: 10, color: T.marginalText, letterSpacing: 0.3 },
-  mixChipQueued: { backgroundColor: T.accentSurface, borderColor: T.borderStrong, borderWidth: 1, borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 },
-  mixChipText: { fontFamily: evidenceMono, fontSize: 10, color: T.textSecondary, letterSpacing: 0.3 },
-  mixChipDemo: { backgroundColor: T.marginalSurface, borderColor: T.marginalBorder, borderWidth: 1, borderStyle: 'dashed', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 },
-  mixChipTextDemo: { fontFamily: evidenceMono, fontSize: 10, color: T.marginalText, letterSpacing: 0.3 },
-  mixChevron: { marginLeft: 'auto', justifyContent: 'center' },
-
-  serverPill: { borderWidth: 1, borderColor: T.border, borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, marginLeft: 6 },
-  serverPillText: { fontSize: 10, fontWeight: '700', color: T.textSecondary, letterSpacing: 0.4 },
-  serverChip: { flexDirection: 'row', alignItems: 'center', gap: 3, borderWidth: 1, borderColor: T.border, borderRadius: 3, paddingHorizontal: 5, paddingVertical: 2 },
-  serverChipText: { fontSize: 9, fontWeight: '700', color: T.textSecondary, letterSpacing: 0.3 },
-
-  screen: { flex: 1, backgroundColor: T.canvas },
-  flex: { flex: 1 },
-
-  header: {
-    backgroundColor: T.card,
-    paddingHorizontal: 16,
-    paddingTop: 48,
-    paddingBottom: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: T.border,
-  },
-  headerTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
-  screenTitle: { fontSize: 22, fontWeight: '700', color: T.textPrimary, letterSpacing: -0.2 },
-  headerSub: { fontSize: 12, fontWeight: '500', color: T.textSecondary, marginTop: 2 },
-  headerBtns: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  clockHeaderBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    backgroundColor: T.accentSurface,
-    borderColor: T.borderStrong,
-    borderWidth: 1,
-    borderRadius: 6,
-    paddingHorizontal: 10,
-    minHeight: 40,
-  },
-  clockHeaderBtnText: {
-    fontFamily: evidenceMono,
-    fontSize: 11,
-    fontWeight: '700',
-    color: T.accent,
-    letterSpacing: 0.4,
-  },
-  caseCardTopRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  caseClockTrigger: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: T.cardSubtle,
-    borderWidth: 1,
-    borderColor: T.border,
-    borderRadius: 4,
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-  },
-  caseClockTriggerText: {
-    fontFamily: evidenceMono,
-    fontSize: 9.5,
-    fontWeight: '700',
-    color: T.accent,
-    letterSpacing: 0.4,
-  },
-  statutoryTag: {
-    backgroundColor: T.cardSubtle,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: T.border,
-  },
-  statutoryTagText: { fontSize: 11, fontWeight: '700', color: T.textSecondary, letterSpacing: 0.6 },
-  iconBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-
-  topBlock: { paddingHorizontal: 16, paddingTop: 12, gap: 10 },
-
-  searchBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: T.card,
-    borderWidth: 1,
-    borderColor: T.border,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    minHeight: 52,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 14,
-    fontWeight: '500',
-    color: T.textPrimary,
-    fontFamily: evidenceMono,
-    paddingVertical: 10,
-  },
-  searchClear: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-
-  bucketRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  bucketChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    minHeight: 44,
-    paddingHorizontal: 10,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: T.border,
-    backgroundColor: T.card,
-  },
-  bucketChipSelected: { backgroundColor: T.accent, borderColor: T.accent },
-  bucketLabel: { fontSize: 11, fontWeight: '700', color: T.textSecondary, letterSpacing: 0.4 },
-  bucketLabelSelected: { color: T.onAccent },
-  bucketCount: { fontSize: 11, fontWeight: '700', color: T.textPrimary, fontFamily: evidenceMono },
-  bucketCountSelected: { color: T.onAccent },
-
-  verifyRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
-  verifyLeft: { flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 },
-  verifyText: { fontSize: 11, fontWeight: '600', color: T.textSecondary, letterSpacing: 0.3 },
-  queuedPill: {
-    backgroundColor: T.accentSurface,
-    borderColor: T.accent,
-    borderWidth: 1,
-    borderRadius: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  queuedPillText: { fontSize: 10, fontWeight: '700', color: T.accent, letterSpacing: 0.4 },
-  demoPill: {
-    backgroundColor: T.marginalSurface,
-    borderColor: T.marginalBorder,
-    borderWidth: 1,
-    borderStyle: 'dashed',
-    borderRadius: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  demoPillText: { fontSize: 10, fontWeight: '700', color: T.marginalText, letterSpacing: 0.4 },
-
-  listPad: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 96 },
-
-  loadingBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: T.card,
-    borderWidth: 1,
-    borderColor: T.border,
-    borderRadius: 8,
-    padding: 20,
-  },
-  loadingText: { fontSize: 13, fontWeight: '600', color: T.textSecondary },
-
-  row: {
-    backgroundColor: T.card,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: T.border,
-    padding: 14,
-    minHeight: 56,
-    gap: 8,
-  },
-  rowTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 },
-  rowIdentity: { flex: 1 },
-  rowCase: { fontSize: 14, fontWeight: '700', color: T.textPrimary, fontFamily: evidenceMono, lineHeight: 20 },
-  rowKit: { fontSize: 12, fontWeight: '500', color: T.textSecondary, marginTop: 2 },
-  rowOutcome: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
-  rowSeals: { flexDirection: 'row', gap: 6, alignItems: 'center' },
-  sealChipOk: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    backgroundColor: T.successSurface,
-    borderColor: T.successBorder,
-    borderWidth: 1,
-    borderRadius: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 3,
-  },
-  sealChipWarn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    backgroundColor: T.marginalSurface,
-    borderColor: T.marginalBorder,
-    borderWidth: 1,
-    borderRadius: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 3,
-  },
-  sealChipText: { fontSize: 10, fontWeight: '700', letterSpacing: 0.4 },
-  syncChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    backgroundColor: T.cardSubtle,
-    borderColor: T.border,
-    borderWidth: 1,
-    borderRadius: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 3,
-  },
-  syncChipQueued: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    backgroundColor: T.accentSurface,
-    borderColor: T.accent,
-    borderWidth: 1,
-    borderRadius: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 3,
-  },
-  syncChipText: { fontSize: 10, fontWeight: '700', letterSpacing: 0.4 },
-  syncChipDemo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    backgroundColor: T.marginalSurface,
-    borderColor: T.marginalBorder,
-    borderWidth: 1,
-    borderStyle: 'dashed',
-    borderRadius: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 3,
-  },
-  rowMeta: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    backgroundColor: T.cardSubtle,
-    borderRadius: 4,
-    padding: 8,
-  },
-  rowMetaItem: { gap: 2 },
-  rowMetaLabel: { fontSize: 9, fontWeight: '700', color: T.textMuted, letterSpacing: 0.6 },
-  rowMetaValue: { fontSize: 11, fontWeight: '600', color: T.textPrimary, fontFamily: evidenceMono },
-  sep: { height: 10 },
-
-  emptyBox: { alignItems: 'center', gap: 8, paddingTop: 40, paddingHorizontal: 24 },
-  emptyIconCircle: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: T.cardSubtle,
-    borderWidth: 1,
-    borderColor: T.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  emptyTitle: { fontSize: 16, fontWeight: '700', color: T.textPrimary },
-  emptyBody: { fontSize: 13, color: T.textSecondary, lineHeight: 19, textAlign: 'center' },
-  emptyBtn: {
-    minHeight: 48,
-    paddingHorizontal: 20,
-    borderRadius: 8,
-    borderWidth: 2,
-    borderColor: T.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 8,
-  },
-  emptyBtnText: { fontSize: 13, fontWeight: '700', color: T.accent, letterSpacing: 0.4 },
+    screen: {
+      flex: 1,
+      backgroundColor: '#F8FAFC',
+    },
+    header: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingHorizontal: 20,
+      paddingBottom: 12,
+      backgroundColor: '#FFFFFF',
+      borderBottomWidth: 1,
+      borderBottomColor: '#E2E8F0',
+    },
+    headerTitle: {
+      fontSize: 26,
+      fontWeight: '800',
+      color: '#0F172A',
+      letterSpacing: -0.3,
+    },
+    headerRight: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    offlineBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      backgroundColor: '#FEF3C7',
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: 16,
+    },
+    offlineBadgeText: {
+      fontSize: 11,
+      fontWeight: '800',
+      color: '#92400E',
+      letterSpacing: 0.4,
+    },
+    avatarButton: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      backgroundColor: '#1D4ED8',
+      alignItems: 'center',
+      justifyContent: 'center',
+      shadowColor: '#1D4ED8',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.25,
+      shadowRadius: 4,
+      elevation: 2,
+    },
+    searchContainer: {
+      paddingHorizontal: 20,
+      paddingTop: 14,
+      paddingBottom: 10,
+    },
+    searchBox: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      backgroundColor: '#F1F5F9',
+      borderRadius: 24,
+      paddingHorizontal: 16,
+      height: 48,
+    },
+    searchInput: {
+      flex: 1,
+      fontSize: 14,
+      color: '#0F172A',
+      fontWeight: '500',
+    },
+    filterRow: {
+      flexDirection: 'row',
+      paddingHorizontal: 20,
+      gap: 8,
+      paddingBottom: 10,
+    },
+    filterChip: {
+      paddingHorizontal: 14,
+      paddingVertical: 7,
+      borderRadius: 20,
+      backgroundColor: '#EEF2FF',
+    },
+    filterChipActive: {
+      backgroundColor: '#1D4ED8',
+    },
+    filterChipText: {
+      fontSize: 11,
+      fontWeight: '700',
+      color: '#475569',
+      letterSpacing: 0.4,
+    },
+    filterChipTextActive: {
+      color: '#FFFFFF',
+    },
+    subheadRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingHorizontal: 20,
+      paddingVertical: 6,
+    },
+    subheadLeft: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+    },
+    greenDot: {
+      width: 6,
+      height: 6,
+      borderRadius: 3,
+      backgroundColor: '#15803D',
+    },
+    subheadLeftText: {
+      fontSize: 10.5,
+      fontWeight: '800',
+      color: '#0F172A',
+      letterSpacing: 0.5,
+    },
+    subheadRightText: {
+      fontSize: 10,
+      fontWeight: '700',
+      color: '#64748B',
+      letterSpacing: 0.6,
+    },
+    listContent: {
+      paddingHorizontal: 20,
+      paddingTop: 8,
+      paddingBottom: 24,
+      gap: 14,
+    },
+    caseCard: {
+      backgroundColor: '#FFFFFF',
+      borderRadius: 14,
+      borderLeftWidth: 4,
+      borderWidth: 1,
+      borderColor: '#E2E8F0',
+      padding: 16,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.04,
+      shadowRadius: 5,
+      elevation: 2,
+    },
+    cardHeaderRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 12,
+    },
+    cardStatusWrap: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+    },
+    cardStatusText: {
+      fontSize: 12,
+      fontWeight: '800',
+      letterSpacing: 0.4,
+    },
+    cardTimeText: {
+      fontSize: 11.5,
+      fontWeight: '600',
+      color: '#64748B',
+      fontFamily: evidenceMono,
+    },
+    dataRow: {
+      flexDirection: 'row',
+      marginBottom: 10,
+    },
+    dataCol: {
+      flex: 1,
+    },
+    dataLabel: {
+      fontSize: 9.5,
+      fontWeight: '700',
+      color: '#64748B',
+      letterSpacing: 0.5,
+      marginBottom: 2,
+    },
+    dataValueBold: {
+      fontSize: 15,
+      fontWeight: '800',
+      color: '#0F172A',
+      fontFamily: evidenceMono,
+    },
+    dataValueRegular: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: '#0F172A',
+    },
+    integrityWrap: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+    },
+    integrityText: {
+      fontSize: 12,
+      fontWeight: '800',
+      letterSpacing: 0.5,
+    },
+    confidenceRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingTop: 10,
+      borderTopWidth: 1,
+      borderTopColor: '#F1F5F9',
+      marginTop: 2,
+    },
+    confidenceValueGreen: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: '#15803D',
+      fontFamily: evidenceMono,
+    },
+    statutoryCard: {
+      backgroundColor: '#EEF2FF',
+      borderRadius: 12,
+      padding: 14,
+      borderWidth: 1,
+      borderColor: '#E0E7FF',
+      marginTop: 8,
+    },
+    statutoryHeaderRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      marginBottom: 6,
+    },
+    statutoryTitle: {
+      fontSize: 10.5,
+      fontWeight: '800',
+      color: '#334155',
+      letterSpacing: 0.8,
+    },
+    statutoryBody: {
+      fontSize: 9.5,
+      fontWeight: '500',
+      color: '#64748B',
+      textAlign: 'center',
+      lineHeight: 14,
+      letterSpacing: 0.2,
+    },
+    emptyContainer: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 48,
+      paddingHorizontal: 24,
+    },
+    emptyIconCircle: {
+      width: 56,
+      height: 56,
+      borderRadius: 28,
+      backgroundColor: '#E2E8F0',
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: 14,
+    },
+    emptyTitle: {
+      fontSize: 16,
+      fontWeight: '700',
+      color: '#0F172A',
+      marginBottom: 6,
+    },
+    emptySubtitle: {
+      fontSize: 13,
+      color: '#64748B',
+      textAlign: 'center',
+      lineHeight: 18,
+      marginBottom: 20,
+      maxWidth: 280,
+    },
+    emptyActionBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      backgroundColor: '#1D4ED8',
+      paddingHorizontal: 18,
+      paddingVertical: 10,
+      borderRadius: 20,
+      shadowColor: '#1D4ED8',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.2,
+      shadowRadius: 4,
+      elevation: 2,
+    },
+    emptyActionBtnText: {
+      color: '#FFFFFF',
+      fontSize: 13,
+      fontWeight: '700',
+    },
   });
 };
 

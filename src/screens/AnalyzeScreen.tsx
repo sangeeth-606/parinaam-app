@@ -25,6 +25,7 @@ import type { RootStackParamList } from '../navigation/AppNavigator';
 import { Icon } from '../components/ui/Icon';
 import { StateBanner, ReadingRow } from '../components/ui/evidentiary/EvidenceBits';
 import { useSessionStore } from '../state/session-store';
+
 import { adaptCameraEngineResult } from '../capture/camera-engine-adapter.ts';
 import { WizardHeader } from '../components/ui/WizardHeader';
 import { GUIDANCE_TEXTS, useGuidance } from '../state/guidance';
@@ -191,7 +192,11 @@ export const AnalyzeScreen: React.FC = () => {
             <TouchableOpacity
               style={styles.primaryBtn}
               onPress={() => {
-                setStep(1);
+                // resetLap wipes burst + analysis state while keeping step=1 and
+                // the case/kit setup. This forces a fresh photo before PROCEED
+                // is available again — the officer cannot re-run analysis on the
+                // same image that caused the halt.
+                useSessionStore.getState().resetLap();
                 navigation.navigate('Capture');
               }}
               accessibilityRole="button"

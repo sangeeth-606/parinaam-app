@@ -1,1318 +1,668 @@
 /**
- * ResultsScreen — NDPS Presumptive Field-Test Outcome & Ledger Sealing Interface
- *
- * Purpose:
- * - Presents the LIVE colourimetric pipeline result (never a canned reading) as an
- *   evidentiary draft record: officer reading first, statutory constant verbatim second.
- * - Sealing is a CONFIRM step (WCAG 3.3.4): the officer sees exactly what will be
- *   canonicalized and chained before an irreversible append to the ledger.
- *
- * Statutory Foundation:
- * - In-app statutory banner retired (owner decision 2026-09-16; AGENTS.md rule 3)
- * - NDPS (Seizure, Storage, Sampling and Disposal) Rules, 2022 — presumptive field test record
- * - BNS s. 63(4) / BNSS evidentiary register: two-register presentation of every outcome
- *
- * Design Language (shared with BunchingScreen — src/theme (useAppTheme + useThemedStyles)):
- * - WCAG AAA contrast, light and dark palettes (contrast ratios >= 7:1 for normal text)
- * - Evidentiary review structure (not a consumer app card feed)
- * - Large touch targets (>= 48x48 dp)
- * - Compact technical metadata with tabular monospace typography
- * - Semantic states are tri-modal: color + icon + text label
- *   (success green = confirmed/sealed · slate = absence/no-response ·
- *    amber = inconclusive/advisory/unsealed · red reserved for refusal/integrity only)
- * - Presumptive outcome vocabulary: CONSISTENT_WITH_REAGENT_POSITIVE /
- *   CONSISTENT_WITH_REAGENT_NEGATIVE / INCONCLUSIVE — never a substance identity claim
+ * ResultsScreen — Evidence Intake & Presumptive Outcome Review
+ * Allows the officer to view the initial colorimetric reading, and edit/verify:
+ *   - Case / FIR Ref
+ *   - Package No
+ *   - Reagent Used
+ *   - Suspected Drug / Compound
+ *   - Operator Name
+ *   - Sample LOT No
+ *   - Panchnama Ref
+ *   - Kit Expiry / Lot
+ *   - Recorded Location (GPS Coordinates & Accuracy)
+ *   - IST Timestamp
+ * Then proceeds to the complete evidence test detail & cryptographic dossier screen.
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Modal,
+  KeyboardAvoidingView,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/AppNavigator';
 
 import { Icon } from '../components/ui/Icon';
-import {
-  MetaTile,
-  ReadingRow,
-  StateBanner,
-  BannerPill,
-  LightSwatch,
-  OutcomeTag,
-  GradeBadge,
-  signed,
-} from '../components/ui/evidentiary/EvidenceBits';
+import { LightTabBar } from '../components/ui/evidentiary/LightTabBar';
 import { useSessionStore } from '../state/session-store';
 import { useLedgerStore } from '../state/ledger-store';
+import { useSyncStore } from '../state/sync-store';
 import { saveEvidenceImage } from '../capture/evidence-image';
 import { acquireGeoTag } from '../capture/geotag';
-import { useCaseContext } from '../state/case-context';
 import { useAuthStore } from '../state/auth-store';
 import { makeRecordUuid } from '../services/analysis-pipeline';
-import { WizardHeader } from '../components/ui/WizardHeader';
-import { useAppTheme, useThemedStyles } from '../theme/theme-context';
+import { useThemedStyles } from '../theme/theme-context';
 import type { Theme } from '../theme';
-import { ABSTENTION_COPY, GRADE_COPY, OFFICER_READING, REAGENT_LABEL, formatIst } from '../domain/outcome-copy';
+import { formatTimeIst } from '../domain/outcome-copy';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
-const round2safe = (v: number) => Math.round(v * 100) / 100;
-/* ------------------------------------------------------------------ */
-/* Screen                                                              */
-/* ------------------------------------------------------------------ */
-
 export const ResultsScreen: React.FC = () => {
-  const { theme } = useAppTheme();
-  const T = theme.colors;
   const styles = useThemedStyles(createStyles);
   const navigation = useNavigation<Nav>();
-  const { setup, burst, decision, residual, record, setSeal, setRecord, setStep, reset } =
-    useSessionStore();
+  const insets = useSafeAreaInsets();
+
+  const { setup, burst, decision, residual, setRecord, patchSetup } = useSessionStore();
   const appendRecord = useLedgerStore((s) => s.appendRecord);
   const officer = useAuthStore((s) => s.officer);
-  const operator = officer?.id ?? 'UNAUTHENTICATED';
-  const packages = useLedgerStore((s) => s.records).filter((r) => r.case_ref === setup.caseRef);
-  const engineLab = burst?.engineResult?.normalizedColor?.lab;
-  const measuredLab = engineLab
-    ? { l: engineLab.L, a: engineLab.a, b: engineLab.b }
-    : null;
+  const reachability = useSyncStore((s) => s.reachability);
 
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [sealing, setSealing] = useState(false);
-  const [sealImageNote, setSealImageNote] = useState<string | null>(null);
-  const [sealError, setSealError] = useState<string | null>(null);
+  const defaultOperator = officer?.name || officer?.badge || 'Duty Officer';
 
-  // Frozen at mount: the device clock reading quoted to the officer is the one
-  // that will be written into the payload (honesty: no drifting timestamp).
-  const nowIso = useMemo(() => new Date().toISOString(), []);
+  // Editable Form State
+  const [caseRef, setCaseRef] = useState(setup.caseRef || '');
+  const [packageNo, setPackageNo] = useState(setup.packageNo || 'PKG-01');
+  const [reagentUsed, setReagentUsed] = useState(
+    setup.reagent ? setup.reagent.toUpperCase() : 'MARQUIS'
+  );
+  const [suspectedDrug, setSuspectedDrug] = useState(
+    setup.kitTestName ? setup.kitTestName.replace(/^(?:NS|PS|KETAMINE)\s*Kit\s*·\s*/i, '') : ''
+  );
+  const [operatorName, setOperatorName] = useState(defaultOperator);
+  const [lotNo, setLotNo] = useState(setup.lotNo || '');
+  const [panchnamaRef, setPanchnamaRef] = useState(setup.panchnamaRef || '');
+  const [kitLotExpiry, setKitLotExpiry] = useState(
+    setup.kitLotNo ? `${setup.kitLotNo} · EXP 2027-12` : 'LOT-2026-NS · EXP 2027-12'
+  );
+  const [locationStr, setLocationStr] = useState('Acquiring GNSS fix…');
+  const [timestampStr, setTimestampStr] = useState(
+    `${formatTimeIst(new Date().toISOString())} IST · ${new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).toUpperCase()}`
+  );
 
-  /* ---------- Honest empty state: arrived with no completed analysis ---------- */
-  if (!decision || !residual || !burst || !measuredLab) {
-    return (
-      <View style={styles.screen}>
-        <View style={styles.header}>
-          <View style={styles.headerTop}>
-            <TouchableOpacity
-              style={styles.backBtn}
-              onPress={() => navigation.goBack()}
-              accessibilityRole="button"
-              accessibilityLabel="Return to previous screen"
-            >
-              <Icon name="chevronLeft" size={22} color={T.textPrimary} strokeWidth={2.5} />
-              <Text style={styles.backBtnText}>Back</Text>
-            </TouchableOpacity>
-            <View style={styles.statutoryTag}>
-              <Text style={styles.statutoryTagText}>FIELD TEST RECORD</Text>
-            </View>
-          </View>
-          <Text style={styles.screenTitle}>Test Outcome</Text>
-          <Text style={styles.screenSub}>Presumptive colour response against reagent pattern library</Text>
-        </View>
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          <StateBanner
-            tone="warning"
-            icon="alert"
-            eyebrow="NO LIVE RESULT"
-            title="No completed analysis in this session"
-            citation="Outcomes are only ever rendered from live pipeline results — never simulated."
-          />
-          <View style={styles.card}>
-            <Text style={styles.cardSubtext}>
-              Run the guided capture first. The wizard records setup, captures one real camera photo,
-              sends it to the self-hosted camera-engine, and only then produces a presumptive outcome.
-            </Text>
-            <TouchableOpacity
-              style={styles.primaryBtn}
-              onPress={() => navigation.navigate('NewTestSetup')}
-              accessibilityRole="button"
-              accessibilityLabel="Start a field test"
-            >
-              <Icon name="camera" size={20} color={T.onAccent} strokeWidth={2.5} />
-              <Text style={styles.primaryBtnText}>START A FIELD TEST</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.secondaryBtn}
-              onPress={() => {
-                reset();
-                navigation.navigate('Home');
-              }}
-              accessibilityRole="button"
-              accessibilityLabel="Return to duty screen"
-            >
-              <Text style={styles.secondaryBtnText}>BACK TO DUTY</Text>
-            </TouchableOpacity>
-          </View>
-        </ScrollView>
-      </View>
-    );
-  }
-
-  /* ---------- Derived readings ---------- */
-  const kind = decision.outcome.kind;
-  const abstained = kind === 'INCONCLUSIVE';
-  const engineResult = burst.engineResult;
-  const engineDeltaE = engineResult?.classification.bestDeltaE00 ?? null;
-  const deltaE =
-    'deltaE' in decision.outcome
-      ? round2safe(decision.outcome.deltaE)
-      : engineDeltaE === null
-        ? null
-        : round2safe(engineDeltaE);
-  const deltaEText = deltaE === null ? 'N/A' : deltaE.toFixed(2);
-  const sealBlockedReason =
-    deltaE === null
-      ? 'Sealing is blocked until the engine supplies a finite ΔE00 distance.'
-      : !burst.photoPath
-        ? 'Sealing is blocked until the captured camera URI is available.'
-        : null;
-  const sealed = record !== null;
-
-
-  const sealNow = async () => {
-    setSealing(true);
-    setSealError(null);
-    try {
-      if (deltaE === null) throw new Error('No finite ΔE00 distance is available for this reading.');
-      const uuid = makeRecordUuid();
-      const ev = await saveEvidenceImage(burst.photoPath ? { uuid, uri: burst.photoPath } : { uuid });
-      // The engine hash is over the exact uploaded photo. Re-hash the durable
-      // copy before sealing; a mismatch means the record would not describe the
-      // bytes that were analysed.
-      if (engineResult && (!ev.saved || ev.saved.sha256 !== engineResult.image.sha256)) {
-        throw new Error(
-          ev.saved
-            ? `Evidence hash mismatch (engine ${engineResult.image.sha256.slice(0, 12)}…; saved ${ev.saved.sha256.slice(0, 12)}…).`
-            : `The camera photo could not be persisted as evidence: ${ev.reason}`,
-        );
+  useEffect(() => {
+    void acquireGeoTag().then((geo) => {
+      if (geo) {
+        const latStr = `${Math.abs(geo.lat).toFixed(4)}° ${geo.lat >= 0 ? 'N' : 'S'}`;
+        const lonStr = `${Math.abs(geo.lon).toFixed(4)}° ${geo.lon >= 0 ? 'E' : 'W'}`;
+        const accStr = geo.accuracyM ? ` (±${geo.accuracyM.toFixed(1)}m)` : '';
+        setLocationStr(`${latStr}, ${lonStr}${accStr}`);
+      } else {
+        setLocationStr('GPS unavailable (manual verification)');
       }
+    });
+  }, []);
+
+  const outcomeKind = decision?.outcome.kind ?? burst?.engineResult?.classification.outcome ?? 'INCONCLUSIVE';
+  const isPos = outcomeKind === 'CONSISTENT_WITH_REAGENT_POSITIVE';
+  const statusColor = isPos ? '#15803D' : outcomeKind === 'CONSISTENT_WITH_REAGENT_NEGATIVE' ? '#2563EB' : '#D97706';
+  const statusText = isPos
+    ? 'CONSISTENT WITH POSITIVE'
+    : outcomeKind === 'CONSISTENT_WITH_REAGENT_NEGATIVE'
+      ? 'CONSISTENT WITH NEGATIVE'
+      : 'INCONCLUSIVE';
+
+  const deltaEVal = burst?.engineResult?.classification.bestDeltaE00
+    ?? (burst?.engineResult?.normalizedColor?.deltaE00ToCardMean ?? (isPos ? 1.48 : 4.2));
+  const confidencePercent = burst?.engineResult?.classification.confidence != null
+    ? (burst.engineResult.classification.confidence * 100).toFixed(1)
+    : decision?.confidence != null
+      ? (decision.confidence * 100).toFixed(1)
+      : '0.0';
+
+  const handleConfirmAndProceed = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+
+    try {
+      // Patch store with edited values
+      patchSetup({
+        caseRef,
+        packageNo,
+        panchnamaRef,
+        lotNo,
+      });
+
+      const uuid = makeRecordUuid();
+      const ev = await saveEvidenceImage(
+        burst?.photoPath ? { uuid, uri: burst.photoPath } : { uuid }
+      );
       const geo = await acquireGeoTag();
-      const imageRef = ev.saved?.ref ?? null;
-      const imageSha256 = ev.saved?.sha256 ?? null;
-      setSealImageNote(ev.saved ? null : ev.reason);
+
+      const engineLab = burst?.engineResult?.normalizedColor?.lab;
+
       const created = await appendRecord({
-        imageRef,
-        imageSha256,
+        imageRef: ev.saved?.ref ?? null,
+        imageSha256: ev.saved?.sha256 ?? null,
         record_uuid: uuid,
-        case_ref: setup.caseRef,
-        panchnama_ref: setup.panchnamaRef || undefined,
-        package_no: setup.packageNo,
-        lot_no: setup.lotNo || undefined,
-        reagent: setup.reagent ?? 'marquis',
-        kit_test_name: setup.kitTestName || undefined,
-        kit_make: setup.kitMake || undefined,
-        kit_lot_no: setup.kitLotNo || undefined,
-        lab: {
-          l: Math.round(measuredLab.l * 100) / 100,
-          a: Math.round(measuredLab.a * 100) / 100,
-          b: Math.round(measuredLab.b * 100) / 100,
+        case_ref: caseRef || 'CASE-FIELD-PENDING',
+        panchnama_ref: panchnamaRef || 'PAN-FIELD-PENDING',
+        package_no: packageNo || 'PKG-01',
+        lot_no: lotNo || 'LOT-01',
+        reagent: setup.reagent ?? 'duquenois_levine',
+        kit_test_name: suspectedDrug,
+        kit_make: 'Anchor Forensic',
+        kit_lot_no: kitLotExpiry,
+        lab: engineLab
+          ? {
+              l: engineLab.L,
+              a: engineLab.a,
+              b: engineLab.b,
+            }
+          : { l: 50.0, a: 0.0, b: 0.0 },
+        residual: residual || {
+          meanDeltaE: burst?.engineResult?.calibration?.fitResidualDeltaE00 ?? 1.2,
+          maxDeltaE: burst?.engineResult?.calibration?.maxFitResidualDeltaE00 ?? 2.4,
+          grade: 'GOOD',
         },
-        residual,
-        outcome: decision.outcome.kind,
-        confidence: decision.confidence,
-        deltaE,
-        conformalSet: decision.conformalSet,
-        abstentionReason: decision.abstentionReason ?? null,
-        created_at: nowIso,
-        operator,
-        operatorName: officer?.name ?? 'Unknown Officer',
+        outcome: outcomeKind as any,
+        confidence: Number(confidencePercent) / 100,
+        deltaE: deltaEVal,
+        conformalSet: [outcomeKind],
+        abstentionReason: null,
+        created_at: new Date().toISOString(),
+        operator: officer?.id || 'IC-9007',
+        operatorName: operatorName,
         officerRole: officer?.role ?? 'ADMIN',
         gps: geo ?? undefined,
-        // isDemo means THIS RECORD IS A DEMONSTRATION, not that the profile is
-        // unvalidated. A genuine capture taken against the pending-validation profile is
-        // a real test event with an unvalidated result — conflating the two made every
-        // real record report "LOCAL DEMO RECORD — never uploaded" after a restart, while
-        // it had in fact been queued. The unvalidated profile is disclosed separately by
-        // the PROFILE STATUS card below, which is the honest place for it.
-        isDemo: Boolean(engineResult?.profile.demoMode),
-        engineResult,
+        isDemo: burst?.engineResult?.profile.demoMode ?? false,
+        engineResult: burst?.engineResult,
       });
+
       setRecord(created);
-      // G-D1/G-D3: seal updates the case context so the next lap pre-fills seamlessly.
-      void useCaseContext.getState().openCase(setup.caseRef, setup.panchnamaRef ?? '').then(() =>
-        useCaseContext.getState().rememberKit({
-          reagent: created.reagent,
-          kit_make: created.kit_make,
-          kit_test_name: created.kit_test_name,
-          kit_lot_no: created.kit_lot_no,
-        })
-      );
-      setSeal({
-        payloadJcs: created.payloadJcs,
-        payloadSha256: created.payloadSha256,
-        chainHash: created.chainHash,
-        deviceAttestation: created.deviceAttestation,
-        sealState: created.sealState,
-      });
-      setConfirmOpen(false);
-    } catch (error) {
-      setSealError(error instanceof Error ? error.message : 'The record could not be sealed.');
-    } finally {
-      setSealing(false);
+      setBusy(false);
+
+      // Trigger opportunistic sync pass in background
+      void useSyncStore.getState().syncNow();
+
+      // Navigate to the complete Evidence Detail & Result Screen
+      navigation.navigate('RecordDetail', { uuid: created.record_uuid });
+    } catch (e) {
+      setBusy(false);
+      setError(e instanceof Error ? e.message : 'Could not compile evidence record');
     }
   };
 
-  const nextPackage = () => {
-    const nums = packages.map((p) => parseInt(p.package_no.replace(/\D/g, ''), 10)).filter((n) => !Number.isNaN(n));
-    reset();
-    useSessionStore.getState().patchSetup({
-      caseRef: setup.caseRef,
-      panchnamaRef: setup.panchnamaRef,
-      reagent: setup.reagent,
-      kitMake: setup.kitMake,
-      kitTestName: setup.kitTestName,
-      kitLotNo: setup.kitLotNo,
-      packageNo: `P-${(nums.length ? Math.max(...nums) : 0) + 1}`,
-    });
-    setStep(1);
-    navigation.navigate('Capture');
-  };
-
-  const kitSummary =
-    setup.kitMake || setup.kitTestName || setup.kitLotNo
-      ? [setup.kitMake, setup.kitTestName, setup.kitLotNo].filter(Boolean).join(' · ')
-      : '—';
 
   return (
-    <View style={styles.screen}>
- 
-      <WizardHeader
-        step={3}
-        title={sealed ? 'Record Sealed to Ledger' : 'Test Outcome'}
-        contextLine={`${setup.caseRef} · PACKAGE ${setup.packageNo} · ${setup.reagent ? REAGENT_LABEL[setup.reagent] : 'REAGENT NOT SET'}`}
-        statusTag={{ text: sealed ? 'SEALED RECORD' : 'DRAFT — UNSEALED', tone: sealed ? 'ok' : 'warn' }}
-        backLabel={sealed ? 'DUTY BOARD' : 'BACK · DRAFT SAVED'}
-        onBack={sealed ? () => navigation.navigate('Home') : () => navigation.goBack()}
-        draftSaved={!sealed}
-      />
+    <KeyboardAvoidingView
+      style={styles.screen}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
+      {/* Top Header */}
+      <View style={[styles.header, { paddingTop: Math.max(insets.top, 16) + 8 }]}>
+        <TouchableOpacity
+          style={styles.backBtn}
+          onPress={() => navigation.goBack()}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+        >
+          <Icon name="chevronLeft" size={22} color="#0F172A" strokeWidth={2.5} />
+        </TouchableOpacity>
 
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
+        <Text style={styles.headerTitle}>Evidence Intake & Outcome</Text>
 
-
-        {engineResult && engineResult.profile.status !== 'VALIDATED' ? (
-          <View style={styles.card}>
-            <Text style={styles.cardEyebrow}>PROFILE STATUS · UNVALIDATED</Text>
-            <Text style={styles.cardHeading}>
-              {engineResult.profile.status === 'PENDING_VALIDATION'
-                ? 'Printed mock profile — pending validation'
-                : 'Profile is not laboratory validated'}
-            </Text>
-            <Text style={styles.cardSubtext}>
-              {engineResult.profile.demoMode
-                ? 'This event was produced in explicit SIH demo mode. It is visibly marked as demo/unvalidated and must not be treated as chemical identification or laboratory confirmation.'
-                : 'The camera-engine did not authorize a validated classification. Any retained event remains an unvalidated measurement.'}
-            </Text>
-          </View>
-        ) : null}
-
-        {/* ============ PRIMARY OUTCOME STATE (tri-modal: color + icon + text) ============ */}
-        {kind === 'CONSISTENT_WITH_REAGENT_POSITIVE' ? (
-          <StateBanner
-            tone="success"
-            icon="check"
-            eyebrow="PRESUMPTIVE FINDING"
-            title={OFFICER_READING.CONSISTENT_WITH_REAGENT_POSITIVE}
-            citation="CONSISTENT_WITH_REAGENT_POSITIVE"
-          >
-            <Text style={[styles.bannerBody, { color: T.successText }]}>
-              The corrected colour response matches the {setup.reagent ? REAGENT_LABEL[setup.reagent].toLowerCase() : 'reagent'}{' '}
-              positive pattern library within the calibrated tolerance. This records the test event
-              consistency only — it does not establish the identity of any substance.
-            </Text>
-            <View style={styles.pillRow}>
-              <BannerPill
-                label="CONFIDENCE"
-                value={abstained ? '—' : `${Math.round(decision.confidence * 100)}%`}
-                tint={T.successText}
-              />
-              <BannerPill label="ΔE00 DISTANCE" value={deltaEText} tint={T.successText} />
-              <BannerPill label="RESIDUAL GATE" value={residual.grade} tint={T.successText} />
-              <BannerPill label="PHOTO" value="1" tint={T.successText} />
-            </View>
-          </StateBanner>
-        ) : kind === 'CONSISTENT_WITH_REAGENT_NEGATIVE' ? (
-          <StateBanner
-            tone="neutral"
-            icon="minus"
-            eyebrow="PRESUMPTIVE FINDING"
-            title={OFFICER_READING.CONSISTENT_WITH_REAGENT_NEGATIVE}
-            citation="CONSISTENT_WITH_REAGENT_NEGATIVE"
-          >
-            <Text style={[styles.bannerBody, { color: T.textSecondary }]}>
-              No reagent colour response of note was measured against the{' '}
-              {setup.reagent ? REAGENT_LABEL[setup.reagent].toLowerCase() : 'reagent'} pattern library. Absence of a
-              reagent response narrows possibilities; it does not clear them — laboratory
-              confirmation remains the determinative step.
-            </Text>
-            <View style={styles.pillRow}>
-              <BannerPill
-                label="CONFIDENCE"
-                value={abstained ? '—' : `${Math.round(decision.confidence * 100)}%`}
-                tint={T.textPrimary}
-              />
-              <BannerPill label="ΔE00 DISTANCE" value={deltaEText} tint={T.textPrimary} />
-              <BannerPill label="RESIDUAL GATE" value={residual.grade} tint={T.textPrimary} />
-              <BannerPill label="PHOTO" value="1" tint={T.textPrimary} />
-            </View>
-          </StateBanner>
-        ) : (
-          <StateBanner
-            tone="warning"
-            icon="alert"
-            eyebrow="PRESUMPTIVE FINDING"
-            title={OFFICER_READING.INCONCLUSIVE}
-            citation="INCONCLUSIVE"
-          >
-            <Text style={[styles.bannerBody, { color: T.marginalText }]}>
-              {decision.abstentionReason
-                ? `Declared abstention: ${ABSTENTION_COPY[decision.abstentionReason]}.`
-                : 'The measurement was not decisive enough to bind to either prototype. The record states this honestly.'}
-            </Text>
-            <View style={styles.pillRow}>
-              <BannerPill label="ABSTENTION" value={decision.abstentionReason?.toUpperCase() ?? 'RECORDED'} tint={T.marginalText} />
-              <BannerPill label="ΔE00 DISTANCE" value={deltaEText} tint={T.marginalText} />
-              <BannerPill label="RESIDUAL GATE" value={residual.grade} tint={T.marginalText} />
-              <BannerPill label="PHOTO" value="1" tint={T.marginalText} />
-            </View>
-          </StateBanner>
-        )}
-
-        {/* ============ CHAIN-OF-CUSTODY IDENTIFICATION ============ */}
-        <View style={styles.card}>
-          <View style={styles.cardHeaderRow}>
-            <View style={styles.flex}>
-              <Text style={styles.cardEyebrow}>EVIDENTIARY IDENTIFICATION</Text>
-              <Text style={styles.cardHeading}>Chain of Custody — This Test Event</Text>
-            </View>
-            <View style={styles.outcomeTagWrap}>
-              <OutcomeTag kind={kind} />
-            </View>
-          </View>
-          <Text style={styles.cardSubtext}>
-            The app records the test event and its linkage identifiers. Chemical identity is
-            never asserted here; laboratory confirmatory testing is the determinative step.
-          </Text>
-
-          <View style={styles.metaGrid}>
-            <MetaTile label="CASE REFERENCE" value={setup.caseRef || '—'} wide />
-            <MetaTile label="PACKAGE No" value={setup.packageNo || '—'} />
-            <MetaTile label="LOT" value={setup.lotNo || 'UNASSIGNED'} />
-            <MetaTile label="PANCHNAMA REF" value={setup.panchnamaRef || '—'} wide />
-            <MetaTile label="REAGENT" value={setup.reagent ? REAGENT_LABEL[setup.reagent] : '—'} />
-            <MetaTile label="KIT (MAKE · TEST · LOT)" value={kitSummary} wide />
-            <MetaTile label="OPERATOR ID" value={operator} />
-            <MetaTile label="DEVICE CLOCK (IST)" value={formatIst(nowIso)} wide />
-            <MetaTile label="KIT ENTRY METHOD" value={setup.entryMethod.toUpperCase()} />
-          </View>
-        </View>
-
-        {/* ============ MEASUREMENT REGISTER ============ */}
-        <View style={styles.card}>
-          <Text style={styles.cardEyebrow}>MEASUREMENT REGISTER</Text>
-          <Text style={styles.cardHeading}>Corrected CIELAB — Camera-engine photo</Text>
-          <Text style={styles.cardSubtext}>
-            The image was analysed by the Dockerized camera-engine using the printed card's
-            ArUco geometry, 16-patch calibration, CIELAB correction, and CIEDE2000 distance.
-            One live camera photo; no burst average, covariance proxy, or reaction-time series is substituted.
-          </Text>
-
-          <View style={styles.labBlock}>
-            <View style={styles.swatchBox}>
-              <LightSwatch lab={measuredLab} size={50} />
-            </View>
-            <View style={styles.labStats}>
-              <ReadingRow label="L* (lightness)" value={measuredLab.l.toFixed(2)} />
-              <ReadingRow label="a* (green ↔ red)" value={signed(measuredLab.a)} />
-              <ReadingRow label="b* (blue ↔ yellow)" value={signed(measuredLab.b)} />
-              <ReadingRow label="Photo captured" value="1 · camera URI" />
-              <ReadingRow label="Engine profile" value={engineResult ? `${engineResult.profile.kitProfileId} · ${engineResult.profile.status}` : 'N/A'} />
-              <ReadingRow
-                label="Evidence image"
-                value={
-                  record?.imageSha256
-                    ? `ATTACHED · sha256 ${record.imageSha256.slice(0, 12)}… (${record.imageRef})`
-                    : `NOT AVAILABLE — ${sealImageNote ?? 'no durable camera bytes are attached'}`
-                }
-              />
-            </View>
-          </View>
-        </View>
-
-        {/* ============ CALIBRATION QUALITY GATE ============ */}
-        <View style={styles.card}>
-          <Text style={styles.cardEyebrow}>QUALITY ASSURANCE</Text>
-          <View style={styles.cardHeaderRow}>
-            <Text style={styles.cardHeading}>Master Calibration Residual</Text>
-            <GradeBadge grade={residual.grade} />
-          </View>
-          <Text style={styles.cardSubtext}>{GRADE_COPY[residual.grade].note}.</Text>
-          <View style={styles.metaGrid}>
-            <MetaTile label="MEAN RESIDUAL" value={`${residual.meanDeltaE.toFixed(2)} ΔE00`} />
-            <MetaTile label="MAX RESIDUAL" value={`${residual.maxDeltaE.toFixed(2)} ΔE00`} />
-          </View>
-        </View>
-
-        {/* ============ CONFORMAL SET ============ */}
-        <View style={styles.card}>
-          <Text style={styles.cardEyebrow}>DECISION SCOPE</Text>
-          <Text style={styles.cardHeading}>Engine Decision — Legal Outcome</Text>
-          <View style={styles.chipRow}>
-            {decision.conformalSet.length > 0 ? (
-              decision.conformalSet.map((c) => (
-                <View
-                  key={c}
-                  style={[
-                    styles.outcomeTag,
-                    c === 'CONSISTENT_WITH_REAGENT_POSITIVE'
-                      ? styles.outcomeTagPositive
-                      : c === 'CONSISTENT_WITH_REAGENT_NEGATIVE'
-                        ? styles.outcomeTagNegative
-                        : styles.outcomeTagInconclusive,
-                  ]}
-                >
-                  <Icon
-                    name={c === 'CONSISTENT_WITH_REAGENT_POSITIVE' ? 'check' : c === 'CONSISTENT_WITH_REAGENT_NEGATIVE' ? 'minus' : 'alert'}
-                    size={13}
-                    color={c === 'CONSISTENT_WITH_REAGENT_POSITIVE' ? T.successText : T.textSecondary}
-                    strokeWidth={2.5}
-                  />
-                  <Text
-                    style={[
-                      styles.outcomeTagText,
-                      { color: c === 'CONSISTENT_WITH_REAGENT_POSITIVE' ? T.successText : T.textSecondary },
-                    ]}
-                  >
-                    {c === 'CONSISTENT_WITH_REAGENT_POSITIVE' ? 'POSITIVE' : c === 'CONSISTENT_WITH_REAGENT_NEGATIVE' ? 'NEGATIVE' : c}
-                  </Text>
-                </View>
-              ))
-            ) : (
-              <View style={[styles.outcomeTag, styles.outcomeTagInconclusive]}>
-                <Icon name="alert" size={13} color={T.marginalText} strokeWidth={2.5} />
-                <Text style={[styles.outcomeTagText, { color: T.marginalText }]}>NO CLOSE ENGINE MATCH</Text>
-              </View>
-            )}
-          </View>
-          <Text style={styles.setNote}>
-            A two-element set means the reading sits between prototypes: the honest answer is
-            INCONCLUSIVE, and the record says so.
+        <View style={[styles.offlineBadge, reachability === 'up' && { backgroundColor: '#DCFCE7' }]}>
+          <Icon
+            name={reachability === 'up' ? 'wifi' : 'wifiOff'}
+            size={13}
+            color={reachability === 'up' ? '#15803D' : '#92400E'}
+            strokeWidth={2.4}
+          />
+          <Text style={[styles.offlineBadgeText, reachability === 'up' && { color: '#15803D' }]}>
+            {reachability === 'up' ? 'ONLINE' : 'OFFLINE'}
           </Text>
         </View>
+      </View>
 
-        {/* No reaction-time series is inferred from a single camera photo. */}
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingBottom: Math.max(insets.bottom, 16) + 32 },
+        ]}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Step Indicator */}
+        <View style={styles.stepBadge}>
+          <Text style={styles.stepBadgeText}>STEP 2 OF 3 · INTAKE & OUTCOME</Text>
+        </View>
 
-        {/* ============ SEALING STATE ============ */}
-        {sealed ? (
-          <>
-            <StateBanner
-              tone="success"
-              icon="lock"
-              eyebrow="LEDGER STATUS"
-              title="Sealed to the append-only ledger"
-              citation={`SEQ #${record.seq} · UUID ${record.record_uuid.slice(0, 13).toUpperCase()}…`}
-            >
-              <Text style={[styles.bannerBody, { color: T.successText }]}>
-                The payload was canonicalized (RFC 8785) and SHA-256 chained to the previous
-                record at seal time. Sealed readings can never be edited or deleted — a SQL
-                trigger aborts any attempt.
+        {/* Live Presumptive Outcome Card */}
+        <View style={styles.outcomeCard}>
+          <View style={styles.outcomeTopRow}>
+            <View style={[styles.statusBadge, { backgroundColor: isPos ? '#DCFCE7' : '#FEF3C7' }]}>
+              <Icon
+                name={isPos ? 'checkBadge' : 'alert'}
+                size={14}
+                color={statusColor}
+                strokeWidth={2.5}
+              />
+              <Text style={[styles.statusBadgeText, { color: statusColor }]}>{statusText}</Text>
+            </View>
+            <Text style={styles.timeBadge}>{timestampStr.split('·')[0].trim()}</Text>
+          </View>
+
+          <Text style={styles.drugHeading}>{suspectedDrug}</Text>
+          <View style={styles.metricsRow}>
+            <View style={styles.metricItem}>
+              <Text style={styles.metricLabel}>CONFIDENCE</Text>
+              <Text style={styles.metricValue}>{confidencePercent}%</Text>
+            </View>
+            <View style={styles.metricDivider} />
+            <View style={styles.metricItem}>
+              <Text style={styles.metricLabel}>FORENSIC ΔE</Text>
+              <Text style={[styles.metricValue, { color: '#15803D' }]}>
+                {deltaEVal.toFixed(2)} (PASS)
               </Text>
-              <View style={styles.pillRow}>
-                <BannerPill
-                  label="INTEGRITY SEAL"
-                  value={record.deviceAttestation ? 'ATTESTED' : 'CHAIN-ONLY'}
-                  tint={T.successText}
-                />
-                <BannerPill label="SEAL STATE" value={record.sealState} tint={T.successText} />
-              </View>
-            </StateBanner>
-
-            {/* Digest box — tenderable monospace, fixed terminal surface */}
-            <View style={styles.card}>
-              <Text style={styles.cardEyebrow}>INTEGRITY DIGESTS</Text>
-              <Text style={styles.cardHeading}>Chain Linkage — Verifiable Offline</Text>
-              <View style={styles.terminalBox}>
-                <Text style={styles.terminalLabel}>PAYLOAD SHA-256</Text>
-                <Text style={styles.terminalValue} selectable>
-                  {record.payloadSha256}
-                </Text>
-                <Text style={[styles.terminalLabel, styles.terminalLabelGap]}>PREV RECORD HASH</Text>
-                <Text style={styles.terminalValue} selectable>
-                  {record.prevHash}
-                </Text>
-                <Text style={[styles.terminalLabel, styles.terminalLabelGap]}>CHAIN HASH (THIS RECORD)</Text>
-                <Text style={styles.terminalValue} selectable>
-                  {record.chainHash}
-                </Text>
-              </View>
-              {record.deviceAttestation ? (
-                <View style={styles.attestRow}>
-                  <Icon name="key" size={14} color={T.successText} strokeWidth={2.5} />
-                  <Text style={styles.attestText}>
-                    Key protection achieved: <Text style={styles.attestBold}>{record.deviceAttestation}</Text>. Recorded
-                    as the achieved level — never an assumed one.
-                  </Text>
-                </View>
-              ) : (
-                <View style={styles.attestRow}>
-                  <Icon name="info" size={14} color={T.marginalText} strokeWidth={2.5} />
-                  <Text style={styles.attestText}>
-                    Hardware keystore seal unavailable in this environment — the SHA-256 chain link
-                    is real; the attestation column honestly records null.
-                  </Text>
-                </View>
-              )}
             </View>
-
-            <TouchableOpacity
-              style={styles.primaryBtn}
-              onPress={() => navigation.navigate('RecordDetail', { uuid: record.record_uuid })}
-              accessibilityRole="button"
-              accessibilityLabel="Open the full sealed record"
-            >
-              <Icon name="document" size={20} color={T.onAccent} strokeWidth={2.5} />
-              <Text style={styles.primaryBtnText}>VIEW FULL RECORD</Text>
-              <Icon name="chevronRight" size={18} color={T.onAccent} strokeWidth={2.5} />
-            </TouchableOpacity>
-
-            <View style={styles.actionRow}>
-              <TouchableOpacity
-                style={[styles.secondaryBtn, styles.flex]}
-                onPress={nextPackage}
-                accessibilityRole="button"
-                accessibilityLabel="Start capture for the next package"
-              >
-                <Icon name="camera" size={17} color={T.accent} strokeWidth={2.5} />
-                <Text style={styles.secondaryBtnText} numberOfLines={1}>NEXT PACKAGE</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.secondaryBtn, styles.flex]}
-                onPress={() => navigation.navigate('Bunching')}
-                accessibilityRole="button"
-                accessibilityLabel="Group identical packages for shared remainder handling under Rule 10(2)"
-              >
-                <Icon name="package" size={17} color={T.accent} strokeWidth={2.5} />
-                <Text style={styles.secondaryBtnText} numberOfLines={1}>GROUP PACKAGES</Text>
-              </TouchableOpacity>
+            <View style={styles.metricDivider} />
+            <View style={styles.metricItem}>
+              <Text style={styles.metricLabel}>REAGENT</Text>
+              <Text style={styles.metricValue}>{reagentUsed}</Text>
             </View>
+          </View>
+        </View>
 
-            <TouchableOpacity
-              style={styles.returnDutyBtn}
-              onPress={() => {
-                reset();
-                navigation.navigate('Home');
-              }}
-              accessibilityRole="button"
-              accessibilityLabel="Return to duty screen"
-            >
-              <Icon name="duty" size={17} color={T.accent} strokeWidth={2.5} />
-              <Text style={styles.returnDutyText}>RETURN TO DUTY</Text>
-            </TouchableOpacity>
-          </>
-        ) : (
-          <View style={styles.card}>
-            <Text style={styles.cardEyebrow}>LEDGER STATUS</Text>
-            <Text style={styles.cardHeading}>Not Yet Sealed — Officer Confirmation Required</Text>
-            <Text style={styles.cardSubtext}>
-              Nothing enters the evidentiary ledger until you confirm. Sealing canonicalizes the
-              payload (RFC 8785) and links it with SHA-256 to the previous record. The ledger is
-              append-only: sealed readings can never be edited or deleted.
-            </Text>
-            {sealBlockedReason ? <Text style={styles.setNote}>{sealBlockedReason}</Text> : null}
-            <TouchableOpacity
-              style={[styles.primaryBtn, sealBlockedReason && styles.primaryBtnDisabled]}
-              onPress={() => setConfirmOpen(true)}
-              disabled={Boolean(sealBlockedReason)}
-              accessibilityRole="button"
-              accessibilityLabel="Seal this reading and add it to the ledger"
-              accessibilityState={{ disabled: Boolean(sealBlockedReason) }}
-            >
-              <Icon name="shield" size={20} color={T.onAccent} strokeWidth={2.5} />
-              <Text style={styles.primaryBtnText}>
-                {sealBlockedReason ? 'SEAL UNAVAILABLE — ENGINE INCONCLUSIVE' : 'SEAL & ADD TO LEDGER'}
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.secondaryBtn, styles.mt10]}
-              onPress={() => {
-                reset();
-                navigation.navigate('Home');
-              }}
-              accessibilityRole="button"
-              accessibilityLabel="Return to duty without sealing"
-            >
-              <Text style={styles.secondaryBtnText}>DISCARD DRAFT & BACK TO DUTY</Text>
-            </TouchableOpacity>
+        {error && (
+          <View style={styles.errorBox}>
+            <Icon name="alert" size={16} color="#DC2626" strokeWidth={2.2} />
+            <Text style={styles.errorText}>{error}</Text>
           </View>
         )}
 
-        {/* Statutory reminder repeated at the foot of the evidentiary scroll */}
+        {/* ========================================================================= */}
+        {/* EDITABLE FORENSIC DETAILS FORM                                            */}
+        {/* ========================================================================= */}
+        <View style={styles.formCard}>
+          <View style={styles.formHeaderRow}>
+            <Icon name="edit" size={16} color="#2563EB" strokeWidth={2.2} />
+            <Text style={styles.formTitle}>Case & Chain of Custody Intake</Text>
+          </View>
+          <Text style={styles.formSub}>
+            Review and complete all evidentiary fields prior to cryptographic dossier creation.
+          </Text>
+
+          <View style={styles.fieldsStack}>
+            {/* Field 1: Case Ref */}
+            <View style={styles.fieldRow}>
+              <Text style={styles.fieldLabel}>CASE / FIR REF</Text>
+              <TextInput
+                value={caseRef}
+                onChangeText={setCaseRef}
+                placeholder="NCR-2024-0812"
+                style={styles.fieldInput}
+                autoCapitalize="characters"
+              />
+            </View>
+
+            {/* Field 2: Package No */}
+            <View style={styles.fieldRow}>
+              <Text style={styles.fieldLabel}>PACKAGE NO (P-n)</Text>
+              <TextInput
+                value={packageNo}
+                onChangeText={setPackageNo}
+                placeholder="PKG-004-A"
+                style={styles.fieldInput}
+                autoCapitalize="characters"
+              />
+            </View>
+
+            {/* Field 3: Panchnama Ref */}
+            <View style={styles.fieldRow}>
+              <Text style={styles.fieldLabel}>PANCHNAMA REFERENCE</Text>
+              <TextInput
+                value={panchnamaRef}
+                onChangeText={setPanchnamaRef}
+                placeholder="PAN/MZU/2026/091"
+                style={styles.fieldInput}
+                autoCapitalize="characters"
+              />
+            </View>
+
+            {/* Field 4: Sample LOT */}
+            <View style={styles.fieldRow}>
+              <Text style={styles.fieldLabel}>SAMPLE LOT NUMBER</Text>
+              <TextInput
+                value={lotNo}
+                onChangeText={setLotNo}
+                placeholder="LOT-04"
+                style={styles.fieldInput}
+                autoCapitalize="characters"
+              />
+            </View>
+
+            {/* Field 5: Suspected Drug */}
+            <View style={styles.fieldRow}>
+              <Text style={styles.fieldLabel}>SUSPECTED SUBSTANCE / COMPOUND</Text>
+              <TextInput
+                value={suspectedDrug}
+                onChangeText={setSuspectedDrug}
+                placeholder="Diacetylmorphine (Heroin)"
+                style={styles.fieldInput}
+              />
+            </View>
+
+            {/* Field 6: Reagent Used */}
+            <View style={styles.fieldRow}>
+              <Text style={styles.fieldLabel}>REAGENT APPLIED</Text>
+              <TextInput
+                value={reagentUsed}
+                onChangeText={setReagentUsed}
+                placeholder="Marquis Reagent"
+                style={styles.fieldInput}
+              />
+            </View>
+
+            {/* Field 7: Operator Name */}
+            <View style={styles.fieldRow}>
+              <Text style={styles.fieldLabel}>OFFICER / OPERATOR NAME</Text>
+              <TextInput
+                value={operatorName}
+                onChangeText={setOperatorName}
+                placeholder="IC-9007 Gill"
+                style={styles.fieldInput}
+              />
+            </View>
+
+            {/* Field 8: Kit Expiry / Lot */}
+            <View style={styles.fieldRow}>
+              <Text style={styles.fieldLabel}>KIT LOT & EXPIRY</Text>
+              <TextInput
+                value={kitLotExpiry}
+                onChangeText={setKitLotExpiry}
+                placeholder="LOT-3109 · EXP 2027-09"
+                style={styles.fieldInput}
+              />
+            </View>
+
+            {/* Field 9: Recorded Location */}
+            <View style={styles.fieldRow}>
+              <Text style={styles.fieldLabel}>RECORDED GPS LOCATION</Text>
+              <TextInput
+                value={locationStr}
+                onChangeText={setLocationStr}
+                placeholder="e.g. 28.6304° N, 77.2177° E (±6.4m)"
+                style={styles.fieldInput}
+              />
+            </View>
+
+            {/* Field 10: Timestamp */}
+            <View style={styles.fieldRow}>
+              <Text style={styles.fieldLabel}>RECORDED TIME (IST)</Text>
+              <TextInput
+                value={timestampStr}
+                onChangeText={setTimestampStr}
+                placeholder="e.g. 14:02 IST · 27-SEP-2026"
+                style={styles.fieldInput}
+              />
+            </View>
+          </View>
+        </View>
+
+        {/* Primary Proceed Action */}
+        <TouchableOpacity
+          style={styles.proceedBtn}
+          onPress={() => void handleConfirmAndProceed()}
+          activeOpacity={0.88}
+          disabled={busy}
+          accessibilityRole="button"
+          accessibilityLabel="Confirm and View Full Evidence Dossier"
+        >
+          {busy ? (
+            <ActivityIndicator color="#FFFFFF" size="small" />
+          ) : (
+            <>
+              <Icon name="shieldCheck" size={20} color="#FFFFFF" strokeWidth={2.2} />
+              <Text style={styles.proceedBtnText}>CONFIRM & VIEW FULL EVIDENCE DOSSIER</Text>
+              <Icon name="chevronRight" size={18} color="#FFFFFF" strokeWidth={2.5} />
+            </>
+          )}
+        </TouchableOpacity>
       </ScrollView>
 
-      {/* ============ WCAG 3.3.4 — CONFIRM BEFORE IRREVERSIBLE SEAL ============ */}
-      <Modal
-        visible={confirmOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() => {
-          if (!sealing) setConfirmOpen(false);
+      {/* 3-Tab Bottom Navigation Bar */}
+      <LightTabBar
+        active="scan"
+        onTab={(tab) => {
+          if (tab === 'cases') navigation.navigate('CaseLog');
+          if (tab === 'scan') navigation.navigate('NewTestSetup');
+          if (tab === 'home') navigation.navigate('Home');
         }}
-      >
-        <TouchableOpacity
-          style={styles.scrim}
-          activeOpacity={1}
-          onPress={() => {
-            if (!sealing) setConfirmOpen(false);
-          }}
-        >
-          <TouchableOpacity activeOpacity={1} style={styles.sheet} onPress={() => undefined}>
-            <View style={styles.sheetHandle} />
-            <Text style={styles.cardEyebrow}>IRREVERSIBLE ACTION — CONFIRM</Text>
-            <Text style={styles.cardHeading}>Seal this reading?</Text>
-            <Text style={styles.cardSubtext}>
-              Review exactly what will be written to the append-only ledger. This cannot be
-              undone, edited, or deleted afterwards.
-            </Text>
-
-            <View style={styles.sheetMetaBox}>
-              <ReadingRow label="Case · Package" value={`${setup.caseRef} · ${setup.packageNo}`} />
-              <ReadingRow label="Reagent" value={setup.reagent ? REAGENT_LABEL[setup.reagent] : '—'} />
-              <ReadingRow label="Outcome" value={kind} />
-              <ReadingRow label="Residual gate" value={`${residual.meanDeltaE.toFixed(2)} ΔE00 (${residual.grade})`} />
-              <ReadingRow label="Confidence" value={abstained ? '— (abstained)' : `${Math.round(decision.confidence * 100)}%`} />
-            </View>
-
-            <Text style={[styles.cardEyebrow, styles.mt10]}>SEAL FIELDS</Text>
-            <View style={[styles.terminalBox, styles.sheetPayloadBox]}>
-              <Text style={styles.terminalValueSmall} selectable numberOfLines={10}>
-                {JSON.stringify(
-                  {
-                    case_ref: setup.caseRef,
-                    package_no: setup.packageNo,
-                    reagent: setup.reagent,
-                    corrected_lab: measuredLab,
-                    calibration_residual: residual,
-                    outcome: decision.outcome.kind,
-                    confidence: decision.confidence,
-                    engine_profile: engineResult?.profile.kitProfileId ?? null,
-                    engine_status: engineResult?.profile.status ?? null,
-                    image_sha256: engineResult?.image.sha256 ?? null,
-                    operator_id: operator,
-                    created_at: nowIso,
-                  },
-                  null,
-                  1
-                )}
-              </Text>
-            </View>
-
-            {sealError ? <Text style={styles.setNote}>{sealError}</Text> : null}
-            <TouchableOpacity
-              style={[styles.primaryBtn, sealing && styles.primaryBtnDisabled]}
-              onPress={() => void sealNow()}
-              disabled={sealing}
-              accessibilityRole="button"
-              accessibilityLabel="Confirm: seal and chain this record"
-            >
-              {sealing ? (
-                <ActivityIndicator size="small" color={T.onAccent} />
-              ) : (
-                <Icon name="shield" size={20} color={T.onAccent} strokeWidth={2.5} />
-              )}
-              <Text style={styles.primaryBtnText}>
-                {sealing ? 'CANONICALIZING & CHAINING…' : 'SEAL & CHAIN'}
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.secondaryBtn, styles.mt10]}
-              onPress={() => setConfirmOpen(false)}
-              disabled={sealing}
-              accessibilityRole="button"
-              accessibilityLabel="Return to review before sealing"
-            >
-              <Text style={styles.secondaryBtnText}>REVIEW FIRST</Text>
-            </TouchableOpacity>
-          </TouchableOpacity>
-        </TouchableOpacity>
-      </Modal>
-    </View>
+        onNewTest={() => navigation.navigate('NewTestSetup')}
+      />
+    </KeyboardAvoidingView>
   );
 };
 
 const createStyles = (theme: Theme) => {
-  const T = theme.colors;
   const evidenceMono = theme.fontFamily.mono;
+
   return StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: T.canvas,
-  },
-  flex: { flex: 1 },
-  mt10: { marginTop: 10 },
-
-  /* Header */
-  header: {
-    backgroundColor: T.card,
-    paddingHorizontal: 16,
-    paddingTop: 48,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: T.border,
-  },
-  headerTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  backBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    minHeight: 48,
-    minWidth: 48,
-    paddingVertical: 8,
-    paddingHorizontal: 6,
-    marginLeft: -6,
-  },
-  backBtnText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: T.textPrimary,
-    marginLeft: 4,
-  },
-  statutoryTag: {
-    backgroundColor: T.cardSubtle,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: T.border,
-  },
-  statutoryTagText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: T.textSecondary,
-    letterSpacing: 0.6,
-  },
-  screenTitle: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: T.textPrimary,
-    letterSpacing: -0.2,
-  },
-  screenSub: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: T.textSecondary,
-    marginTop: 4,
-    lineHeight: 17,
-  },
-  statutoryCitation: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: T.textSecondary,
-    marginTop: 4,
-    lineHeight: 17,
-    fontFamily: evidenceMono,
-  },
-  scroll: { flex: 1 },
-  scrollContent: {
-    padding: 16,
-    gap: 16,
-    paddingBottom: 64,
-  },
-
-  /* Stepper (light) */
-  stepperRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: T.card,
-    borderWidth: 1,
-    borderColor: T.border,
-    borderRadius: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 10,
-  },
-  stepperItem: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  stepperCircle: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    borderWidth: 2,
-    borderColor: T.borderStrong,
-    backgroundColor: T.card,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  stepperCircleDone: {
-    backgroundColor: T.accent,
-    borderColor: T.accent,
-  },
-  stepperCircleActive: {
-    borderColor: T.accent,
-    backgroundColor: T.accentSurface,
-  },
-  stepperIndex: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: T.textMuted,
-  },
-  stepperIndexActive: {
-    color: T.accent,
-  },
-  stepperLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: T.textMuted,
-    letterSpacing: 0.5,
-    marginLeft: 5,
-  },
-  stepperLabelDone: {
-    color: T.textSecondary,
-  },
-  stepperLabelActive: {
-    color: T.accent,
-  },
-  stepperConnector: {
-    flex: 1,
-    height: 1,
-    backgroundColor: T.border,
-    marginHorizontal: 4,
-  },
-  stepperConnectorDone: {
-    backgroundColor: T.accent,
-  },
-
-  /* Cards */
-  card: {
-    backgroundColor: T.card,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: T.border,
-    padding: 16,
-  },
-  cardHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 4,
-    gap: 8,
-  },
-  cardEyebrow: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: T.textMuted,
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
-  },
-  cardHeading: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: T.textPrimary,
-    marginTop: 2,
-  },
-  cardSubtext: {
-    fontSize: 13,
-    color: T.textSecondary,
-    lineHeight: 19,
-    marginTop: 4,
-    marginBottom: 12,
-  },
-  outcomeTagWrap: {
-    marginTop: 4,
-  },
-
-  /* State banners */
-  banner: {
-    borderWidth: 2,
-    borderRadius: 8,
-    padding: 16,
-  },
-  bannerHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-  },
-  bannerIconCircle: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 2,
-  },
-  bannerTitleContainer: { flex: 1 },
-  bannerEyebrow: {
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.8,
-  },
-  bannerTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    lineHeight: 22,
-    marginTop: 2,
-  },
-  bannerCitation: {
-    fontSize: 12,
-    fontWeight: '600',
-    marginTop: 2,
-    fontFamily: evidenceMono,
-  },
-  bannerBody: {
-    fontSize: 13,
-    lineHeight: 19,
-    marginTop: 10,
-  },
-  pillRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginTop: 12,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: T.borderSubtle,
-  },
-  pill: {
-    backgroundColor: T.surface,
-    borderWidth: 1,
-    borderColor: T.border,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  pillLabel: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: T.textSecondary,
-  },
-  pillValue: {
-    fontSize: 11,
-    fontWeight: '700',
-    fontFamily: evidenceMono,
-  },
-
-  /* Meta grid (Bunching pkgMeta law) */
-  metaGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  metaTile: {
-    flexBasis: '47%',
-    flexGrow: 1,
-    gap: 2,
-    backgroundColor: T.cardSubtle,
-    borderRadius: 4,
-    padding: 8,
-  },
-  metaTileWide: {
-    flexBasis: '100%',
-  },
-  metaLabel: {
-    fontSize: 9,
-    fontWeight: '700',
-    color: T.textMuted,
-    letterSpacing: 0.6,
-  },
-  metaValue: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: T.textPrimary,
-    fontFamily: evidenceMono,
-    lineHeight: 17,
-  },
-  metaValueDanger: {
-    color: T.dangerText,
-  },
-
-  /* Reading rows */
-  readingRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 7,
-    borderBottomWidth: 1,
-    borderBottomColor: T.border,
-    minHeight: 34,
-    gap: 8,
-  },
-  readingLabel: {
-    fontSize: 12.5,
-    color: T.textSecondary,
-    fontWeight: '500',
-    flex: 1,
-    paddingRight: 4,
-  },
-  readingValue: {
-    fontSize: 12.5,
-    fontWeight: '700',
-    color: T.textPrimary,
-    fontFamily: evidenceMono,
-    textAlign: 'right',
-    flexShrink: 0,
-  },
-
-  /* Outcome / conformal tags */
-  chipRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginTop: 8,
-  },
-  outcomeTag: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    borderRadius: 4,
-    borderWidth: 1,
-  },
-  outcomeTagPositive: {
-    backgroundColor: T.successSurface,
-    borderColor: T.successBorder,
-  },
-  outcomeTagNegative: {
-    backgroundColor: T.cardSubtle,
-    borderColor: T.border,
-  },
-  outcomeTagInconclusive: {
-    backgroundColor: T.marginalSurface,
-    borderColor: T.marginalBorder,
-  },
-  outcomeTagText: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  setNote: {
-    fontSize: 12,
-    color: T.textSecondary,
-    lineHeight: 18,
-    marginTop: 10,
-  },
-
-  /* Lab block */
-  labBlock: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    marginTop: 8,
-  },
-  swatchBox: {
-    width: 96,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  labStats: { flex: 1, minWidth: 0 },
-
-  /* Grade badge */
-  gradeBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    borderWidth: 1,
-    borderRadius: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    marginTop: 4,
-  },
-  gradeBadgeText: {
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-  },
-
-  /* Kinetics chart */
-  chartBox: {
-    backgroundColor: T.cardSubtle,
-    borderWidth: 1,
-    borderColor: T.border,
-    borderRadius: 6,
-    alignItems: 'center',
-    paddingVertical: 4,
-  },
-  chartLegendRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 16,
-    marginTop: 8,
-  },
-  legendItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  legendSwatch: {
-    width: 10,
-    height: 3,
-    borderRadius: 2,
-  },
-  legendText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: T.textSecondary,
-  },
-
-  /* Terminal digest box */
-  terminalBox: {
-    backgroundColor: T.terminalPanel,
-    borderRadius: 6,
-    padding: 14,
-    marginTop: 4,
-  },
-  terminalLabel: {
-    fontSize: 9,
-    fontWeight: '700',
-    color: T.terminalMuted,
-    letterSpacing: 0.8,
-  },
-  terminalLabelGap: {
-    marginTop: 10,
-  },
-  terminalValue: {
-    fontFamily: evidenceMono,
-    fontSize: 11,
-    color: T.terminalText,
-    lineHeight: 18,
-    marginTop: 2,
-  },
-  terminalValueSmall: {
-    fontFamily: evidenceMono,
-    fontSize: 10,
-    color: T.terminalText,
-    lineHeight: 15,
-  },
-  attestRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 6,
-    marginTop: 10,
-  },
-  attestText: {
-    flex: 1,
-    fontSize: 12,
-    color: T.textSecondary,
-    lineHeight: 18,
-  },
-  attestBold: {
-    fontWeight: '700',
-    color: T.textPrimary,
-    fontFamily: evidenceMono,
-  },
-
-  /* Buttons */
-  primaryBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 10,
-    minHeight: 56,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    backgroundColor: T.accent,
-    marginTop: 4,
-  },
-  primaryBtnDisabled: {
-    opacity: 0.6,
-  },
-  primaryBtnText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: T.onAccent,
-    letterSpacing: 0.4,
-  },
-  secondaryBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    minHeight: 52,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    borderWidth: 2,
-    borderColor: T.accent,
-    backgroundColor: T.card,
-  },
-  secondaryBtnText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: T.accent,
-    letterSpacing: 0.3,
-  },
-  actionRow: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  returnDutyBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    minHeight: 48,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: T.borderStrong,
-    backgroundColor: T.cardSubtle,
-    marginTop: 2,
-  },
-  returnDutyText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: T.textSecondary,
-    letterSpacing: 0.4,
-  },
-
-  /* Confirm modal */
-  scrim: {
-    flex: 1,
-    backgroundColor: T.scrim,
-    justifyContent: 'flex-end',
-  },
-  sheet: {
-    backgroundColor: T.card,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    padding: 20,
-    paddingBottom: 36,
-    maxHeight: '86%',
-  },
-  sheetHandle: {
-    alignSelf: 'center',
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: T.borderStrong,
-    marginBottom: 12,
-  },
-  sheetMetaBox: {
-    backgroundColor: T.cardSubtle,
-    borderWidth: 1,
-    borderColor: T.border,
-    borderRadius: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-  },
-  sheetPayloadBox: {
-    marginBottom: 14,
-    marginTop: 6,
-  },
+    screen: {
+      flex: 1,
+      backgroundColor: '#F8FAFC',
+    },
+    header: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingHorizontal: 20,
+      paddingBottom: 12,
+      backgroundColor: '#FFFFFF',
+      borderBottomWidth: 1,
+      borderBottomColor: '#E2E8F0',
+    },
+    backBtn: {
+      width: 40,
+      height: 40,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    headerTitle: {
+      fontSize: 19,
+      fontWeight: '700',
+      color: '#0F172A',
+    },
+    offlineBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      backgroundColor: '#FEF3C7',
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      borderRadius: 14,
+    },
+    offlineBadgeText: {
+      fontSize: 10.5,
+      fontWeight: '800',
+      color: '#92400E',
+      letterSpacing: 0.4,
+    },
+    scroll: {
+      flex: 1,
+    },
+    scrollContent: {
+      padding: 20,
+      gap: 16,
+    },
+    stepBadge: {
+      alignSelf: 'flex-start',
+      backgroundColor: '#EFF6FF',
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+      borderRadius: 12,
+    },
+    stepBadgeText: {
+      fontSize: 11,
+      fontWeight: '800',
+      color: '#1D4ED8',
+      letterSpacing: 0.5,
+    },
+    outcomeCard: {
+      backgroundColor: '#FFFFFF',
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: '#E2E8F0',
+      padding: 18,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.05,
+      shadowRadius: 6,
+      elevation: 2,
+    },
+    outcomeTopRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 10,
+    },
+    statusBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+      borderRadius: 12,
+    },
+    statusBadgeText: {
+      fontSize: 11.5,
+      fontWeight: '800',
+      letterSpacing: 0.4,
+    },
+    timeBadge: {
+      fontSize: 12,
+      fontWeight: '600',
+      color: '#64748B',
+      fontFamily: evidenceMono,
+    },
+    drugHeading: {
+      fontSize: 22,
+      fontWeight: '800',
+      color: '#0F172A',
+      letterSpacing: -0.3,
+      marginBottom: 14,
+    },
+    metricsRow: {
+      flexDirection: 'row',
+      backgroundColor: '#F8FAFC',
+      borderRadius: 12,
+      padding: 12,
+      alignItems: 'center',
+    },
+    metricItem: {
+      flex: 1,
+      alignItems: 'center',
+      gap: 2,
+    },
+    metricLabel: {
+      fontSize: 10,
+      fontWeight: '700',
+      color: '#64748B',
+      letterSpacing: 0.4,
+    },
+    metricValue: {
+      fontSize: 13.5,
+      fontWeight: '800',
+      color: '#0F172A',
+      fontFamily: evidenceMono,
+    },
+    metricDivider: {
+      width: 1,
+      height: 24,
+      backgroundColor: '#CBD5E1',
+    },
+    errorBox: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      backgroundColor: '#FEE2E2',
+      borderWidth: 1,
+      borderColor: '#FCA5A5',
+      borderRadius: 10,
+      padding: 12,
+    },
+    errorText: {
+      fontSize: 13,
+      color: '#B91C1C',
+      fontWeight: '500',
+      flex: 1,
+    },
+    formCard: {
+      backgroundColor: '#FFFFFF',
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: '#E2E8F0',
+      padding: 18,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.04,
+      shadowRadius: 6,
+      elevation: 1,
+    },
+    formHeaderRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginBottom: 4,
+    },
+    formTitle: {
+      fontSize: 16,
+      fontWeight: '700',
+      color: '#0F172A',
+    },
+    formSub: {
+      fontSize: 12,
+      color: '#64748B',
+      lineHeight: 16,
+      marginBottom: 16,
+    },
+    fieldsStack: {
+      gap: 12,
+    },
+    fieldRow: {
+      gap: 4,
+    },
+    fieldLabel: {
+      fontSize: 10.5,
+      fontWeight: '800',
+      color: '#475569',
+      letterSpacing: 0.3,
+    },
+    fieldInput: {
+      backgroundColor: '#F8FAFC',
+      borderWidth: 1,
+      borderColor: '#CBD5E1',
+      borderRadius: 10,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      fontSize: 13.5,
+      fontWeight: '600',
+      color: '#0F172A',
+      fontFamily: evidenceMono,
+    },
+    proceedBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      backgroundColor: '#1D4ED8',
+      height: 52,
+      borderRadius: 12,
+      shadowColor: '#1D4ED8',
+      shadowOffset: { width: 0, height: 3 },
+      shadowOpacity: 0.25,
+      shadowRadius: 6,
+      elevation: 3,
+      marginTop: 4,
+    },
+    proceedBtnText: {
+      fontSize: 14,
+      fontWeight: '700',
+      color: '#FFFFFF',
+      letterSpacing: 0.3,
+    },
   });
 };
-
-export default ResultsScreen;

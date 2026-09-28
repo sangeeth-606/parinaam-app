@@ -95,6 +95,61 @@ class AnalyzerContractTests(unittest.TestCase):
         with self.assertRaises(AnalysisInputError):
             analyze_image_bytes(b"", GEOMETRY)
 
+    def test_hough_well_detection_and_shared_calibration(self) -> None:
+        fixture = Path(__file__).resolve().parent.parent / "photo-phone-camera" / "parinaam-app-2.jpeg"
+        if not fixture.exists():
+            self.skipTest("phone photo fixture not present")
+        with open(fixture, "rb") as handle:
+            data = handle.read()
+        result = analyze_image_bytes(data, GEOMETRY, demo_mode=True)
+        self.assertEqual(result["status"], "PASS")
+        self.assertIn("wells", result)
+        self.assertEqual(len(result["wells"]), 3)
+        for idx, well in enumerate(result["wells"], 1):
+            self.assertEqual(well["well_index"], idx)
+            self.assertEqual(len(well["center_px"]), 2)
+            self.assertGreater(well["radius_px"], 0)
+            self.assertIn("raw_color", well)
+            self.assertIn("normalized_color", well)
+            self.assertIn("L", well["normalized_color"]["lab"])
+        # Quality diagnostics must contain well and mixed lighting metrics
+        diag = result["quality"]["diagnostics"]
+        self.assertEqual(diag["detected_wells_count"], 3)
+        self.assertLessEqual(diag["mixed_lighting_delta"], 0.15)
+        self.assertIn("card_mean_luminance", diag)
+        self.assertIn("well_region_luminance", diag)
+
+    def test_mixed_lighting_quality_gate_triggers(self) -> None:
+        from analyzer import _check_mixed_lighting, MIXED_LIGHTING_DELTA_MAX
+        import numpy as np
+
+        # Linear luminance of sRGB 200:
+        val_srgb = 200.0 / 255.0
+        val_lin = ((val_srgb + 0.055) / 1.055) ** 2.4
+
+        # Card samples matching sRGB 200
+        card_samples = [
+            {"mean_linear_rgb": [val_lin, val_lin, val_lin], "mean_bgr": [200, 200, 200]}
+            for _ in range(16)
+        ]
+        # Dark well image (sRGB 30) -> should exceed delta
+        dark_img = np.full((1200, 1600, 3), 30, dtype=np.uint8)
+        wells = [(1300, 500, 70), (1300, 650, 70), (1300, 800, 70)]
+
+        card_lum, well_lum, delta, exceeded = _check_mixed_lighting(
+            card_samples, dark_img, wells, threshold_max=MIXED_LIGHTING_DELTA_MAX
+        )
+        self.assertTrue(exceeded)
+        self.assertGreater(delta, MIXED_LIGHTING_DELTA_MAX)
+
+        # Uniform lighting (sRGB 200) -> should pass
+        uniform_img = np.full((1200, 1600, 3), 200, dtype=np.uint8)
+        card_lum_u, well_lum_u, delta_u, exceeded_u = _check_mixed_lighting(
+            card_samples, uniform_img, wells, threshold_max=MIXED_LIGHTING_DELTA_MAX
+        )
+        self.assertFalse(exceeded_u)
+        self.assertLessEqual(delta_u, MIXED_LIGHTING_DELTA_MAX)
+
 
 if __name__ == "__main__":
     unittest.main()

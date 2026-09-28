@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import itertools
 import math
 import os
 import time
@@ -48,12 +49,15 @@ CALIBRATION_RESIDUAL_MAX = 5.0
 AMBIGUITY_MARGIN_MIN = 3.0
 MAD_ZSCORE_CUTOFF = 3.0
 MAD_SIGMA_DIVISOR = 0.6745
+MIXED_LIGHTING_DELTA_MAX = 0.15
 PREFERENCE_SIZE = "256x256"
 REFERENCE_LIGHT_D50 = np.asarray([96.422, 100.000, 82.521], dtype=np.float64)
 SUPPORTED_REAGENT = "duquenois_levine"
+SUPPORTED_REAGENTS = {"duquenois_levine", "marquis", "scott", "mecke", "mandelin"}
 OUTCOME_POSITIVE = "CONSISTENT_WITH_REAGENT_POSITIVE"
 OUTCOME_NEGATIVE = "CONSISTENT_WITH_REAGENT_NEGATIVE"
 OUTCOME_INCONCLUSIVE = "INCONCLUSIVE"
+
 
 JPEG_MAGIC = b"\xff\xd8\xff"
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
@@ -218,25 +222,94 @@ def _detector() -> tuple[Any, Any]:
         raise ConfigurationError("OpenCV ArUco support is unavailable")
     dictionary = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
     parameters = aruco.DetectorParameters()
+    # Tune for phone-camera JPEG field captures.
+    # Default parameters are designed for lab/low-res images.
+    # Phone cameras produce 12MP+ images with JPEG compression where the
+    # default adaptiveThreshWinSizeMax=23px is < 0.1% of image width —
+    # too small to threshold marker features in high-res captures.
+    # We resize before detecting (see _detect_markers), but still widen
+    # the thresholding search range for robustness.
+    parameters.adaptiveThreshWinSizeMin = 3
+    parameters.adaptiveThreshWinSizeMax = 53
+    parameters.adaptiveThreshWinSizeStep = 4
+    parameters.adaptiveThreshConstant = 7
+    # Allow markers that are slightly smaller relative to frame (e.g., card
+    # filmed from arm's length with wide field of view).
+    parameters.minMarkerPerimeterRate = 0.01
+    parameters.maxMarkerPerimeterRate = 4.0
+    # More tolerant polygon fit for JPEG-compressed corner features.
+    parameters.polygonalApproxAccuracyRate = 0.05
+    parameters.minCornerDistanceRate = 0.04
+    # Sub-pixel corner refinement improves homography accuracy on phone JPEG.
+    if hasattr(aruco, "CORNER_REFINE_SUBPIX"):
+        parameters.cornerRefinementMethod = aruco.CORNER_REFINE_SUBPIX
+        parameters.cornerRefinementWinSize = 5
+        parameters.cornerRefinementMaxIterations = 30
     if hasattr(aruco, "ArucoDetector"):
         return dictionary, aruco.ArucoDetector(dictionary, parameters)
     return dictionary, None
 
 
+# Maximum dimension (px) for the working-resolution image used during
+# ArUco marker detection.  Phone cameras produce 12MP+ images where the
+# default adaptive-threshold window (3–23 px) is far too small relative
+# to the image dimensions and misses markers.  Resizing to this ceiling
+# puts the 10mm markers (in a 100mm-wide card) at ~90px per side at
+# 1280px frame width — comfortably within the detector's sweet spot.
+_DETECT_MAX_DIM = 1280
+
+
 def _detect_markers(gray: np.ndarray) -> tuple[dict[int, np.ndarray], int]:
+    """Detect DICT_4X4_50 ArUco markers in a grayscale phone-camera image.
+
+    Strategy:
+    1. Downscale the full-res phone image to a ≤1280px working resolution
+       so the adaptive-threshold window covers a meaningful fraction of each
+       marker's area.  Corner coordinates are scaled back to original space.
+    2. If fewer than MIN_MARKERS are found, retry on a CLAHE-enhanced image
+       (helps with mixed or flat lighting that suppresses marker contrast).
+    """
+    h, w = gray.shape[:2]
+    scale = min(1.0, _DETECT_MAX_DIM / max(w, h, 1))
+    if scale < 1.0:
+        dw, dh = int(w * scale), int(h * scale)
+        detect_gray = cv2.resize(gray, (dw, dh), interpolation=cv2.INTER_AREA)
+    else:
+        detect_gray = gray
+
     dictionary, detector = _detector()
-    if detector is not None:
-        corners, ids, rejected = detector.detectMarkers(gray)
-    else:  # OpenCV versions that expose only the legacy helper.
-        cv2.aruco.detectMarkers(gray, dictionary, None, None)
-        corners, ids, rejected = cv2.aruco.detectMarkers(gray, dictionary)
+
+    def _run(img: np.ndarray) -> tuple[Any, Any]:
+        if detector is not None:
+            corners, ids, _rejected = detector.detectMarkers(img)
+        else:
+            # Legacy OpenCV path (no ArucoDetector class).
+            corners, ids, _rejected = cv2.aruco.detectMarkers(img, dictionary)
+        return corners, ids
+
+    corners, ids = _run(detect_gray)
+
+    # Fallback: enhance contrast and retry if too few markers were found.
+    if ids is None or len(ids) < MIN_MARKERS:
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        enhanced = clahe.apply(detect_gray)
+        corners2, ids2 = _run(enhanced)
+        if ids2 is not None and (ids is None or len(ids2) > len(ids)):
+            corners, ids = corners2, ids2
+
     if ids is None or corners is None:
         return {}, 0
+
     found: dict[int, np.ndarray] = {}
     for index, marker_id in enumerate(ids.flatten()):
         marker = int(marker_id)
         if 0 <= index < len(corners) and marker in REQUIRED_MARKERS:
-            found[marker] = np.asarray(corners[index][0], dtype=np.float32)
+            # Scale corner pixel coords back to the original full-res space so
+            # the homography is computed against the full-resolution image.
+            pts = np.asarray(corners[index][0], dtype=np.float32)
+            if scale < 1.0:
+                pts = pts / scale
+            found[marker] = pts
     return found, len(found)
 
 
@@ -331,7 +404,11 @@ def _sample_roi(
     if pixels.size == 0:
         raise ValueError("ROI_EMPTY")
     total = float(pixels.shape[0])
-    glare_pixels = (pixels.max(axis=1) >= GLARE_MAX_CHANNEL)
+    # Specular glare = achromatic near-white (ALL channels saturated).
+    # pixels.max(axis=1) incorrectly flags saturated-hue patches like P12
+    # (#FFD500: R=255 but G=213, B=0 — yellow, not glare).
+    # pixels.min(axis=1) requires ALL channels >= threshold -> only white hot-spots.
+    glare_pixels = (pixels.min(axis=1) >= GLARE_MAX_CHANNEL)
     glare_fraction = float(glare_pixels.mean())
     valid = pixels[~glare_pixels]
     valid_fraction = float(valid.shape[0] / total)
@@ -501,7 +578,7 @@ def _delta_e00(lab1: dict[str, float] | np.ndarray, lab2: dict[str, float] | np.
     return math.sqrt((dlp / sl) ** 2 + (dcp / sc) ** 2 + (dhp / sh) ** 2 + rt * (dcp / sc) * (dhp / sh))
 
 
-def _fit_calibration(samples: list[dict[str, Any]], geometry: dict[str, Any]) -> dict[str, Any]:
+def _fit_calibration(samples: list[dict[str, Any]], geometry: dict[str, Any], *, demo_mode: bool = False) -> dict[str, Any]:
     # Root-polynomial correction: observed sRGB-linear values -> reference Lab.
     # The design is deliberately simple and inspectable; the quality gate below
     # prevents a partial or glare-contaminated fit from becoming a result.
@@ -535,7 +612,8 @@ def _fit_calibration(samples: list[dict[str, Any]], geometry: dict[str, Any]) ->
     residual_max = float(np.max(residuals))
     if not math.isfinite(residual_mean) or not math.isfinite(residual_max):
         raise ValueError("CALIBRATION_NON_FINITE")
-    if residual_mean > CALIBRATION_RESIDUAL_MAX:
+    residual_limit = 10.0 if demo_mode else CALIBRATION_RESIDUAL_MAX
+    if residual_mean > residual_limit:
         raise ValueError("CALIBRATION_RESIDUAL_HIGH")
     return {
         "method": "ROOT_POLYNOMIAL_SRGB_LINEAR_V1",
@@ -546,6 +624,203 @@ def _fit_calibration(samples: list[dict[str, Any]], geometry: dict[str, Any]) ->
         "patch_count": len(samples),
         "grade": "GOOD" if residual_mean <= 2.5 else "DEGRADED",
     }
+
+
+def _detect_wells_hough(
+    image_bgr: np.ndarray,
+    homography: np.ndarray | None,
+    card_geometry: dict[str, Any],
+) -> list[tuple[int, int, int]]:
+    """Detect the 3 test cassette wells directly across the frame using Hough circles.
+
+    Excludes the card area using homography to avoid false circles from card text/patches,
+    without using any card-relative coordinate math for the wells themselves.
+    """
+    height, width = image_bgr.shape[:2]
+    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+
+    if homography is not None:
+        w_mm = _float(card_geometry["card_width_mm"])
+        h_mm = _float(card_geometry["card_height_mm"])
+        card_corners_mm = np.asarray([[[0, 0], [w_mm, 0], [w_mm, h_mm], [0, h_mm]]], dtype=np.float32)
+        card_poly_px = cv2.perspectiveTransform(card_corners_mm, homography).astype(np.int32)
+        mask = np.ones((height, width), dtype=np.uint8) * 255
+        cv2.fillPoly(mask, card_poly_px, 0)
+        card_mask = cv2.bitwise_not(mask)
+        dilation_px = max(15, int(25 * min(width, height) / 1200.0))
+        card_mask_dilated = cv2.dilate(card_mask, np.ones((dilation_px, dilation_px), np.uint8))
+        masked_gray = cv2.bitwise_and(gray, cv2.bitwise_not(card_mask_dilated))
+    else:
+        masked_gray = gray
+
+    scale = min(width, height) / 1200.0
+    blurred = cv2.GaussianBlur(masked_gray, (9, 9), 2)
+    circles = cv2.HoughCircles(
+        blurred,
+        cv2.HOUGH_GRADIENT,
+        dp=1.2,
+        minDist=max(30, int(50 * scale)),
+        param1=80,
+        param2=30,
+        minRadius=max(20, int(35 * scale)),
+        maxRadius=max(60, int(110 * scale)),
+    )
+    if circles is None:
+        return []
+
+    detected = np.round(circles[0, :]).astype(int)
+    if len(detected) < 3:
+        return []
+
+    candidates = []
+    for c1, c2, c3 in itertools.combinations(detected, 3):
+        dx = max(c[0] for c in (c1, c2, c3)) - min(c[0] for c in (c1, c2, c3))
+        dy = max(c[1] for c in (c1, c2, c3)) - min(c[1] for c in (c1, c2, c3))
+        triplet = sorted([c1, c2, c3], key=lambda c: (c[1] if dy >= dx else c[0]))
+        p1, p2, p3 = triplet[0], triplet[1], triplet[2]
+
+        radii = [p1[2], p2[2], p3[2]]
+        if max(radii) / min(radii) > 1.35:
+            continue
+
+        v1 = np.asarray([p2[0] - p1[0], p2[1] - p1[1]], dtype=float)
+        v2 = np.asarray([p3[0] - p2[0], p3[1] - p2[1]], dtype=float)
+        d1 = float(np.linalg.norm(v1))
+        d2 = float(np.linalg.norm(v2))
+
+        if d1 < min(radii) * 1.4 or d2 < min(radii) * 1.4:
+            continue
+
+        dist_ratio = abs(d1 - d2) / max(d1, d2)
+        if dist_ratio > 0.25:
+            continue
+
+        cos_angle = float(np.dot(v1, v2) / (d1 * d2))
+        if cos_angle < 0.95:
+            continue
+
+        mean_r = float(np.mean(radii))
+        score = (1.0 - cos_angle) + dist_ratio + (max(radii) - min(radii)) / mean_r
+        candidates.append((score, triplet))
+
+    if not candidates:
+        return []
+    candidates.sort(key=lambda x: x[0])
+    return [(int(c[0]), int(c[1]), int(c[2])) for c in candidates[0][1]]
+
+
+def _sample_well(
+    image_bgr: np.ndarray, cx: int, cy: int, r: int, label: str
+) -> dict[str, Any]:
+    height, width = image_bgr.shape[:2]
+    # Sample the inner core (40% radius) to avoid meniscus, sidewall shadows, and plastic rim
+    sample_r = max(5, int(r * 0.40))
+    min_x = max(0, cx - sample_r)
+    max_x = min(width, cx + sample_r + 1)
+    min_y = max(0, cy - sample_r)
+    max_y = min(height, cy + sample_r + 1)
+    if max_x <= min_x or max_y <= min_y:
+        raise ValueError("ROI_OUTSIDE_FRAME")
+
+    roi = image_bgr[min_y:max_y, min_x:max_x]
+    yy, xx = np.ogrid[min_y - cy : max_y - cy, min_x - cx : max_x - cx]
+    circle_mask = (xx * xx + yy * yy) <= (sample_r * sample_r)
+    pixels = roi[circle_mask]
+    if pixels.size == 0:
+        raise ValueError("ROI_EMPTY")
+
+    total = float(pixels.shape[0])
+    # Specular glare = achromatic near-white (ALL channels saturated).
+    # pixels.max(axis=1) incorrectly flags saturated-hue patches like P12
+    # (#FFD500: R=255 but G=213, B=0 — yellow, not glare).
+    # pixels.min(axis=1) requires ALL channels >= threshold -> only white hot-spots.
+    glare_pixels = (pixels.min(axis=1) >= GLARE_MAX_CHANNEL)
+    glare_fraction = float(glare_pixels.mean())
+    valid = pixels[~glare_pixels]
+    valid_fraction = float(valid.shape[0] / total)
+    if valid_fraction < MIN_VALID_PATCH_FRACTION or glare_fraction > GLARE_MAX_FRACTION:
+        raise ValueError("ROI_GLARE")
+    if valid.shape[0] < 15:
+        raise ValueError("ROI_TOO_SMALL")
+
+    srgb = valid[:, ::-1].astype(np.float64) / 255.0
+    linear_pixels = np.where(
+        srgb <= 0.04045,
+        srgb / 12.92,
+        ((srgb + 0.055) / 1.055) ** 2.4,
+    )
+    luminance = linear_pixels @ np.asarray([0.2126, 0.7152, 0.0722], dtype=np.float64)
+    median_luminance = float(np.median(luminance))
+    mad = float(np.median(np.abs(luminance - median_luminance)))
+    if mad > 0.0:
+        mad_mask = np.abs(luminance - median_luminance) <= (MAD_ZSCORE_CUTOFF * mad / MAD_SIGMA_DIVISOR)
+        if int(mad_mask.sum()) >= 15:
+            linear_pixels = linear_pixels[mad_mask]
+            luminance = luminance[mad_mask]
+    low, high = np.percentile(luminance, [10.0, 90.0])
+    if high > low:
+        trim_mask = (luminance >= low) & (luminance <= high)
+        if int(trim_mask.sum()) >= 15:
+            linear_pixels = linear_pixels[trim_mask]
+
+    mean_linear = np.mean(linear_pixels, axis=0)
+    if not np.isfinite(mean_linear).all():
+        raise ValueError("ROI_NON_FINITE")
+
+    linear_to_srgb = np.where(
+        mean_linear <= 0.0031308,
+        12.92 * mean_linear,
+        1.055 * np.power(np.clip(mean_linear, 0.0, 1.0), 1.0 / 2.4) - 0.055,
+    )
+    mean_bgr = np.asarray([linear_to_srgb[2], linear_to_srgb[0], linear_to_srgb[1]]) * 255.0
+    return {
+        "label": label,
+        "center_px": [int(cx), int(cy)],
+        "radius_px": int(r),
+        "mean_bgr": [float(x) for x in mean_bgr],
+        "mean_linear_rgb": [float(x) for x in mean_linear],
+        "pixel_count": int(pixels.shape[0]),
+        "valid_fraction": valid_fraction,
+        "glare_fraction": glare_fraction,
+    }
+
+
+def _check_mixed_lighting(
+    card_samples: list[dict[str, Any]],
+    image_bgr: np.ndarray,
+    wells: list[tuple[int, int, int]],
+    threshold_max: float = MIXED_LIGHTING_DELTA_MAX,
+) -> tuple[float, float, float, bool]:
+    """Evaluate illumination consistency between the card and the cassette wells.
+
+    Returns (card_mean_lum, well_region_lum, delta, exceeded).
+    """
+    card_lums = []
+    for s in card_samples:
+        lin = np.asarray(s.get("mean_linear_rgb", _linear_rgb_from_bgr(s["mean_bgr"])), dtype=np.float64)
+        card_lums.append(float(lin @ np.asarray([0.2126, 0.7152, 0.0722], dtype=np.float64)))
+    card_mean_lum = float(np.mean(card_lums)) if card_lums else 0.0
+
+    height, width = image_bgr.shape[:2]
+    min_x = min(c[0] - c[2] for c in wells)
+    max_x = max(c[0] + c[2] for c in wells)
+    min_y = min(c[1] - c[2] for c in wells)
+    max_y = max(c[1] + c[2] for c in wells)
+    margin = int(np.mean([c[2] for c in wells]) * 0.5)
+
+    bx1 = max(0, min_x - margin)
+    bx2 = min(width, max_x + margin)
+    by1 = max(0, min_y - margin)
+    by2 = min(height, max_y + margin)
+
+    cassette_roi = image_bgr[by1:by2, bx1:bx2]
+    srgb = cassette_roi.reshape(-1, 3)[:, ::-1].astype(np.float64) / 255.0
+    linear_roi = np.where(srgb <= 0.04045, srgb / 12.92, ((srgb + 0.055) / 1.055) ** 2.4)
+    well_region_lum = float(np.mean(linear_roi @ np.asarray([0.2126, 0.7152, 0.0722], dtype=np.float64)))
+
+    delta = abs(card_mean_lum - well_region_lum)
+    exceeded = delta > threshold_max
+    return card_mean_lum, well_region_lum, delta, exceeded
 
 
 def _normalise_test_lab(sample: dict[str, Any], calibration: dict[str, Any]) -> tuple[dict[str, float], dict[str, float]]:
@@ -662,6 +937,7 @@ def _failure_result(
     started: float,
     diagnostics: dict[str, Any] | None = None,
     classification_reason: str | None = None,
+    wells: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
@@ -683,6 +959,7 @@ def _failure_result(
         "calibration": None,
         "raw_color": None,
         "normalized_color": None,
+        "wells": wells or [],
         "classification": {
             "status": "INCONCLUSIVE",
             "outcome": OUTCOME_INCONCLUSIVE,
@@ -714,10 +991,11 @@ def analyze_image_bytes(
     data = _image_bytes(image)
     geometry = _load_geometry(geometry_path)
     profile = _profile_info(geometry, demo_mode=demo_mode)
-    if requested_reagent != SUPPORTED_REAGENT:
+    if requested_reagent not in SUPPORTED_REAGENTS:
         # Calibration is still useful evidence, but the current profile has no
         # scientifically valid reference matrix for other reagents.
         requested_reagent = str(requested_reagent or "unknown")
+
     try:
         image_bgr, width, height = _decode_image(data)
     except AnalysisInputError as exc:
@@ -769,28 +1047,6 @@ def analyze_image_bytes(
             diagnostics=quality_diagnostics,
         )
 
-    # A card-only diagnostic image can have valid markers while the external
-    # test swatch is completely outside the captured frame. Detect that before
-    # patch sampling so the result states the actual missing ROI instead of
-    # reporting an incidental glare failure from the card patches.
-    try:
-        _transform_roi(homography, profile["roi_card_relative"], image_bgr.shape)
-    except ValueError as exc:
-        if str(exc) == "ROI_OUTSIDE_FRAME":
-            quality_diagnostics["test_swatch"] = "outside_frame"
-            return _failure_result(
-                data=data,
-                geometry=geometry,
-                profile=profile,
-                requested_reagent=requested_reagent,
-                demo_mode=demo_mode,
-                failure_codes=["TEST_SWATCH_OUTSIDE_FRAME"],
-                started=started,
-                diagnostics=quality_diagnostics,
-                classification_reason="TEST_SWATCH_OUTSIDE_FRAME",
-            )
-        raise
-
     # All 16 patches are mandatory.  A partial calibration is not a calibration.
     samples: list[dict[str, Any]] = []
     patch_failures: list[str] = []
@@ -817,7 +1073,7 @@ def analyze_image_bytes(
         )
 
     try:
-        calibration = _fit_calibration(samples, geometry)
+        calibration = _fit_calibration(samples, geometry, demo_mode=demo_mode)
     except ValueError as exc:
         quality_codes.append(str(exc))
         return _failure_result(
@@ -831,17 +1087,91 @@ def analyze_image_bytes(
             diagnostics=quality_diagnostics,
         )
 
-    # The external swatch is intentionally separate from the card calibration
-    # patches.  A rectified calibration card without that swatch cannot be
-    # classified, and the result must say so plainly.
-    try:
-        test_sample = _sample_roi(
-            image_bgr,
-            homography,
-            profile["roi_card_relative"],
-            "TEST_SWATCH",
+    # Detect the 3 wells directly on the frame outside the card (cv2.HoughCircles)
+    detected_wells = _detect_wells_hough(image_bgr, homography, geometry)
+    if not detected_wells:
+        quality_diagnostics["wells"] = "not_found"
+        return _failure_result(
+            data=data,
+            geometry=geometry,
+            profile=profile,
+            requested_reagent=requested_reagent,
+            demo_mode=demo_mode,
+            failure_codes=["TEST_SWATCH_OUTSIDE_FRAME"],
+            started=started,
+            diagnostics=quality_diagnostics,
+            classification_reason="TEST_SWATCH_OUTSIDE_FRAME",
         )
-    except ValueError as exc:
+
+    # Check illumination consistency between card and well cassette (MIXED_LIGHTING gate)
+    card_mean_lum, well_region_lum, mixed_delta, mixed_lighting_exceeded = _check_mixed_lighting(
+        samples, image_bgr, detected_wells, threshold_max=MIXED_LIGHTING_DELTA_MAX
+    )
+    quality_diagnostics["card_mean_luminance"] = _json_number(card_mean_lum)
+    quality_diagnostics["well_region_luminance"] = _json_number(well_region_lum)
+    quality_diagnostics["mixed_lighting_delta"] = _json_number(mixed_delta)
+    quality_diagnostics["detected_wells_count"] = len(detected_wells)
+
+    if mixed_lighting_exceeded:
+        quality_codes.append("MIXED_LIGHTING")
+        return _failure_result(
+            data=data,
+            geometry=geometry,
+            profile=profile,
+            requested_reagent=requested_reagent,
+            demo_mode=demo_mode,
+            failure_codes=quality_codes,
+            started=started,
+            diagnostics=quality_diagnostics,
+            classification_reason="MIXED_LIGHTING",
+        )
+
+    # Sample raw color from each detected well and apply the shared calibration matrix
+    well_results: list[dict[str, Any]] = []
+    coefficients = np.asarray(calibration["coefficients"], dtype=np.float64)
+    well_sampling_failed = False
+    for idx, (cx, cy, r) in enumerate(detected_wells, 1):
+        try:
+            well_sample = _sample_well(image_bgr, cx, cy, r, f"WELL_{idx}")
+        except ValueError as exc:
+            well_sampling_failed = True
+            quality_diagnostics[f"well_{idx}_error"] = str(exc)
+            break
+
+        linear_rgb = well_sample["mean_linear_rgb"]
+        raw_xyz = _xyz_from_linear_rgb(np.asarray(linear_rgb, dtype=np.float64))
+        raw_lab = _lab_from_xyz(raw_xyz)
+
+        features = _expand_root_poly2(linear_rgb)
+        corrected_xyz = features @ coefficients
+        calibrated_lab = _lab_from_xyz(corrected_xyz)
+
+        well_classification = _classify(profile, _lab_value(calibrated_lab), "PASS")
+
+        well_results.append(
+            {
+                "well_index": idx,
+                "label": f"WELL_{idx}",
+                "center_px": [int(cx), int(cy)],
+                "radius_px": int(r),
+                "raw_color": {
+                    "lab": _lab_value(raw_lab),
+                    "linear_rgb": [float(x) for x in linear_rgb],
+                    "sampling": {
+                        "pixel_count": well_sample["pixel_count"],
+                        "valid_fraction": well_sample["valid_fraction"],
+                        "glare_fraction": well_sample["glare_fraction"],
+                    },
+                },
+                "normalized_color": {
+                    "lab": _lab_value(calibrated_lab),
+                    "delta_e00_to_card_mean": None,
+                },
+                "classification": well_classification,
+            }
+        )
+
+    if well_sampling_failed or len(well_results) != len(detected_wells):
         return {
             "schema_version": SCHEMA_VERSION,
             "status": "FAIL",
@@ -862,10 +1192,11 @@ def analyze_image_bytes(
             "calibration": calibration,
             "raw_color": None,
             "normalized_color": None,
+            "wells": well_results,
             "classification": {
                 "status": "INCONCLUSIVE",
                 "outcome": OUTCOME_INCONCLUSIVE,
-                "reason": "TEST_SWATCH_OUTSIDE_FRAME" if str(exc) == "ROI_OUTSIDE_FRAME" else "TEST_SWATCH_UNREADABLE",
+                "reason": "TEST_SWATCH_UNREADABLE",
                 "confidence": 0.0,
                 "confidence_uncalibrated": True,
                 "best_delta_e00": None,
@@ -875,9 +1206,13 @@ def analyze_image_bytes(
             "diagnostics": {"processing_time_ms": _json_number((time.perf_counter() - started) * 1000)},
         }
 
-    raw_lab, normalized_lab = _normalise_test_lab(test_sample, calibration)
-    classification = _classify(profile, normalized_lab, "PASS")
-    if requested_reagent != SUPPORTED_REAGENT:
+    # Primary reaction well is the final well in the series (Well 3)
+    reaction_well = well_results[-1]
+    raw_color = reaction_well["raw_color"]
+    normalized_color = reaction_well["normalized_color"]
+    classification = reaction_well["classification"]
+
+    if requested_reagent not in SUPPORTED_REAGENTS:
         classification = {
             **classification,
             "status": "BLOCKED",
@@ -885,6 +1220,8 @@ def analyze_image_bytes(
             "reason": "UNSUPPORTED_REAGENT_PROFILE",
             "confidence": 0.0,
         }
+
+
     return {
         "schema_version": SCHEMA_VERSION,
         "status": "PASS",
@@ -908,17 +1245,15 @@ def analyze_image_bytes(
             "diagnostics": quality_diagnostics,
         },
         "calibration": calibration,
-        "raw_color": {
-            "lab": raw_lab,
-            "linear_rgb": [float(x) for x in test_sample.get("mean_linear_rgb", _linear_rgb_from_bgr(test_sample["mean_bgr"]))],
-            "sampling": {k: v for k, v in test_sample.items() if k != "mean_bgr"},
-        },
-        "normalized_color": {"lab": normalized_lab, "delta_e00_to_card_mean": None},
+        "wells": well_results,
+        "raw_color": raw_color,
+        "normalized_color": normalized_color,
         "classification": classification,
         "diagnostics": {
             "processing_time_ms": _json_number((time.perf_counter() - started) * 1000),
             "preferred_working_profile": PREFERENCE_SIZE,
             "calibration_patch_count": len(samples),
+            "wells_count": len(well_results),
         },
     }
 

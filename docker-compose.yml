@@ -59,7 +59,7 @@ services:
       PARINAAM_API_PORT: 8571
       # Opt-in: load the realistic demo dataset when the database is empty.
       PARINAAM_SEED: ${PARINAAM_SEED:-1}
-      PARINAAM_CORS_ORIGINS: ${PARINAAM_CORS_ORIGINS:-http://localhost:8081,http://127.0.0.1:8081}
+      PARINAAM_CORS_ORIGINS: ${PARINAAM_CORS_ORIGINS:-http://localhost:8081,http://127.0.0.1:8081,http://192.168.0.102:8081,*}
       PARINAAM_TRUST_PROXY: ${PARINAAM_TRUST_PROXY:-false}
     ports:
       - "${API_BIND:-127.0.0.1}:${API_PORT:-8571}:8571"

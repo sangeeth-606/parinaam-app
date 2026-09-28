@@ -12,7 +12,8 @@ import {
   type CameraEngineResult,
 } from './camera-engine-contract.ts';
 
-export const DEFAULT_CAMERA_ENGINE_URL = process.env.EXPO_PUBLIC_CAMERA_ENGINE_URL ?? 'http://10.0.2.2:8572';
+export const DEFAULT_CAMERA_ENGINE_URL =
+  process.env.EXPO_PUBLIC_CAMERA_ENGINE_URL ?? 'http://192.168.0.102:8081/engine-proxy';
 export const CAMERA_ENGINE_REQUEST_TIMEOUT_MS = 20_000;
 export const CAMERA_ENGINE_HEALTH_TIMEOUT_MS = 4_000;
 export const CAMERA_ENGINE_MAX_ATTEMPTS = 2;
@@ -29,6 +30,19 @@ export interface CameraEngineClientOptions {
   requestTimeoutMs?: number;
   healthTimeoutMs?: number;
   maxAttempts?: number;
+  /**
+   * Platform file-reader required for React Native New Architecture (RN 0.79+,
+   * Expo SDK 57+) when `newArchEnabled: true`.
+   *
+   * New Arch's FormData is strict: it no longer accepts the bridge-era
+   * `{ uri, name, type } as unknown as Blob` pattern and throws
+   * "UNSUPPORTED FORMDATAPART IMPLEMENTATION" before the request is even
+   * serialised. When this function is provided the client reads the raw bytes
+   * first and appends a proper Blob — spec-compliant on every architecture.
+   *
+   * Omit only in Node / Jest environments where the legacy pattern is fine.
+   */
+  readFileAsBlob?: (uri: string, mimeType: string) => Promise<Blob>;
 }
 
 export type CameraEngineErrorKind =
@@ -211,16 +225,31 @@ function isRetryableError(error: unknown): boolean {
   return error instanceof CameraEngineClientError && (error.kind === 'network' || error.kind === 'timeout' || (error.kind === 'http' && error.retryable));
 }
 
-function makeMultipart(input: CameraEngineImageInput): FormData {
+async function makeMultipart(
+  input: CameraEngineImageInput,
+  readFileAsBlob?: (uri: string, mimeType: string) => Promise<Blob>,
+): Promise<FormData> {
   const body = new FormData();
-  // React Native's FormData accepts this private URI-part shape. The cast is
-  // confined to the native transport seam; no untyped value enters the app.
-  const part = {
-    uri: input.uri,
-    name: input.mimeType === 'image/png' ? 'capture.png' : 'capture.jpg',
-    type: input.mimeType,
-  } as unknown as Blob;
-  body.append('image', part);
+  const fileName = input.mimeType === 'image/png' ? 'capture.png' : 'capture.jpg';
+
+  if (readFileAsBlob) {
+    // React Native New Architecture (0.79+): read the file via the platform
+    // FileSystem API and create a spec-compliant Blob. The old bridge hack
+    // ({ uri, name, type } cast as Blob) throws "UNSUPPORTED FORMDATAPART
+    // IMPLEMENTATION" in New Arch's strict JSI FormData serializer.
+    const blob = await readFileAsBlob(input.uri, input.mimeType);
+    body.append('image', blob, fileName);
+  } else {
+    // Legacy bridge-era pattern — kept for Node / Jest test environments only.
+    // DO NOT use this path on a physical device with newArchEnabled: true.
+    const part = {
+      uri: input.uri,
+      name: fileName,
+      type: input.mimeType,
+    } as unknown as Blob;
+    body.append('image', part);
+  }
+
   body.append('reagent', input.reagent);
   return body;
 }
@@ -256,6 +285,10 @@ export function createCameraEngineClient(options: CameraEngineClientOptions = {}
   const requestTimeoutMs = options.requestTimeoutMs ?? CAMERA_ENGINE_REQUEST_TIMEOUT_MS;
   const healthTimeoutMs = options.healthTimeoutMs ?? CAMERA_ENGINE_HEALTH_TIMEOUT_MS;
   const maxAttempts = Math.max(1, Math.min(options.maxAttempts ?? CAMERA_ENGINE_MAX_ATTEMPTS, CAMERA_ENGINE_MAX_ATTEMPTS));
+  // Captured from options so the analyzeImage closure below can use it.
+  // Undefined in test environments → legacy bridge path. Must be provided on
+  // physical devices running React Native New Architecture (newArchEnabled:true).
+  const readFileAsBlob = options.readFileAsBlob;
 
   const analyzeImage = async (input: CameraEngineImageInput): Promise<CameraEngineResult> => {
     if (!input.uri.trim() || !input.mimeType || !input.reagent.trim()) {
@@ -264,13 +297,14 @@ export function createCameraEngineClient(options: CameraEngineClientOptions = {}
     let lastError: CameraEngineClientError | null = null;
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       try {
+        const multipart = await makeMultipart(input, readFileAsBlob);
         const response = await fetchWithTimeout(
           fetchImpl,
           `${baseUrl}/v1/analyze`,
           {
             method: 'POST',
             headers: { Accept: 'application/json' },
-            body: makeMultipart(input),
+            body: multipart,
           },
           requestTimeoutMs,
         );

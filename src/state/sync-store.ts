@@ -34,7 +34,7 @@ import { useLedgerStore } from '../state/ledger-store.ts';
 import { createCameraEngineClient, DEFAULT_CAMERA_ENGINE_URL } from '../capture/camera-engine-client.ts';
 
 /** The local-stack launcher supplies a LAN URL; direct Metro runs keep the Android-emulator default. */
-export const DEFAULT_SERVER_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://10.0.2.2:8571';
+export const DEFAULT_SERVER_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://192.168.0.102:8081/api-proxy';
 export const CAMERA_ENGINE_URL_PREF = 'camera_engine_url';
 const SERVER_URL_PREF = 'sync_server_url';
 const LOOP_MS = 60_000;
@@ -45,14 +45,21 @@ function isLocalOnlyUrl(value: string): boolean {
 
 /**
  * The launcher supplies a fresh LAN URL for physical-device runs. Migrate only
- * the known emulator/loopback defaults; an explicit user-entered LAN endpoint
+ * the known emulator/loopback defaults or blocked 8571/8572/8581/8582 direct ports; an explicit user-entered LAN endpoint
  * remains untouched.
  */
 function selectLauncherDefault(saved: string | null, fallback: string): string {
-  if (saved && saved.startsWith('http') && isLocalOnlyUrl(saved) && !isLocalOnlyUrl(fallback)) {
-    return fallback;
+  if (!saved || !saved.startsWith('http')) return fallback;
+  if (isLocalOnlyUrl(saved) && !isLocalOnlyUrl(fallback)) return fallback;
+  // If fallback is the approved Metro proxy port 8081, automatically upgrade blocked LAN ports
+  if (fallback.includes(':8081')) {
+    if (saved.includes(':8571') || saved.includes(':8572') || saved.includes(':8581') || saved.includes(':8582')) {
+      return fallback;
+    }
   }
-  return saved && saved.startsWith('http') ? saved : fallback;
+  if (saved.includes(':8571') && fallback.includes(':8581')) return fallback;
+  if (saved.includes(':8572') && fallback.includes(':8582')) return fallback;
+  return saved;
 }
 
 

@@ -41,4 +41,93 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   return context.resolveRequest(context, moduleName, platform);
 };
 
+const http = require('http');
+
+config.server = {
+  ...config.server,
+  enhanceMiddleware: (metroMiddleware) => {
+    return (req, res, next) => {
+      // CORS headers
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', '*');
+
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+
+      if (req.url && (req.url === '/engine-proxy' || req.url.startsWith('/engine-proxy/') || req.url.startsWith('/engine-proxy?'))) {
+        const targetPath = req.url.replace(/^\/engine-proxy/, '') || '/';
+        console.log(`[Metro Proxy Engine] Forwarding ${req.method} ${targetPath} -> http://127.0.0.1:8572`);
+        const headers = { ...req.headers };
+        headers.host = '127.0.0.1:8572';
+        delete headers['connection'];
+
+        const proxyReq = http.request(
+          {
+            hostname: '127.0.0.1',
+            port: 8572,
+            path: targetPath,
+            method: req.method,
+            headers,
+          },
+          (proxyRes) => {
+            res.writeHead(proxyRes.statusCode, proxyRes.headers);
+            proxyRes.pipe(res);
+          }
+        );
+
+        proxyReq.on('error', (err) => {
+          console.error('[Metro Proxy Engine Error]', err.message);
+          if (!res.headersSent) {
+            res.writeHead(502, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: err.message, code: 'ENGINE_PROXY_FAILED' }));
+          }
+        });
+
+        req.pipe(proxyReq);
+        return;
+      }
+
+      if (req.url && (req.url === '/api-proxy' || req.url.startsWith('/api-proxy/') || req.url.startsWith('/api-proxy?'))) {
+        const targetPath = req.url.replace(/^\/api-proxy/, '') || '/';
+        console.log(`[Metro Proxy API] Forwarding ${req.method} ${targetPath} -> http://127.0.0.1:8571`);
+        const headers = { ...req.headers };
+        headers.host = '127.0.0.1:8571';
+        delete headers['connection'];
+
+        const proxyReq = http.request(
+          {
+            hostname: '127.0.0.1',
+            port: 8571,
+            path: targetPath,
+            method: req.method,
+            headers,
+          },
+          (proxyRes) => {
+            res.writeHead(proxyRes.statusCode, proxyRes.headers);
+            proxyRes.pipe(res);
+          }
+        );
+
+        proxyReq.on('error', (err) => {
+          console.error('[Metro Proxy API Error]', err.message);
+          if (!res.headersSent) {
+            res.writeHead(502, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: err.message, code: 'API_PROXY_FAILED' }));
+          }
+        });
+
+        req.pipe(proxyReq);
+        return;
+      }
+
+      return metroMiddleware(req, res, next);
+    };
+  },
+};
+
 module.exports = config;
+

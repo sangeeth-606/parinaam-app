@@ -30,3 +30,10 @@ build/
 # transient verification harness output (Phase 5)
 .verify/
 server/data/
+
+# Local scratch and caches
+.scratch/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/

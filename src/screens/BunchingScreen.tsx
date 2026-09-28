@@ -80,7 +80,7 @@ export const BunchingScreen: React.FC = () => {
     return records.find((r) => r.record_uuid === focusUuid)?.case_ref ?? null;
   }, [focusUuid, records]);
 
-  const activeCase = selectedCase ?? focusCase ?? cases[0]?.[0] ?? 'NCB/DZU/CR-14/2026';
+  const activeCase = selectedCase ?? focusCase ?? cases[0]?.[0] ?? '';
   const rawCandidates = useMemo(() => {
     return cases.find(([c]) => c === activeCase)?.[1] ?? [];
   }, [cases, activeCase]);

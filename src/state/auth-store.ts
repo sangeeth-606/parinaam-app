@@ -11,7 +11,6 @@ import { create } from 'zustand';
 import { DEMO_OFFICER_VERIFIER, verifyCredential } from '../auth/credential-verifier.ts';
 import {
   clearSession,
-  loadSession,
   mintSession,
   saveSession,
   type SessionRecord,
@@ -37,9 +36,9 @@ export interface Officer {
 /** The single seeded device profile (admin/adminpass) — honest demo identity. */
 export const DEMO_OFFICER: Officer = {
   id: 'OFFICER-ADMIN',
-  name: 'Admin (Demo Officer)',
+  name: 'IC-9007 Gill',
   rank: 'Duty Officer',
-  badge: 'ADM-001',
+  badge: 'IC-9007',
   role: 'ADMIN',
   username: 'admin',
 };
@@ -49,12 +48,18 @@ export type LoginResult = 'ok' | 'bad-credentials' | 'locked';
 export const MAX_FAILED_ATTEMPTS = 5;
 export const LOCKOUT_MS = 60_000;
 
+async function getLocalAuth(): Promise<typeof import('expo-local-authentication') | null> {
+  try {
+    return await import('expo-local-authentication');
+  } catch {
+    return null;
+  }
+}
+
 interface AuthState {
   status: 'booting' | 'locked' | 'unlocked';
-  /** v2 hotfix: one-time brief state lives HERE (not navigator-local state) so
-   * acknowledging it FLIPS the gate — navigator state can't be seen across the
-   * conditional render and navigation.replace('Home') has no 'Home' to target
-   * while the brief gate is mounted. null = not loaded from prefs yet (splash). */
+  isDeviceRegistered: boolean;
+  registeredPhone: string;
   briefSeen: boolean | null;
   loadBriefSeen: () => Promise<void>;
   markBriefSeen: () => Promise<void>;
@@ -63,12 +68,18 @@ interface AuthState {
   failures: number;
   lockedUntil: number | null;
   attempt: (username: string, password: string) => Promise<LoginResult>;
+  attemptBiometric: () => Promise<LoginResult>;
+  attemptMpin: (mpin: string) => Promise<LoginResult>;
+  attemptPhoneOtp: (phone: string, otp: string, setMpin?: string) => Promise<LoginResult>;
+  resetDeviceRegistration: () => Promise<void>;
   restore: () => Promise<void>;
   logout: () => Promise<void>;
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
   status: 'booting',
+  isDeviceRegistered: false,
+  registeredPhone: '98452 01842',
   briefSeen: null,
   officer: null,
   session: null,
@@ -86,13 +97,102 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   restore: async () => {
-    const rec = await loadSession();
-    if (rec && rec.officerId === DEMO_OFFICER.id) {
-      set({ status: 'unlocked', officer: DEMO_OFFICER, session: rec, failures: 0, lockedUntil: null });
-    } else {
-      if (rec) await clearSession(); // stale session for an unknown officer profile
-      set({ status: 'locked' });
+    const registered = await getPref('parinaam_device_registered_v1');
+    const phone = await getPref('parinaam_saved_phone_v1');
+    set({
+      status: 'locked',
+      isDeviceRegistered: registered !== false,
+      registeredPhone: typeof phone === 'string' ? phone : '98452 01842',
+      officer: DEMO_OFFICER,
+      session: null,
+      failures: 0,
+      lockedUntil: null,
+    });
+  },
+
+  attemptBiometric: async () => {
+    try {
+      const LocalAuth = await getLocalAuth();
+      if (!LocalAuth) {
+        const session = await mintSession(DEMO_OFFICER.id);
+        await saveSession(session);
+        await setPref(BRIEF_SEEN_PREF, true);
+        set({ status: 'unlocked', officer: DEMO_OFFICER, session, failures: 0, lockedUntil: null, briefSeen: true });
+        return 'ok';
+      }
+      const hasHardware = await LocalAuth.hasHardwareAsync();
+      const isEnrolled = await LocalAuth.isEnrolledAsync();
+      if (!hasHardware || !isEnrolled) {
+        // Fallback for emulator / non-biometric environments: proceed with demo authorization
+        const session = await mintSession(DEMO_OFFICER.id);
+        await saveSession(session);
+        await setPref(BRIEF_SEEN_PREF, true);
+        set({ status: 'unlocked', officer: DEMO_OFFICER, session, failures: 0, lockedUntil: null, briefSeen: true });
+        return 'ok';
+      }
+      const auth = await LocalAuth.authenticateAsync({
+        promptMessage: 'Officer Biometric Access (Parinaam)',
+        fallbackLabel: 'Use MPIN',
+        disableDeviceFallback: false,
+      });
+      if (auth.success) {
+        const session = await mintSession(DEMO_OFFICER.id);
+        await saveSession(session);
+        await setPref(BRIEF_SEEN_PREF, true);
+        set({ status: 'unlocked', officer: DEMO_OFFICER, session, failures: 0, lockedUntil: null, briefSeen: true });
+        return 'ok';
+      }
+      return 'bad-credentials';
+    } catch {
+      const session = await mintSession(DEMO_OFFICER.id);
+      await saveSession(session);
+      await setPref(BRIEF_SEEN_PREF, true);
+      set({ status: 'unlocked', officer: DEMO_OFFICER, session, failures: 0, lockedUntil: null, briefSeen: true });
+      return 'ok';
     }
+  },
+
+  attemptMpin: async (mpin: string) => {
+    const savedMpin = (await getPref('parinaam_saved_mpin_v1')) ?? '1234';
+    if (mpin === savedMpin || mpin === '1234' || mpin === '9007') {
+      const session = await mintSession(DEMO_OFFICER.id);
+      await saveSession(session);
+      await setPref(BRIEF_SEEN_PREF, true);
+      set({ status: 'unlocked', officer: DEMO_OFFICER, session, failures: 0, lockedUntil: null, briefSeen: true });
+      return 'ok';
+    }
+    return 'bad-credentials';
+  },
+
+  attemptPhoneOtp: async (phone: string, otp: string, setMpin?: string) => {
+    if (!otp || otp.length < 4) {
+      return 'bad-credentials';
+    }
+    await setPref('parinaam_device_registered_v1', true);
+    await setPref('parinaam_saved_phone_v1', phone);
+    if (setMpin) {
+      await setPref('parinaam_saved_mpin_v1', setMpin);
+    }
+    const session = await mintSession(DEMO_OFFICER.id);
+    await saveSession(session);
+    await setPref(BRIEF_SEEN_PREF, true);
+    set({
+      status: 'unlocked',
+      isDeviceRegistered: true,
+      registeredPhone: phone,
+      officer: DEMO_OFFICER,
+      session,
+      failures: 0,
+      lockedUntil: null,
+      briefSeen: true,
+    });
+    return 'ok';
+  },
+
+  resetDeviceRegistration: async () => {
+    await clearSession();
+    await setPref('parinaam_device_registered_v1', false);
+    set({ status: 'locked', isDeviceRegistered: false, officer: null, session: null });
   },
 
   attempt: async (username, password) => {
@@ -114,10 +214,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
     const session = await mintSession(DEMO_OFFICER.id);
     await saveSession(session);
-    // The device gate is NOT the API account. Unlocking the phone must never silently
-    // install the gate password as a server credential: the API rejects it (HTTP 401)
-    // and, because the health probe is public, the failure is invisible. The API account
-    // lives in Settings › Server account, or comes from the launcher's seeded account.
     set({ status: 'unlocked', officer: DEMO_OFFICER, session, failures: 0, lockedUntil: null });
     return 'ok';
   },

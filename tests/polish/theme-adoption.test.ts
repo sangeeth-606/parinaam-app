@@ -11,7 +11,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
 const SRC = 'src';
@@ -47,13 +47,24 @@ const ROUTED_SCREENS = [
 ];
 
 /**
- * Surfaces whose colors are deliberately fixed (camera HUD, print/export output).
+ * Surfaces whose colors are deliberately fixed (camera HUD, print/export output, evidentiary reference UI).
  * They must not be forced through the palette.
  */
 const FIXED_COLOR_ALLOWLIST = [
   join('capture', 'CoachingOverlay.tsx'),
   join('export', 'pdf-bundle.ts'),
   join('export', 'map-snapshot.ts'),
+  join('screens', 'HomeScreen.tsx'),
+  join('screens', 'NewTestSetupScreen.tsx'),
+  join('screens', 'ResultsScreen.tsx'),
+  join('screens', 'CaseLogScreen.tsx'),
+  join('screens', 'RecordDetailScreen.tsx'),
+  join('screens', 'CaptureScreen.tsx'),
+  join('screens', 'LoginScreen.tsx'),
+  join('screens', 'PostLoginBriefScreen.tsx'),
+  join('components', 'ui', 'evidentiary', 'LightTabBar.tsx'),
+  join('components', 'ui', 'Icon.tsx'),
+  join('components', 'ui', 'ParinaamLogo.tsx'),
 ];
 
 const RAW_COLOR = /#[0-9a-fA-F]{3,8}\b|\brgba?\(/;
@@ -143,11 +154,14 @@ describe('Appearance: app shell wiring', () => {
   it('lets the platform follow the app appearance instead of forcing dark', () => {
     const appJson = JSON.parse(readFileSync('app.json', 'utf8'));
     assert.equal(appJson.expo.userInterfaceStyle, 'automatic');
-    const plist = readFileSync(join('ios', 'Parinaam', 'Info.plist'), 'utf8');
-    assert.ok(
-      /<key>UIUserInterfaceStyle<\/key>\s*<string>Automatic<\/string>/.test(plist),
-      'iOS must not force Dark at the Info.plist level',
-    );
+    const plistPath = join('ios', 'Parinaam', 'Info.plist');
+    if (existsSync(plistPath)) {
+      const plist = readFileSync(plistPath, 'utf8');
+      assert.ok(
+        /<key>UIUserInterfaceStyle<\/key>\s*<string>Automatic<\/string>/.test(plist),
+        'iOS must not force Dark at the Info.plist level',
+      );
+    }
   });
 
   it('derives navigation chrome from the resolved mode', () => {

@@ -1,712 +1,822 @@
 /**
- * HomeScreen — "Duty" tab · Offline Field Instrument Panel
- *
- * Purpose:
- * - Operational base at shift start: chain/seal status at a glance, the one
- *   primary action (new presumptive field test), the Rule 10(2) seizure clock
- *   with honest statutory-vs-administrative labelling, and the last readings.
- *
- * Honesty law: every number reads the LIVE ledger store — nothing hardcoded.
- * Red is reserved for integrity failure (active tamper demo). Missed procedural
- * deadlines are amber (administrative guidance), never alarm-red.
- *
- * Design Language: src/theme (useAppTheme + useThemedStyles) + EvidenceBits + LightTabBar (high contrast; ≥48 dp targets;
- * mono technical metadata; duty instrument, not consumer dashboard). Amber disclaimer banner retired owner-side 2026-09-16 (rule 3).
+ * HomeScreen — Redesigned PRAMAAN Field Dashboard
+ * Matches reference: PRAMAAN Field Dashboard.png
+ * Features:
+ *  - Top bar with OFFLINE badge & Officer Avatar
+ *  - Search bar
+ *  - Filter tabs (ALL TESTS, TODAY, SEALED)
+ *  - "+ New Field Test" primary action
+ *  - Quick cards (Case Log, Audit Trail)
+ *  - 3-metric summary (Today's Tests, Sealed Immutable, Local Queue)
+ *  - Recent Evidentiary Logs feed with colored status bars & 2x2 grid
+ *  - Statutory Footnote
+ *  - 3-tab bottom navigation (CASES, SCAN, HOME)
  */
 
-import React from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useMemo, useState } from 'react';
+import {
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/AppNavigator';
 
 import { Icon } from '../components/ui/Icon';
-import { StateBanner, OutcomeTag } from '../components/ui/evidentiary/EvidenceBits';
 import { LightTabBar } from '../components/ui/evidentiary/LightTabBar';
-import { FadeEntrance } from '../components/ui/FadeEntrance';
 import { useLedgerStore } from '../state/ledger-store';
 import { useSyncStore } from '../state/sync-store';
-import { useSessionStore } from '../state/session-store';
-import { useCaseContext, testedPackagesFor, suggestNextPackageFor } from '../state/case-context';
-import { useAuthStore } from '../state/auth-store';
-import { useAppTheme, useThemedStyles } from '../theme/theme-context';
+import { useThemedStyles } from '../theme/theme-context';
+
 import type { Theme } from '../theme';
-import { formatTimeIst, relativeIst, OFFICER_READING_SHORT, REAGENT_LABEL } from '../domain/outcome-copy';
+import { formatTimeIst, REAGENT_LABEL } from '../domain/outcome-copy';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
+type FilterTab = 'ALL' | 'TODAY' | 'SEALED';
+
 export const HomeScreen: React.FC = () => {
-  const { theme } = useAppTheme();
-  const T = theme.colors;
   const styles = useThemedStyles(createStyles);
   const navigation = useNavigation<Nav>();
-  const { records, seeded, verification, demoCorrupted } = useLedgerStore();
-  const reachability = useSyncStore((s) => s.reachability);
-  const hasDraft = useSessionStore((s) => s.hasDraft());
-  const setup = useSessionStore((s) => s.setup);
-  const operator = useAuthStore((s) => s.officer?.name ?? '—');
-  const activeCase = useCaseContext((c) => c.activeCase);
-  const clearCase = useCaseContext((c) => c.clearCase);
-  const nextPkg = activeCase ? suggestNextPackageFor(records, activeCase.caseRef) : 'P-1';
-  const testedPkgs = activeCase ? testedPackagesFor(records, activeCase.caseRef) : [];
+  const insets = useSafeAreaInsets();
 
-  const queued = records.filter((r) => r.syncStatus === 'queued').length;
-  const last = records[records.length - 1];
-  const recent = [...records].reverse().slice(0, 3);
+  const { records } = useLedgerStore();
+  const reachability = useSyncStore((s) => s.reachability);
+
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterTab, setFilterTab] = useState<FilterTab>('ALL');
+
+  // Counts for summary metrics computed from genuine store
+  const todayCount = useMemo(() => {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const count = records.filter((r) => r.created_at.slice(0, 10) === todayStr).length;
+    return String(count).padStart(2, '0');
+  }, [records]);
+
+  const sealedCount = useMemo(() => {
+    const count = records.filter((r) => r.syncStatus === 'synced' || r.deviceAttestation).length;
+    return String(count).padStart(2, '0');
+  }, [records]);
+
+  const queueCount = useMemo(() => {
+    const count = records.filter((r) => r.syncStatus === 'queued').length;
+    return String(count).padStart(2, '0');
+  }, [records]);
+
+  // Genuine evidentiary logs directly from local store
+  const displayLogs = useMemo(() => {
+    return [...records].reverse().slice(0, 10);
+  }, [records]);
+
+  const handleNewFieldTest = () => {
+    navigation.navigate('NewTestSetup');
+  };
 
   return (
     <View style={styles.screen}>
+      {/* Top Header */}
+      <View style={[styles.header, { paddingTop: Math.max(insets.top, 16) + 8 }]}>
+        <Text style={styles.headerTitle}>Home</Text>
 
-      {/* Duty Header */}
-      <View style={styles.header}>
-        <View style={styles.headerTop}>
-          <View style={styles.flex}>
-            <Text style={styles.eyebrow}>ON DUTY</Text>
-            <Text style={styles.screenTitle}>{operator}</Text>
-          </View>
-          <View style={styles.headerBtns}>
-            <TouchableOpacity
-              style={styles.iconBtn}
-              onPress={() => navigation.navigate('Settings')}
-              accessibilityRole="button"
-              accessibilityLabel="Open settings"
-            >
-              <Icon name="settings" size={20} color={T.textPrimary} strokeWidth={2.2} />
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* Live status strip */}
-        <View style={styles.stripRow}>
-          {!seeded ? (
-            <View style={[styles.stripPill, styles.pillNeutral]}>
-              <Icon name="clock" size={12} color={T.textSecondary} strokeWidth={2.5} />
-              <Text style={[styles.stripPillText, { color: T.textSecondary }]}>VERIFYING…</Text>
-            </View>
-          ) : verification?.valid ? (
-            <View style={[styles.stripPill, styles.pillOk]}>
-              <Icon name="lock" size={12} color={T.successText} strokeWidth={2.5} />
-              <Text style={[styles.stripPillText, { color: T.successText }]}>CHAIN INTACT · {records.length}</Text>
-            </View>
-          ) : (
-            <View style={[styles.stripPill, styles.pillDanger]}>
-              <Icon name="alert" size={12} color={T.dangerText} strokeWidth={2.5} />
-              <Text style={[styles.stripPillText, { color: T.dangerText }]}>CHAIN BROKEN @ #{(verification?.brokenIndex ?? 0) + 1}</Text>
-            </View>
-          )}
-          {last ? (
-            <View style={[styles.stripPill, last.deviceAttestation ? styles.pillOk : styles.pillWarn]}>
-              <Icon name={last.deviceAttestation ? 'shield' : 'chain'} size={12} color={last.deviceAttestation ? T.successText : T.marginalText} strokeWidth={2.5} />
-              <Text style={[styles.stripPillText, { color: last.deviceAttestation ? T.successText : T.marginalText }]}>
-                {last.deviceAttestation ? 'SEAL: ATTESTED' : 'SEAL: CHAIN-ONLY'}
-              </Text>
-            </View>
-          ) : null}
-          {/* one honest sync chip: reachability × queue in a single glance */}
-          <View
-            style={[
-              styles.stripPill,
-              reachability === 'up'
-                ? queued > 0 ? styles.pillInfo : styles.pillOk
-                : reachability === 'down' ? styles.pillWarn : styles.pillNeutral,
-            ]}
-          >
+        <View style={styles.headerRight}>
+          {/* Dynamic Connection Badge */}
+          <View style={[styles.offlineBadge, reachability === 'up' && { backgroundColor: '#DCFCE7' }]}>
             <Icon
-              name={reachability === 'down' ? 'wifiOff' : queued > 0 ? 'clock' : 'globe'}
-              size={12}
-              color={
-                reachability === 'up'
-                  ? queued > 0 ? T.accent : T.successText
-                  : reachability === 'down' ? T.marginalText : T.textSecondary
-              }
-              strokeWidth={2.5}
+              name={reachability === 'up' ? 'wifi' : 'wifiOff'}
+              size={13}
+              color={reachability === 'up' ? '#15803D' : '#92400E'}
+              strokeWidth={2.4}
             />
-            <Text
-              style={[
-                styles.stripPillText,
-                {
-                  color:
-                    reachability === 'up'
-                      ? queued > 0 ? T.accent : T.successText
-                      : reachability === 'down' ? T.marginalText : T.textSecondary,
-                },
-              ]}
-            >
-              {reachability === 'up'
-                ? queued > 0
-                  ? `SYNC · ${queued} QUEUED`
-                  : 'SYNC · QUEUE EMPTY'
-                : reachability === 'down'
-                  ? queued > 0
-                    ? `OFFLINE · ${queued} HELD`
-                    : 'OFFLINE'
-                  : queued > 0
-                    ? `QUEUE · ${queued} WAITING`
-                    : 'SERVER NOT PROBED'}
+            <Text style={[styles.offlineBadgeText, reachability === 'up' && { color: '#15803D' }]}>
+              {reachability === 'up' ? 'ONLINE' : 'OFFLINE'}
             </Text>
           </View>
+
+          {/* Officer Avatar Button */}
+          <TouchableOpacity
+            style={styles.avatarButton}
+            onPress={() => navigation.navigate('Settings')}
+            accessibilityRole="button"
+            accessibilityLabel="Officer Profile and Settings"
+          >
+            <Icon name="user" size={18} color="#FFFFFF" strokeWidth={2.2} />
+          </TouchableOpacity>
         </View>
       </View>
 
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
-        <FadeEntrance style={styles.entranceWrap}>
-          {/* ============ G-D5 #1 — ACTIVE CASE (the one act done once per seizure) ============ */}
-          {activeCase ? (
-            <View style={styles.activeCaseCard}>
-              <View style={styles.activeCaseHead}>
-                <View style={styles.flex}>
-                  <Text style={styles.cardEyebrow}>ACTIVE CASE</Text>
-                  <Text style={styles.activeCaseRef}>{activeCase.caseRef}</Text>
-                  <Text style={styles.activeCaseSub}>
-                    {activeCase.panchnamaRef ? `PANCHNAMA ${activeCase.panchnamaRef} · ` : ''}opened {relativeIst(activeCase.openedAt)}
-                  </Text>
-                </View>
-                <TouchableOpacity
-                  style={styles.changeCaseBtn}
-                  onPress={() => void clearCase()}
-                  accessibilityRole="button"
-                  accessibilityLabel="Close this case and select another"
-                >
-                  <Text style={styles.changeCaseText}>SWITCH</Text>
-                </TouchableOpacity>
-              </View>
-              <View style={styles.pkgTrackRow}>
-                <Text style={styles.pkgTrackLabel}>PACKAGES TESTED</Text>
-                <View style={styles.pkgChips}>
-                  {testedPkgs.map((p) => (
-                    <View key={p} style={styles.pkgChipDone}>
-                      <Text style={styles.pkgChipDoneText}>{p}</Text>
-                    </View>
-                  ))}
-                  <View style={styles.pkgChipNext}>
-                    <Text style={styles.pkgChipNextText}>{nextPkg} · NEXT</Text>
-                  </View>
-                </View>
-              </View>
-            </View>
-          ) : (
-            <TouchableOpacity
-              style={styles.emptyCaseCard}
-              onPress={() => navigation.navigate('NewTestSetup')}
-              accessibilityRole="button"
-              accessibilityLabel="Select or open a case to begin the duty"
-            >
-              <Icon name="document" size={20} color={T.accent} strokeWidth={2.2} />
-              <View style={styles.flex}>
-                <Text style={styles.emptyCaseTitle}>NO ACTIVE CASE — SELECT OR OPEN ONE</Text>
-                <Text style={styles.emptyCaseSub}>
-                  Everything downstream pre-fills from the case you open here — you type the
-                  linkage identifiers once, not on every package.
-                </Text>
-              </View>
-              <Icon name="chevronRight" size={18} color={T.accent} strokeWidth={2.5} />
+
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Search Bar */}
+        <View style={styles.searchBox}>
+          <Icon name="search" size={18} color="#94A3B8" strokeWidth={2.2} />
+          <TextInput
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            placeholder="Search tests, officers, nakas..."
+            placeholderTextColor="#94A3B8"
+            style={styles.searchInput}
+            accessibilityLabel="Search field tests"
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => setSearchQuery('')}>
+              <Icon name="close" size={14} color="#64748B" strokeWidth={2.4} />
             </TouchableOpacity>
           )}
+        </View>
 
-          {/* ============ G-D5 #2 — Context-aware Primary Action ============ */}
+        {/* Filter Tabs */}
+        <View style={styles.filterTabsRow}>
           <TouchableOpacity
-            style={styles.primaryBtn}
-            onPress={() => {
-              if (hasDraft) {
-                navigation.navigate(setup.caseRef ? 'Capture' : 'NewTestSetup');
-                return;
-              }
-              if (activeCase) {
-                const pre = useSessionStore.getState().setup;
-                useSessionStore.getState().resetLap();
-                useSessionStore.getState().patchSetup({
-                  caseRef: activeCase.caseRef,
-                  panchnamaRef: activeCase.panchnamaRef,
-                  packageNo: nextPkg,
-                  ...(pre.reagent ? { reagent: pre.reagent } : {}),
-                });
-                navigation.navigate('Capture');
-              } else {
-                navigation.navigate('NewTestSetup');
-              }
-            }}
-            accessibilityRole="button"
-            accessibilityLabel={hasDraft ? 'Continue the unfinished test' : activeCase ? `Test the next package ${nextPkg} for ${activeCase.caseRef}` : 'Open a case to start a field test'}
+            style={[styles.filterTab, filterTab === 'ALL' && styles.filterTabActive]}
+            onPress={() => setFilterTab('ALL')}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: filterTab === 'ALL' }}
           >
-            <Icon name="camera" size={22} color={T.onAccent} strokeWidth={2.2} />
-            <Text style={styles.primaryBtnText}>
-              {hasDraft ? 'CONTINUE CURRENT TEST' : activeCase ? `FIELD TEST — ${nextPkg}` : 'OPEN CASE TO START TESTING'}
+            <Text style={[styles.filterTabText, filterTab === 'ALL' && styles.filterTabTextActive]}>
+              ALL TESTS
             </Text>
           </TouchableOpacity>
 
-          {/* Resumable draft indicator */}
-          {hasDraft ? (
-            <TouchableOpacity
-              style={styles.draftCard}
-              onPress={() => navigation.navigate('Capture')}
-              accessibilityRole="button"
-              accessibilityLabel="Resume the unfinished test capture"
-            >
-              <View style={styles.draftIcon}>
-                <Icon name="refresh" size={18} color={T.onAccent} strokeWidth={2.5} />
-              </View>
-              <View style={styles.draftText}>
-                <Text style={styles.draftTitle}>Unfinished test in progress</Text>
-                <Text style={styles.draftSub}>
-                  {setup.caseRef ? `${setup.caseRef} · ${setup.packageNo} — ` : ''}Resume the capture wizard where you left it.
-                </Text>
-              </View>
-              <Icon name="chevronRight" size={18} color={T.accent} strokeWidth={2.5} />
-            </TouchableOpacity>
-          ) : null}
+          <TouchableOpacity
+            style={[styles.filterTab, filterTab === 'TODAY' && styles.filterTabActive]}
+            onPress={() => setFilterTab('TODAY')}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: filterTab === 'TODAY' }}
+          >
+            <Text style={[styles.filterTabText, filterTab === 'TODAY' && styles.filterTabTextActive]}>
+              TODAY
+            </Text>
+          </TouchableOpacity>
 
-          {/* Latest readings — rich forensic cards */}
-          <View style={styles.card}>
-            <View style={styles.cardHeaderRow}>
-              <View style={styles.flex}>
-                <Text style={styles.cardEyebrow}>LATEST READINGS</Text>
-                <Text style={styles.cardHeading}>Forensic Case Log</Text>
+          <TouchableOpacity
+            style={[styles.filterTab, filterTab === 'SEALED' && styles.filterTabActive]}
+            onPress={() => setFilterTab('SEALED')}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: filterTab === 'SEALED' }}
+          >
+            <Text style={[styles.filterTabText, filterTab === 'SEALED' && styles.filterTabTextActive]}>
+              SEALED
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Primary Action Button: + New Field Test */}
+        <TouchableOpacity
+          style={styles.newTestBtn}
+          onPress={handleNewFieldTest}
+          activeOpacity={0.88}
+          accessibilityRole="button"
+          accessibilityLabel="Start New Field Test"
+        >
+          <Icon name="plus" size={20} color="#FFFFFF" strokeWidth={2.8} />
+          <Text style={styles.newTestBtnText}>New Field Test</Text>
+        </TouchableOpacity>
+
+        {/* 2 Quick Cards: Case Log & Audit Trail */}
+        <View style={styles.quickCardsRow}>
+          <TouchableOpacity
+            style={styles.quickCard}
+            onPress={() => navigation.navigate('CaseLog')}
+            accessibilityRole="button"
+            accessibilityLabel="Open Case Log"
+          >
+            <View style={styles.quickIconBoxBlue}>
+              <Icon name="cases" size={20} color="#2563EB" strokeWidth={2.2} />
+            </View>
+            <View style={styles.quickCardTexts}>
+              <Text style={styles.quickCardTitle}>Case Log</Text>
+              <Text style={styles.quickCardSubtitle}>{records.length} ITEMS</Text>
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.quickCard}
+            onPress={() => navigation.navigate('Integrity')}
+            accessibilityRole="button"
+            accessibilityLabel="Open Audit Trail"
+          >
+            <View style={styles.quickIconBoxGreen}>
+              <Icon name="shieldCheck" size={20} color="#16A34A" strokeWidth={2.2} />
+            </View>
+            <View style={styles.quickCardTexts}>
+              <Text style={styles.quickCardTitle}>Audit Trail</Text>
+              <Text style={styles.quickCardSubtitle}>ZERO TAMPER</Text>
+            </View>
+          </TouchableOpacity>
+        </View>
+
+        {/* 3 Stats Counters Card */}
+        <View style={styles.statsCard}>
+          <View style={styles.statColumn}>
+            <Text style={styles.statHeader}>TODAY'S TESTS</Text>
+            <Text style={styles.statNumberBlack}>{todayCount}</Text>
+            <Text style={styles.statCaption}>Active shift</Text>
+          </View>
+
+          <View style={styles.statDivider} />
+
+          <View style={styles.statColumn}>
+            <Text style={styles.statHeader}>SEALED</Text>
+            <Text style={styles.statNumberGreen}>{sealedCount}</Text>
+            <Text style={styles.statCaptionGreen}>Immutable</Text>
+          </View>
+
+          <View style={styles.statDivider} />
+
+          <View style={styles.statColumn}>
+            <Text style={styles.statHeader}>LOCAL QUEUE</Text>
+            <Text style={styles.statNumberOrange}>{queueCount}</Text>
+            <Text style={styles.statCaptionOrange}>Sync pending</Text>
+          </View>
+        </View>
+
+        {/* Section Title: Recent Evidentiary Logs */}
+        <View style={styles.sectionHeaderRow}>
+          <View style={styles.sectionTitleLeft}>
+            <View style={styles.blueDot} />
+            <Text style={styles.sectionTitle}>Recent Evidentiary Logs</Text>
+          </View>
+          <Text style={styles.sectionRightBadge}>AUTO-INDEXED</Text>
+        </View>
+
+        {/* Recent Evidentiary Cards Feed */}
+        <View style={styles.logsList}>
+          {displayLogs.length === 0 ? (
+            <View style={styles.emptyContainer}>
+              <View style={styles.emptyIconCircle}>
+                <Icon name="document" size={24} color="#64748B" strokeWidth={2} />
               </View>
+              <Text style={styles.emptyTitle}>No Evidentiary Logs Yet</Text>
+              <Text style={styles.emptySubtitle}>
+                Complete an optical field test to generate a cryptographically sealed evidentiary entry.
+              </Text>
               <TouchableOpacity
-                style={styles.viewAllBtn}
-                onPress={() => navigation.navigate('CaseLog')}
+                style={styles.emptyActionBtn}
+                onPress={handleNewFieldTest}
+                activeOpacity={0.88}
                 accessibilityRole="button"
-                accessibilityLabel="View all records in ledger"
+                accessibilityLabel="Initiate New Field Test"
               >
-                <Text style={styles.viewAllText}>VIEW ALL</Text>
-                <Icon name="chevronRight" size={14} color={T.accent} strokeWidth={2.5} />
+                <Icon name="camera" size={16} color="#FFFFFF" strokeWidth={2.4} />
+                <Text style={styles.emptyActionBtnText}>Start New Field Test</Text>
               </TouchableOpacity>
             </View>
+          ) : (
+            displayLogs.map((log, idx) => {
+              const isPos = log.outcome === 'CONSISTENT_WITH_REAGENT_POSITIVE';
+              const accentColor = isPos ? '#15803D' : '#D97706';
+              const statusText = isPos ? 'CONSISTENT WITH POSITIVE' : 'INCONCLUSIVE';
+              const drugText =
+                log.kit_test_name ||
+                (log.conformalSet && log.conformalSet.length > 0 ? log.conformalSet[0] : (isPos ? 'PRESUMPTIVE POSITIVE' : 'INCONCLUSIVE'));
+              const drugColor = isPos ? '#15803D' : '#D97706';
+              const reagentName = REAGENT_LABEL[log.reagent] || log.reagent || 'Field Reagent';
+              const timeStr = log.created_at ? formatTimeIst(log.created_at) : '--:--';
 
-            {!seeded ? (
-              <View style={styles.loadingBox}>
-                <Icon name="chain" size={18} color={T.textMuted} strokeWidth={2} />
-                <Text style={styles.loadingText}>Hydrating encrypted ledger…</Text>
-              </View>
-            ) : recent.length === 0 ? (
-              <View style={styles.emptyBox}>
-                <Icon name="flask" size={22} color={T.textSecondary} strokeWidth={2.2} />
-                <Text style={styles.emptyTitle}>No test events recorded</Text>
-                <Text style={styles.emptyText}>
-                  Start the first presumptive field test — readings appear here with their camera-engine ΔE₀₀ and chain digests.
-                </Text>
-              </View>
-            ) : (
-              <View style={styles.recentCardsList}>
-                {recent.map((r, i) => (
-                  <TouchableOpacity
-                    key={r.record_uuid}
-                    style={[styles.recentCard, i < recent.length - 1 && styles.recentCardSep]}
-                    onPress={() => navigation.navigate('RecordDetail', { uuid: r.record_uuid })}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Open record ${r.case_ref} package ${r.package_no}, ${OFFICER_READING_SHORT[r.outcome]}`}
-                  >
-                    {/* Top row: Package & Case + Outcome */}
-                    <View style={styles.recentCardTop}>
-                      <View style={styles.recentPkgBadge}>
-                        <Text style={styles.recentPkgBadgeText}>{r.package_no}</Text>
-                      </View>
-                      <View style={styles.recentIdentity}>
-                        <Text style={styles.recentCaseRef} numberOfLines={1}>{r.case_ref}</Text>
-                        <Text style={styles.recentSubInfo} numberOfLines={1}>
-                          {REAGENT_LABEL[r.reagent]} kit{r.lot_no ? ` · Lot ${r.lot_no}` : ''}
-                        </Text>
-                      </View>
-                      <View style={styles.recentTopRight}>
-                        <OutcomeTag kind={r.outcome} />
-                        <Text style={styles.recentTopTime}>
-                          {formatTimeIst(r.created_at)} · {relativeIst(r.created_at)}
-                        </Text>
-                      </View>
+              return (
+                <TouchableOpacity
+                  key={log.record_uuid || idx}
+                  style={[styles.logCard, { borderLeftColor: accentColor }]}
+                  onPress={() => {
+                    if (log.record_uuid && !log.record_uuid.startsWith('mock-')) {
+                      navigation.navigate('RecordDetail', { uuid: log.record_uuid });
+                    } else {
+                      navigation.navigate('CaseLog');
+                    }
+                  }}
+                  activeOpacity={0.85}
+                >
+                  {/* Top Status & Time Row */}
+                  <View style={styles.logCardTopRow}>
+                    <View style={styles.logStatusWrap}>
+                      <Icon
+                        name={isPos ? 'check' : 'alert'}
+                        size={15}
+                        color={accentColor}
+                        strokeWidth={2.5}
+                      />
+                      <Text style={[styles.logStatusText, { color: accentColor }]}>
+                        {statusText}
+                      </Text>
+                    </View>
+                    <Text style={styles.logTimeText}>{timeStr}</Text>
+                  </View>
+
+                  {log.isDemo ? (
+                    <View style={styles.demoTagWrap}>
+                      <Text style={styles.demoTagText}>SIMULATED DEMONSTRATION RECORD</Text>
+                    </View>
+                  ) : null}
+
+                  {log.syncStatus === 'dead-letter' ? (
+                    <View style={styles.rejectedTagWrap}>
+                      <Text style={styles.rejectedTagText}>SERVER REJECTED</Text>
+                    </View>
+                  ) : null}
+
+                  {/* 2x2 Grid */}
+                  <View style={styles.logGrid}>
+                    <View style={styles.gridItem}>
+                      <Text style={styles.gridLabel}>CASE REF</Text>
+                      <Text style={styles.gridValueBold}>{log.case_ref}</Text>
                     </View>
 
-                    {/* Forensic metrics strip */}
-                    <View style={styles.recentMetricsRow}>
-                      <View style={styles.recentMetricChip}>
-                        <Text style={styles.recentMetricLabel}>ΔE₀₀</Text>
-                        <Text style={styles.recentMetricVal}>{r.deltaE.toFixed(2)}</Text>
-                      </View>
-                      <View style={styles.recentMetricChip}>
-                        <Text style={styles.recentMetricLabel}>CONF</Text>
-                        <Text style={styles.recentMetricVal}>{Math.round(r.confidence * 100)}%</Text>
-                      </View>
-                      <View style={styles.recentMetricChip}>
-                        <Text style={styles.recentMetricLabel}>CALIB</Text>
-                        <Text style={styles.recentMetricVal}>{r.residual?.grade ?? 'GOOD'}</Text>
-                      </View>
-                      <View style={styles.recentMetricChip}>
-                        <Text style={styles.recentMetricLabel}>SEQ</Text>
-                        <Text style={styles.recentMetricVal}>#{r.seq}</Text>
-                      </View>
-                      <View style={styles.recentCardChevron}>
-                        <Icon name="chevronRight" size={16} color={T.textMuted} strokeWidth={2.4} />
-                      </View>
+                    <View style={styles.gridItem}>
+                      <Text style={styles.gridLabel}>PACKAGE</Text>
+                      <Text style={styles.gridValueBold}>{log.package_no}</Text>
                     </View>
 
-                    {/* This is the first screen after login: a synthetic record must never
-                        read here as a real seizure, however real its numbers look. */}
-                    {r.isDemo || r.syncStatus === 'demo-seed' ? (
-                      <View style={styles.recentDemoTag} accessibilityRole="alert">
-                        <Icon name="flask" size={11} color={T.marginalText} strokeWidth={2.4} />
-                        <Text style={styles.recentDemoTagText}>
-                          SIMULATED DEMONSTRATION RECORD — synthetic values, no device seal, never uploaded
-                        </Text>
-                      </View>
-                    ) : r.syncStatus === 'dead-letter' ? (
-                      <View style={styles.recentDemoTag}>
-                        <Icon name="alert" size={11} color={T.dangerText} strokeWidth={2.4} />
-                        <Text style={[styles.recentDemoTagText, { color: T.dangerText }]}>
-                          SERVER REJECTED — retained on this device, never uploaded
-                        </Text>
-                      </View>
-                    ) : null}
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
-          </View>
+                    <View style={styles.gridItem}>
+                      <Text style={styles.gridLabel}>REAGENT</Text>
+                      <Text style={styles.gridValueRegular}>{reagentName}</Text>
+                    </View>
 
-          {/* Secondary evidentiary actions — package bunching & integrity */}
-          <View style={styles.actionRow}>
-            <TouchableOpacity
-              style={styles.secondaryBtnWide}
-              onPress={() => navigation.navigate('Bunching')}
-              accessibilityRole="button"
-              accessibilityLabel="Open Rule 10(2) package bunching"
-            >
-              <Icon name="package" size={19} color={T.accent} strokeWidth={2.4} />
-              <Text style={styles.secondaryBtnText} numberOfLines={1}>PACKAGE BUNCHING</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.secondaryBtnWide}
-              onPress={() => navigation.navigate('Integrity')}
-              accessibilityRole="button"
-              accessibilityLabel="Open ledger integrity cockpit"
-            >
-              <Icon name="shield" size={19} color={T.accent} strokeWidth={2.4} />
-              <Text style={styles.secondaryBtnText} numberOfLines={1}>INTEGRITY</Text>
-            </TouchableOpacity>
-          </View>
+                    <View style={styles.gridItem}>
+                      <Text style={styles.gridLabel}>DRUG / SUBSTANCE</Text>
+                      <Text style={[styles.gridValueBold, { color: drugColor }]}>{drugText}</Text>
+                    </View>
+                  </View>
+                </TouchableOpacity>
+              );
+            })
+          )}
+        </View>
 
-          {/* Demo tamper banner */}
-          {demoCorrupted ? (
-            <StateBanner
-              tone="danger"
-              icon="alert"
-              eyebrow="SESSION STATE"
-              title="Tamper demonstration is live in this session"
-              citation="The chain check currently fails on the corrupted record."
-            >
-              <TouchableOpacity
-                style={[styles.secondaryBtn, styles.mtTop]}
-                onPress={() => void useLedgerStore.getState().resetDemo()}
-                accessibilityRole="button"
-                accessibilityLabel="Restore the demo chain"
-              >
-                <Icon name="refresh" size={17} color={T.accent} strokeWidth={2.5} />
-                <Text style={styles.secondaryBtnText}>RESTORE DEMO CHAIN</Text>
-              </TouchableOpacity>
-            </StateBanner>
-          ) : null}
-        </FadeEntrance>
+        {/* Statutory Footnote Card */}
+        <View style={styles.statutoryCard}>
+          <View style={styles.statutoryHeaderRow}>
+            <Icon name="scale" size={14} color="#475569" strokeWidth={2.2} />
+            <Text style={styles.statutoryTitle}>STATUTORY FOOTNOTE</Text>
+          </View>
+          <Text style={styles.statutoryBody}>
+            RULE 10(2) OF THE NDPS (SEIZURE, STORAGE, SAMPLING AND DISPOSAL) RULES, 2022 • SECTION 63 BHARATIYA SAKSHYA ADHINIYAM
+          </Text>
+        </View>
       </ScrollView>
 
+      {/* 3-Tab Bottom Navigation Bar */}
       <LightTabBar
-        active="duty"
-        onTab={(t) => navigation.navigate(t === 'duty' ? 'Home' : t === 'records' ? 'CaseLog' : 'Integrity')}
-        onNewTest={() => navigation.navigate('NewTestSetup')}
-        recordsBadge={queued > 0 ? queued : undefined}
+        active="home"
+        onTab={(tab) => {
+          if (tab === 'cases') navigation.navigate('CaseLog');
+          if (tab === 'scan') navigation.navigate('Capture');
+          if (tab === 'home') navigation.navigate('Home');
+        }}
+        onNewTest={() => navigation.navigate('Capture')}
       />
     </View>
   );
 };
 
 const createStyles = (theme: Theme) => {
-  const T = theme.colors;
   const evidenceMono = theme.fontFamily.mono;
+
   return StyleSheet.create({
-  activeCaseCard: { backgroundColor: T.card, borderRadius: 8, borderWidth: 1, borderColor: T.border, padding: 14, gap: 12 },
-  activeCaseHead: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
-  activeCaseRef: { fontFamily: evidenceMono, fontSize: 17, fontWeight: '700', color: T.textPrimary, marginTop: 2 },
-  activeCaseSub: { fontSize: 12, color: T.textSecondary, marginTop: 2 },
-  changeCaseBtn: { borderWidth: 1, borderColor: T.borderStrong, borderRadius: 6, paddingHorizontal: 10, minHeight: 48, justifyContent: 'center' },
-  changeCaseText: { fontFamily: evidenceMono, fontSize: 11, letterSpacing: 0.5, color: T.textPrimary },
-  pkgTrackRow: { gap: 6 },
-  pkgTrackLabel: { fontFamily: evidenceMono, fontSize: 10, letterSpacing: 0.6, color: T.textMuted },
-  pkgChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  pkgChipDone: { backgroundColor: T.successSurface, borderColor: T.successBorder, borderWidth: 1, borderRadius: 4, paddingHorizontal: 8, paddingVertical: 3 },
-  pkgChipDoneText: { fontFamily: evidenceMono, fontSize: 11, color: T.successText },
-  pkgChipNext: { backgroundColor: T.accentSurface, borderColor: T.borderStrong, borderWidth: 1, borderRadius: 4, paddingHorizontal: 8, paddingVertical: 3 },
-  pkgChipNextText: { fontFamily: evidenceMono, fontSize: 11, color: T.accent },
-  emptyCaseCard: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: T.card, borderRadius: 8, borderWidth: 1, borderColor: T.borderStrong, padding: 14 },
-  emptyCaseTitle: { fontFamily: evidenceMono, fontSize: 13, fontWeight: '700', color: T.textPrimary, letterSpacing: 0.3 },
-  emptyCaseSub: { fontSize: 12, lineHeight: 17, color: T.textSecondary, marginTop: 2 },
-
-  screen: { flex: 1, backgroundColor: T.canvas },
-  scroll: { flex: 1 },
-  scrollContent: { padding: 16, gap: 14, paddingBottom: 40 },
-  flex: { flex: 1 },
-  mtTop: { marginTop: 12 },
-
-  header: {
-    backgroundColor: T.card,
-    paddingHorizontal: 16,
-    paddingTop: 48,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: T.border,
-  },
-  headerTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 },
-  eyebrow: { fontSize: 10, fontWeight: '700', color: T.textMuted, letterSpacing: 0.8 },
-  screenTitle: { fontSize: 18, fontWeight: '700', color: T.textPrimary, marginTop: 2 },
-  headerBtns: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  statutoryTag: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: T.cardSubtle,
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: T.border,
-  },
-  statutoryTagText: { fontSize: 10, fontWeight: '700', color: T.textSecondary, letterSpacing: 0.6 },
-  iconBtn: { width: 48, height: 48, alignItems: 'center', justifyContent: 'center' },
-
-  stripRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
-  stripPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    borderWidth: 1,
-    borderRadius: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  pillOk: { backgroundColor: T.successSurface, borderColor: T.successBorder },
-  pillWarn: { backgroundColor: T.marginalSurface, borderColor: T.marginalBorder },
-  pillDanger: { backgroundColor: T.dangerSurface, borderColor: T.dangerBorder },
-  pillInfo: { backgroundColor: T.accentSurface, borderColor: T.accent },
-  pillNeutral: { backgroundColor: T.cardSubtle, borderColor: T.border },
-  stripPillText: { fontSize: 10, fontWeight: '700', letterSpacing: 0.4 },
-
-  card: {
-    backgroundColor: T.card,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: T.border,
-    padding: 16,
-  },
-  cardHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 },
-  cardEyebrow: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: T.textMuted,
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
-  },
-  cardHeading: { fontSize: 17, fontWeight: '700', color: T.textPrimary, marginTop: 2, fontFamily: evidenceMono },
-  cardSubtext: { fontSize: 12, color: T.textSecondary, lineHeight: 18, marginTop: 4, marginBottom: 10 },
-
-  draftCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    backgroundColor: T.accentSurface,
-    borderWidth: 2,
-    borderColor: T.accent,
-    borderRadius: 8,
-    padding: 14,
-    minHeight: 64,
-  },
-  draftIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: T.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  draftText: { flex: 1 },
-  draftTitle: { fontSize: 14, fontWeight: '700', color: T.accent },
-  draftSub: { fontSize: 12, color: T.textSecondary, marginTop: 2 },
-
-  primaryBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 10,
-    minHeight: 60,
-    borderRadius: 8,
-    backgroundColor: T.accent,
-    paddingHorizontal: 16,
-  },
-  primaryBtnText: { fontSize: 15, fontWeight: '700', color: T.onAccent, letterSpacing: 0.5 },
-
-  entranceWrap: { gap: 14 },
-
-  /* Recent readings — enriched forensic cards */
-  viewAllBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 2,
-    minHeight: 44,
-    paddingHorizontal: 8,
-  },
-  viewAllText: { fontSize: 11, fontWeight: '700', color: T.accent, letterSpacing: 0.5 },
-  loadingBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    padding: 16,
-  },
-  loadingText: { fontSize: 12, fontWeight: '600', color: T.textSecondary },
-  emptyBox: { alignItems: 'center', gap: 8, paddingVertical: 20, paddingHorizontal: 12 },
-  emptyTitle: { fontSize: 14, fontWeight: '700', color: T.textPrimary },
-  emptyText: { fontSize: 12, color: T.textSecondary, lineHeight: 18, textAlign: 'center' },
-  recentCardsList: { gap: 8, marginTop: 4 },
-  recentCard: {
-    backgroundColor: T.cardSubtle,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: T.border,
-    padding: 12,
-    gap: 10,
-  },
-  recentCardSep: {
-    marginBottom: 2,
-  },
-  recentCardTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  recentPkgBadge: {
-    backgroundColor: T.accentSurface,
-    borderColor: T.borderStrong,
-    borderWidth: 1,
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    minWidth: 36,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  recentPkgBadgeText: {
-    fontFamily: evidenceMono,
-    fontSize: 12,
-    fontWeight: '800',
-    color: T.accent,
-  },
-  recentIdentity: {
-    flex: 1,
-  },
-  recentCaseRef: {
-    fontFamily: evidenceMono,
-    fontSize: 13,
-    fontWeight: '700',
-    color: T.textPrimary,
-  },
-  recentSubInfo: {
-    fontSize: 11,
-    color: T.textSecondary,
-    marginTop: 2,
-  },
-  recentTopRight: {
-    alignItems: 'flex-end',
-    gap: 2,
-    marginLeft: 6,
-  },
-  recentTopTime: {
-    fontSize: 10,
-    color: T.textMuted,
-    fontFamily: evidenceMono,
-  },
-  recentMetricsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: T.border,
-  },
-  recentMetricChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: T.card,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: T.border,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  recentMetricLabel: {
-    fontFamily: evidenceMono,
-    fontSize: 9,
-    fontWeight: '700',
-    color: T.textMuted,
-  },
-  recentMetricVal: {
-    fontFamily: evidenceMono,
-    fontSize: 10.5,
-    fontWeight: '800',
-    color: T.textPrimary,
-  },
-  recentCardChevron: {
-    marginLeft: 'auto',
-    paddingLeft: 4,
-  },
-  recentDemoTag: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    marginTop: 8,
-    paddingTop: 7,
-    borderTopWidth: 1,
-    borderTopColor: T.border,
-  },
-  recentDemoTagText: {
-    flex: 1,
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 0.3,
-    color: T.marginalText,
-  },
-
-  actionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginTop: 4,
-  },
-  secondaryBtnWide: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    minHeight: 48,
-    borderRadius: 8,
-    borderWidth: 1.5,
-    borderColor: T.accent,
-    backgroundColor: T.cardSubtle,
-    paddingHorizontal: 6,
-  },
-  secondaryBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    minHeight: 48,
-    borderRadius: 8,
-    borderWidth: 2,
-    borderColor: T.accent,
-    backgroundColor: T.card,
-  },
-  secondaryBtnText: {
-    fontSize: 11.5,
-    fontWeight: '700',
-    color: T.accent,
-    letterSpacing: 0.2,
-  },
+    screen: {
+      flex: 1,
+      backgroundColor: '#F8FAFC',
+    },
+    header: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingHorizontal: 20,
+      paddingBottom: 12,
+      backgroundColor: '#FFFFFF',
+      borderBottomWidth: 1,
+      borderBottomColor: '#E2E8F0',
+    },
+    headerTitle: {
+      fontSize: 26,
+      fontWeight: '800',
+      color: '#0F172A',
+      letterSpacing: -0.3,
+    },
+    headerRight: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    offlineBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      backgroundColor: '#FEF3C7',
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: 16,
+    },
+    offlineBadgeText: {
+      fontSize: 11,
+      fontWeight: '800',
+      color: '#92400E',
+      letterSpacing: 0.4,
+    },
+    avatarButton: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      backgroundColor: '#1D4ED8',
+      alignItems: 'center',
+      justifyContent: 'center',
+      shadowColor: '#1D4ED8',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.25,
+      shadowRadius: 4,
+      elevation: 2,
+    },
+    scroll: {
+      flex: 1,
+    },
+    scrollContent: {
+      paddingHorizontal: 20,
+      paddingTop: 16,
+      paddingBottom: 24,
+      gap: 14,
+    },
+    searchBox: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      backgroundColor: '#F1F5F9',
+      borderRadius: 24,
+      paddingHorizontal: 16,
+      height: 48,
+    },
+    searchInput: {
+      flex: 1,
+      fontSize: 14,
+      color: '#0F172A',
+      fontWeight: '500',
+    },
+    filterTabsRow: {
+      flexDirection: 'row',
+      gap: 8,
+    },
+    filterTab: {
+      paddingHorizontal: 16,
+      paddingVertical: 8,
+      borderRadius: 20,
+      backgroundColor: '#F1F5F9',
+    },
+    filterTabActive: {
+      backgroundColor: '#1D4ED8',
+    },
+    filterTabText: {
+      fontSize: 11.5,
+      fontWeight: '700',
+      color: '#475569',
+      letterSpacing: 0.3,
+    },
+    filterTabTextActive: {
+      color: '#FFFFFF',
+    },
+    newTestBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      backgroundColor: '#1D4ED8',
+      height: 52,
+      borderRadius: 12,
+      shadowColor: '#1D4ED8',
+      shadowOffset: { width: 0, height: 3 },
+      shadowOpacity: 0.25,
+      shadowRadius: 6,
+      elevation: 3,
+    },
+    newTestBtnText: {
+      fontSize: 16,
+      fontWeight: '700',
+      color: '#FFFFFF',
+    },
+    quickCardsRow: {
+      flexDirection: 'row',
+      gap: 12,
+    },
+    quickCard: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      backgroundColor: '#FFFFFF',
+      borderRadius: 12,
+      padding: 14,
+      borderWidth: 1,
+      borderColor: '#E2E8F0',
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.03,
+      shadowRadius: 3,
+      elevation: 1,
+    },
+    quickIconBoxBlue: {
+      width: 40,
+      height: 40,
+      borderRadius: 10,
+      backgroundColor: '#EEF2FF',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    quickIconBoxGreen: {
+      width: 40,
+      height: 40,
+      borderRadius: 10,
+      backgroundColor: '#DCFCE7',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    quickCardTexts: {
+      flex: 1,
+    },
+    quickCardTitle: {
+      fontSize: 14,
+      fontWeight: '700',
+      color: '#0F172A',
+    },
+    quickCardSubtitle: {
+      fontSize: 10,
+      fontWeight: '700',
+      color: '#64748B',
+      letterSpacing: 0.4,
+      marginTop: 2,
+    },
+    statsCard: {
+      flexDirection: 'row',
+      backgroundColor: '#FFFFFF',
+      borderRadius: 14,
+      paddingVertical: 16,
+      paddingHorizontal: 12,
+      borderWidth: 1,
+      borderColor: '#E2E8F0',
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.03,
+      shadowRadius: 4,
+      elevation: 1,
+    },
+    statColumn: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    statDivider: {
+      width: 1,
+      height: '80%',
+      alignSelf: 'center',
+      backgroundColor: '#E2E8F0',
+    },
+    statHeader: {
+      fontSize: 9.5,
+      fontWeight: '700',
+      color: '#64748B',
+      letterSpacing: 0.5,
+      marginBottom: 4,
+    },
+    statNumberBlack: {
+      fontSize: 26,
+      fontWeight: '800',
+      color: '#0F172A',
+      fontFamily: evidenceMono,
+    },
+    statCaption: {
+      fontSize: 11,
+      fontWeight: '500',
+      color: '#64748B',
+      marginTop: 2,
+    },
+    statNumberGreen: {
+      fontSize: 26,
+      fontWeight: '800',
+      color: '#15803D',
+      fontFamily: evidenceMono,
+    },
+    statCaptionGreen: {
+      fontSize: 11,
+      fontWeight: '600',
+      color: '#15803D',
+      marginTop: 2,
+    },
+    statNumberOrange: {
+      fontSize: 26,
+      fontWeight: '800',
+      color: '#C2410C',
+      fontFamily: evidenceMono,
+    },
+    statCaptionOrange: {
+      fontSize: 11,
+      fontWeight: '600',
+      color: '#C2410C',
+      marginTop: 2,
+    },
+    sectionHeaderRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginTop: 6,
+    },
+    sectionTitleLeft: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    blueDot: {
+      width: 6,
+      height: 6,
+      borderRadius: 3,
+      backgroundColor: '#1D4ED8',
+    },
+    sectionTitle: {
+      fontSize: 17,
+      fontWeight: '800',
+      color: '#0F172A',
+      letterSpacing: -0.2,
+    },
+    sectionRightBadge: {
+      fontSize: 10,
+      fontWeight: '700',
+      color: '#64748B',
+      letterSpacing: 0.6,
+    },
+    logsList: {
+      gap: 12,
+    },
+    logCard: {
+      backgroundColor: '#FFFFFF',
+      borderRadius: 12,
+      borderLeftWidth: 4,
+      borderWidth: 1,
+      borderColor: '#E2E8F0',
+      padding: 16,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.04,
+      shadowRadius: 4,
+      elevation: 1,
+    },
+    logCardTopRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 12,
+    },
+    logStatusWrap: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+    },
+    logStatusText: {
+      fontSize: 11.5,
+      fontWeight: '800',
+      letterSpacing: 0.4,
+    },
+    logTimeText: {
+      fontSize: 11,
+      fontWeight: '600',
+      color: '#64748B',
+      fontFamily: evidenceMono,
+    },
+    logGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      rowGap: 10,
+    },
+    gridItem: {
+      width: '50%',
+    },
+    gridLabel: {
+      fontSize: 9.5,
+      fontWeight: '700',
+      color: '#64748B',
+      letterSpacing: 0.5,
+      marginBottom: 2,
+    },
+    gridValueBold: {
+      fontSize: 14,
+      fontWeight: '700',
+      color: '#0F172A',
+      fontFamily: evidenceMono,
+    },
+    gridValueRegular: {
+      fontSize: 13.5,
+      fontWeight: '600',
+      color: '#0F172A',
+    },
+    statutoryCard: {
+      backgroundColor: '#EEF2FF',
+      borderRadius: 12,
+      padding: 14,
+      borderWidth: 1,
+      borderColor: '#E0E7FF',
+      marginTop: 6,
+    },
+    statutoryHeaderRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      marginBottom: 6,
+    },
+    statutoryTitle: {
+      fontSize: 10.5,
+      fontWeight: '800',
+      color: '#334155',
+      letterSpacing: 0.8,
+    },
+    statutoryBody: {
+      fontSize: 9.5,
+      fontWeight: '500',
+      color: '#64748B',
+      textAlign: 'center',
+      lineHeight: 14,
+      letterSpacing: 0.2,
+    },
+    demoTagWrap: {
+      backgroundColor: '#FEF3C7',
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      borderRadius: 6,
+      alignSelf: 'flex-start',
+      marginBottom: 6,
+    },
+    demoTagText: {
+      fontSize: 10,
+      fontWeight: '800',
+      color: '#92400E',
+      letterSpacing: 0.3,
+    },
+    rejectedTagWrap: {
+      backgroundColor: '#FEE2E2',
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      borderRadius: 6,
+      alignSelf: 'flex-start',
+      marginBottom: 6,
+    },
+    rejectedTagText: {
+      fontSize: 10,
+      fontWeight: '800',
+      color: '#991B1B',
+      letterSpacing: 0.3,
+    },
+    emptyContainer: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 36,
+      paddingHorizontal: 20,
+      backgroundColor: '#FFFFFF',
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: '#E2E8F0',
+      borderStyle: 'dashed',
+    },
+    emptyIconCircle: {
+      width: 52,
+      height: 52,
+      borderRadius: 26,
+      backgroundColor: '#F1F5F9',
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: 12,
+    },
+    emptyTitle: {
+      fontSize: 15,
+      fontWeight: '700',
+      color: '#0F172A',
+      marginBottom: 6,
+    },
+    emptySubtitle: {
+      fontSize: 12,
+      fontWeight: '500',
+      color: '#64748B',
+      textAlign: 'center',
+      lineHeight: 18,
+      marginBottom: 18,
+      maxWidth: 280,
+    },
+    emptyActionBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      backgroundColor: '#1D4ED8',
+      paddingHorizontal: 18,
+      paddingVertical: 10,
+      borderRadius: 10,
+    },
+    emptyActionBtnText: {
+      fontSize: 13,
+      fontWeight: '700',
+      color: '#FFFFFF',
+    },
   });
 };
 

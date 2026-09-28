@@ -6,7 +6,7 @@
  * synthetic frame is used here.
  */
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import {
   CameraView as NativeCameraView,
@@ -18,12 +18,17 @@ import { Button } from '../components/ui/Button';
 import { Icon } from '../components/ui/Icon';
 import { useAppTheme, useThemedStyles } from '../theme/theme-context';
 import type { Theme } from '../theme';
-import { createCameraEngineClient, explainEngineFailure, type CameraEngineFailure } from './camera-engine-client.ts';
-import type { CameraEngineResult } from './camera-engine-contract.ts';
+import { CameraEngineClientError, explainEngineFailure, type CameraEngineFailure } from './camera-engine-client.ts';
+import { parseCameraEngineResult, type CameraEngineResult } from './camera-engine-contract.ts';
 import type { BurstAcquisitionResult } from './burst-manager.ts';
 import type { CaptureFrame } from '../types/contracts.ts';
 import { useSessionStore } from '../state/session-store';
 import { useSyncStore } from '../state/sync-store';
+// expo-file-system/legacy: legacy sub-path exports the full v1 API including
+// uploadAsync which streams the native file directly as multipart — this is
+// the only approach that reliably works on RN New Architecture (SDK 57,
+// newArchEnabled:true) without touching deprecated readAsStringAsync.
+import * as FileSystem from 'expo-file-system/legacy';
 
 interface CameraViewProps {
   onBurstCaptured: (burst: BurstAcquisitionResult) => void;
@@ -70,10 +75,10 @@ export const CameraView: React.FC<CameraViewProps> = ({ onBurstCaptured, onCance
   const [error, setError] = useState<string | null>(null);
   const [failure, setFailure] = useState<CameraEngineFailure | null>(null);
   const [lastCaptureUri, setLastCaptureUri] = useState<string | null>(null);
+  const [rawError, setRawError] = useState<string | null>(null);
   const cameraRef = useRef<NativeCameraView>(null);
   const setup = useSessionStore((state) => state.setup);
   const engineUrl = useSyncStore((state) => state.cameraEngineUrl);
-  const client = useMemo(() => createCameraEngineClient({ baseUrl: engineUrl }), [engineUrl]);
 
   useEffect(() => {
     if (permission === null) void requestPermission();
@@ -88,6 +93,7 @@ export const CameraView: React.FC<CameraViewProps> = ({ onBurstCaptured, onCance
     setCapturing(true);
     setError(null);
     setFailure(null);
+    setRawError(null);
     try {
       const capturedPicture = await cameraRef.current.takePictureAsync({
         quality: 0.92,
@@ -97,11 +103,38 @@ export const CameraView: React.FC<CameraViewProps> = ({ onBurstCaptured, onCance
       });
       if (!capturedPicture?.uri) throw new Error('Camera returned no image URI.');
       setLastCaptureUri(capturedPicture.uri);
-      const result = await client.analyzeImage({
-        uri: capturedPicture.uri,
-        mimeType: capturedPicture.format === 'png' ? 'image/png' : 'image/jpeg',
-        reagent: setup.reagent ?? 'duquenois_levine',
-      });
+      const mimeType = capturedPicture.format === 'png' ? 'image/png' : 'image/jpeg';
+      // FileSystem.uploadAsync streams the file natively as multipart/form-data.
+      // This bypasses React Native's broken FormData path on New Architecture
+      // and avoids the deprecated readAsStringAsync API entirely.
+      let engineResponse: FileSystem.FileSystemUploadResult;
+      try {
+        engineResponse = await FileSystem.uploadAsync(
+          `${engineUrl}/v1/analyze`,
+          capturedPicture.uri,
+          {
+            httpMethod: 'POST',
+            uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+            fieldName: 'image',
+            mimeType,
+            parameters: { reagent: setup.reagent ?? 'duquenois_levine' },
+            headers: { Accept: 'application/json' },
+          },
+        );
+      } catch (uploadError) {
+        // Network-level failure (engine unreachable, timeout, etc.)
+        const msg = uploadError instanceof Error ? uploadError.message : 'Upload failed';
+        throw new CameraEngineClientError(msg, 'network', { retryable: true });
+      }
+      if (engineResponse.status < 200 || engineResponse.status >= 300) {
+        throw new CameraEngineClientError(
+          `Engine returned HTTP ${engineResponse.status}: ${engineResponse.body.slice(0, 200)}`,
+          'http',
+          { status: engineResponse.status, retryable: engineResponse.status >= 500 },
+        );
+      }
+      const result = parseCameraEngineResult(JSON.parse(engineResponse.body));
+
       const quality = qualityFromEngine(result);
       const frame = frameFromPicture(capturedPicture, quality);
       const burst: BurstAcquisitionResult = {
@@ -120,6 +153,8 @@ export const CameraView: React.FC<CameraViewProps> = ({ onBurstCaptured, onCance
     } catch (cause) {
       // Say what went wrong and what to do next; keep the engine's own code for
       // the duty log. A raw code is never shown as if it were an instruction.
+      const raw = cause instanceof Error ? cause.message : String(cause);
+      setRawError(raw);
       setFailure(explainEngineFailure(cause));
     } finally {
       setCapturing(false);
@@ -172,6 +207,8 @@ export const CameraView: React.FC<CameraViewProps> = ({ onBurstCaptured, onCance
             </Text>
             <Text style={styles.failureAction}>{failure.action}</Text>
             <Text style={styles.failureCode}>ENGINE CODE · {failure.code}</Text>
+            <Text style={styles.failureUrl}>ENDPOINT · {engineUrl}/v1/analyze</Text>
+            {rawError ? <Text style={styles.rawErrorText}>DETAILS · {rawError}</Text> : null}
           </View>
         ) : null}
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
@@ -259,6 +296,8 @@ const createStyles = (theme: Theme) => {
   },
   failureAction: { ...type.caption, color: colors.textPrimary, textAlign: 'center' },
   failureCode: { ...type.monoSm, color: colors.textMuted, textAlign: 'center' },
+  failureUrl: { ...type.micro, color: colors.brand, textAlign: 'center', marginTop: 2 },
+  rawErrorText: { ...type.micro, color: colors.fail, textAlign: 'center', marginTop: 1 },
   retryText: { ...type.micro, color: colors.textSecondary, textAlign: 'center' },
   });
 };

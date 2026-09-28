@@ -160,11 +160,15 @@ export const useLedgerStore = create<LedgerState>((set, get) => ({
       const init = await initLedgerDb();
       persistence = init.meta;
       records = init.records;
-      if (records.length === 0) {
+      const shouldSeedFixtures = persistence.kind === 'node-sqlite' || process.env.EXPO_PUBLIC_SEED_DEMO === 'true';
+      if (records.length === 0 && shouldSeedFixtures) {
         records = await fixtureRecords();
         for (const r of records) {
           await persistRecord(r);
         }
+      } else if (!shouldSeedFixtures) {
+        // Ensure genuine production ledger on device contains zero mock fixtures
+        records = records.filter((r) => !r.isDemo && r.syncStatus !== 'demo-seed');
       }
     } catch (err) {
       // Persistence failed outright: keep working in-session, report loudly (never hide).
@@ -175,7 +179,9 @@ export const useLedgerStore = create<LedgerState>((set, get) => ({
         fts5: false,
         error: err instanceof Error ? err.message : String(err),
       };
-      records = await fixtureRecords();
+      if (persistence.kind === 'node-sqlite' || process.env.EXPO_PUBLIC_SEED_DEMO === 'true') {
+        records = await fixtureRecords();
+      }
     }
     const verification = await verifyChain(chainItems(records));
     set({ records, seeded: true, verification, demoCorrupted: false, persistence });

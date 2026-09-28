@@ -69,6 +69,13 @@ const lan = flags.lan;
 const hostForApp = lan ? lanIp : '127.0.0.1';
 const engineUrl = `http://${hostForApp}:${enginePort}`;
 const apiUrl = `http://${hostForApp}:${apiPort}`;
+// Metro proxy URLs ─ what the Expo app on the phone actually calls.
+// Docker ports 8571/8572 are blocked by Windows Firewall on LAN.
+// The Metro dev-server (port 8081) is already open, so we route through it.
+const metroPortNum = metroPort ?? '8081';
+const metroHost = lan ? lanIp : '127.0.0.1';
+const appApiUrl = `http://${metroHost}:${metroPortNum}/api-proxy`;
+const appEngineUrl = `http://${metroHost}:${metroPortNum}/engine-proxy`;
 
 if (lan && !lanIp) {
   throw new Error(
@@ -86,12 +93,13 @@ const composeEnv = {
 
 const expoEnv = {
   ...process.env,
-  EXPO_PUBLIC_API_URL: apiUrl,
-  EXPO_PUBLIC_CAMERA_ENGINE_URL: engineUrl,
+  // Route through the Metro dev-server proxy so the phone never needs to
+  // reach Docker ports directly (Windows Firewall blocks 8571/8572 on LAN).
+  EXPO_PUBLIC_API_URL: appApiUrl,               // http://<lan>:8081/api-proxy
+  EXPO_PUBLIC_CAMERA_ENGINE_URL: appEngineUrl,  // http://<lan>:8081/engine-proxy
   // The API account is the SERVER's own seeded account — never the device-gate
-  // credential (admin/adminpass), which the API rejects. Sourced from the same compose
-  // variables the server starts with, so the two always agree. An officer can override
-  // it in-app under Settings › Server account.
+  // credential (admin/adminpass), which the API rejects. Sourced from the same
+  // compose variables the server starts with, so the two always agree.
   EXPO_PUBLIC_API_USERNAME: process.env.PARINAAM_API_ADMIN_USER ?? 'admin',
   EXPO_PUBLIC_API_PASSWORD: process.env.PARINAAM_API_ADMIN_PASSWORD ?? 'parinaam-admin-2026',
 };
@@ -108,8 +116,10 @@ if (metroPort) expoArgs.push('--port', metroPort);
 if (flags.dryRun) {
   console.log('[Parinaam] Dry run — no Docker or Expo process will be started.');
   console.log(`[Parinaam] Docker: docker ${composeArgs.join(' ')}`);
-  console.log(`[Parinaam] API URL: ${apiUrl}`);
-  console.log(`[Parinaam] Camera-engine URL: ${engineUrl}`);
+  console.log(`[Parinaam] API URL (direct):       ${apiUrl}`);
+  console.log(`[Parinaam] Camera-engine (direct): ${engineUrl}`);
+  console.log(`[Parinaam] App API URL (proxy):    ${appApiUrl}`);
+  console.log(`[Parinaam] App engine URL (proxy): ${appEngineUrl}`);
   console.log(`[Parinaam] Expo: ${expoBinary()} ${expoArgs.join(' ')}`);
   process.exit(0);
 }
@@ -137,17 +147,20 @@ try {
     await waitForHttp(`${engineUrl}/readyz`, 10_000, 'LAN camera-engine');
   }
 
-  console.log(`[Parinaam] API ready: ${apiUrl}`);
-  console.log(`[Parinaam] Camera-engine ready: ${engineUrl}`);
+  console.log(`[Parinaam] API ready (docker direct): ${apiUrl}`);
+  console.log(`[Parinaam] Camera-engine ready (docker direct): ${engineUrl}`);
   if (lan) {
-    console.log('[Parinaam] Physical-device mode: keep the phone on the same trusted Wi-Fi.');
-    console.log('[Parinaam] If the phone cannot connect, allow TCP 8571 and 8572 from your LAN subnet.');
+    console.log('[Parinaam] Physical-device mode: the phone uses the Metro proxy (port 8081).');
+    console.log(`[Parinaam]   App API URL:    ${appApiUrl}`);
+    console.log(`[Parinaam]   App engine URL: ${appEngineUrl}`);
+    console.log('[Parinaam] No extra firewall rules needed — only Metro port 8081 must be reachable from the phone.');
   }
 
   child = spawn(expoBinary(), expoArgs, {
     cwd: ROOT,
     env: expoEnv,
     stdio: 'inherit',
+    shell: process.platform === 'win32',
   });
 
   const exitCode = await new Promise((resolve, reject) => {

@@ -1,16 +1,9 @@
 /**
- * LightTabBar — bottom navigation for the evidentiary surfaces
- * (theme tokens (light + dark), src/theme (useAppTheme + useThemedStyles)).
- *
- * The component name is historical (it was the light-only bar); it now follows
- * the resolved mode like every other surface.
- *
- * Four sibling cells of identical geometry: DUTY · NEW TEST (the action) ·
- * RECORDS · INTEGRITY, with an optional records badge. Active destination is
- * tri-modal (navy pill + icon + bold label — never color alone); NEW TEST is
- * never 'active' — it navigates, it isn't a destination. (v2: the old raised
- * always-blue FAB was removed at officer request — it read broken beside the
- * three flat cells.)
+ * LightTabBar — 3-tab Field Navigation Bar
+ * Matches the reference design:
+ *   [CASES]        [SCAN]         [HOME]
+ *   archive box    viewfinder     house
+ * Active item has primary accent blue icon, bold uppercase text, and horizontal indicator line.
  */
 
 import React from 'react';
@@ -21,94 +14,86 @@ import { Icon, type IconName } from '../Icon';
 import { useAppTheme, useThemedStyles } from '../../../theme/theme-context';
 import type { Theme } from '../../../theme';
 
-export type { TabKey } from '../TabBar';
-import type { TabKey } from '../TabBar';
+export type TabKey = 'cases' | 'scan' | 'home' | 'duty' | 'records' | 'integrity';
 
 interface TabDef {
-  key: TabKey;
+  key: 'cases' | 'scan' | 'home';
   label: string;
   icon: IconName;
 }
 
 const TABS: TabDef[] = [
-  { key: 'duty', label: 'Duty', icon: 'duty' },
-  { key: 'records', label: 'Records', icon: 'ledger' },
-  { key: 'integrity', label: 'Integrity', icon: 'chain' },
+  { key: 'cases', label: 'CASES', icon: 'cases' },
+  { key: 'scan', label: 'SCAN', icon: 'scan' },
+  { key: 'home', label: 'HOME', icon: 'home' },
 ];
 
 interface LightTabBarProps {
   active: TabKey | null;
-  onTab: (key: TabKey) => void;
-  onNewTest: () => void;
+  onTab: (key: any) => void;
+  onNewTest?: () => void;
   recordsBadge?: number;
 }
 
 export const LightTabBar: React.FC<LightTabBarProps> = ({ active, onTab, onNewTest, recordsBadge }) => {
   const { theme } = useAppTheme();
   const T = theme.colors;
-  const { space } = theme;
   const styles = useThemedStyles(createStyles);
   const insets = useSafeAreaInsets();
-  const leftTabs = TABS.slice(0, 1);
-  const rightTabs = TABS.slice(1);
 
-  const renderTab = (tab: TabDef) => {
-    const isActive = active === tab.key;
-    return (
-      // The FLEX cell is a plain View: PressableScale applies its style prop to an
-      // inner Animated.View, so flex:1 there never sized the actual row item.
-      <View key={tab.key} style={styles.tabCell}>
-      <PressableScale
-        onPress={() => onTab(tab.key)}
-        accessibilityRole="tab"
-        accessibilityState={{ selected: isActive }}
-        accessibilityLabel={tab.label}
-        style={styles.tab}
-      >
-        <View style={[styles.tabPill, isActive && styles.tabPillActive]}>
-          <Icon
-            name={tab.icon}
-            size={20}
-            color={isActive ? T.onAccent : T.textMuted}
-            strokeWidth={isActive ? 2.3 : 1.8}
-          />
-          {tab.key === 'records' && recordsBadge ? (
-            <View style={styles.badgeDot}>
-              <Text style={styles.badgeText}>{recordsBadge > 99 ? '99+' : recordsBadge}</Text>
-            </View>
-          ) : null}
-        </View>
-        <Text style={[styles.tabLabel, isActive && styles.tabLabelActive]}>
-          {tab.label}
-          {isActive ? ' ●' : ''}
-        </Text>
-      </PressableScale>
-      </View>
-    );
+  const isTabActive = (tabKey: TabDef['key']) => {
+    if (tabKey === 'cases') return active === 'cases' || active === 'records';
+    if (tabKey === 'scan') return active === 'scan';
+    if (tabKey === 'home') return active === 'home' || active === 'duty';
+    return false;
+  };
+
+  const handlePress = (tabKey: TabDef['key']) => {
+    if (tabKey === 'scan' && onNewTest) {
+      onNewTest();
+    } else {
+      onTab(tabKey);
+    }
   };
 
   return (
-    <View style={[styles.bar, { paddingBottom: Math.max(insets.bottom, space.xs) }]} accessibilityRole="tablist">
+    <View style={[styles.bar, { paddingBottom: Math.max(insets.bottom, 6) }]} accessibilityRole="tablist">
       <View style={styles.inner}>
-        {leftTabs.map(renderTab)}
-        {/* NEW TEST is a sibling cell, not a raised blue outlier: same pill
-            geometry, same resting tone as an unselected tab, same label line.
-            It is never 'selected' (an action, not a destination), so it never
-            wears the active navy pill — press feedback comes from the scale. */}
-        <View style={styles.tabCell}>
-          <PressableScale
-            onPress={onNewTest}
-            accessibilityRole="button"
-            accessibilityLabel="Start new presumptive field test"
-            style={styles.tab}
-          >
-            <View style={styles.tabPill}>
-              <Icon name="camera" size={20} color={T.textMuted} strokeWidth={1.8} />
+        {TABS.map((tab) => {
+          const isActive = isTabActive(tab.key);
+          const iconColor = isActive ? T.accent : T.textMuted;
+          const textColor = isActive ? T.accent : T.textMuted;
+
+          return (
+            <View key={tab.key} style={styles.tabCell}>
+              <PressableScale
+                onPress={() => handlePress(tab.key)}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: isActive }}
+                accessibilityLabel={tab.label}
+                style={styles.tab}
+              >
+                <View style={styles.iconWrap}>
+                  <Icon
+                    name={tab.icon}
+                    size={22}
+                    color={iconColor}
+                    strokeWidth={isActive ? 2.2 : 1.8}
+                  />
+                  {tab.key === 'cases' && recordsBadge ? (
+                    <View style={styles.badgeDot}>
+                      <Text style={styles.badgeText}>{recordsBadge > 99 ? '99+' : recordsBadge}</Text>
+                    </View>
+                  ) : null}
+                </View>
+                <Text style={[styles.tabLabel, { color: textColor }, isActive && styles.tabLabelActive]}>
+                  {tab.label}
+                </Text>
+                {isActive ? <View style={[styles.indicator, { backgroundColor: T.accent }]} /> : <View style={styles.indicatorPlaceholder} />}
+              </PressableScale>
             </View>
-            <Text style={styles.tabLabel}>NEW TEST</Text>
-          </PressableScale>
-        </View>
-        {rightTabs.map(renderTab)}
+          );
+        })}
       </View>
     </View>
   );
@@ -116,71 +101,80 @@ export const LightTabBar: React.FC<LightTabBarProps> = ({ active, onTab, onNewTe
 
 const createStyles = (theme: Theme) => {
   const T = theme.colors;
-  const { target, space, radius } = theme;
+  const { target, space } = theme;
   return StyleSheet.create({
-  bar: {
-    backgroundColor: T.card,
-    borderTopWidth: 1,
-    borderTopColor: T.border,
-  },
-  inner: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    height: theme.layout.tabbarHeight,
-    paddingHorizontal: space.lg,
-  },
-  tabCell: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    minHeight: target.min,
-  },
-  tab: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 2,
-    paddingVertical: space.xs,
-    // generous touch target inside the cell
-    minWidth: target.min,
-  },
-  tabPill: {
-    position: 'relative',
-    paddingHorizontal: 14,
-    paddingVertical: 4,
-    borderRadius: radius.full,
-  },
-  tabPillActive: {
-    backgroundColor: T.accent,
-    borderWidth: 1,
-    borderColor: T.accent,
-  },
-  tabLabel: {
-    fontSize: 9,
-    fontWeight: '600',
-    color: T.textMuted,
-    letterSpacing: 0.5,
-  },
-  tabLabelActive: {
-    color: T.accent,
-    fontWeight: '700',
-  },
-  badgeDot: {
-    position: 'absolute',
-    top: -4,
-    right: -10,
-    minWidth: 16,
-    height: 16,
-    borderRadius: 8,
-    paddingHorizontal: 3,
-    backgroundColor: T.dangerBorder,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  badgeText: {
-    fontSize: 9,
-    color: T.onAccent,
-    fontWeight: '700',
-    fontVariant: ['tabular-nums'],
-  },
+    bar: {
+      backgroundColor: T.card,
+      borderTopWidth: 1,
+      borderTopColor: T.border,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: -2 },
+      shadowOpacity: 0.04,
+      shadowRadius: 4,
+      elevation: 4,
+    },
+    inner: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-around',
+      height: 64,
+      paddingHorizontal: space.md,
+    },
+    tabCell: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      minHeight: target.min,
+    },
+    tab: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 4,
+      minWidth: target.min,
+    },
+    iconWrap: {
+      position: 'relative',
+      height: 26,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    tabLabel: {
+      fontSize: 10.5,
+      fontWeight: '600',
+      letterSpacing: 0.8,
+      marginTop: 2,
+    },
+    tabLabelActive: {
+      fontWeight: '700',
+    },
+    indicator: {
+      width: 28,
+      height: 3,
+      borderRadius: 2,
+      marginTop: 3,
+    },
+    indicatorPlaceholder: {
+      width: 28,
+      height: 3,
+      marginTop: 3,
+    },
+    badgeDot: {
+      position: 'absolute',
+      top: -4,
+      right: -10,
+      minWidth: 16,
+      height: 16,
+      borderRadius: 8,
+      paddingHorizontal: 3,
+      backgroundColor: T.dangerBorder,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    badgeText: {
+      fontSize: 9,
+      color: T.onAccent,
+      fontWeight: '700',
+      fontVariant: ['tabular-nums'],
+    },
   });
 };

@@ -27,6 +27,7 @@ export type IconName =
   | 'close'
   | 'alert'
   | 'lock'
+  | 'wifi'
   | 'wifiOff'
   | 'refresh'
   | 'download'
@@ -39,7 +40,20 @@ export type IconName =
   | 'key'
   | 'minus'
   | 'sun'
-  | 'moon';
+  | 'moon'
+  | 'home'
+  | 'cases'
+  | 'scan'
+  | 'user'
+  | 'fingerprint'
+  | 'scale'
+  | 'microscope'
+  | 'checkBadge'
+  | 'palette'
+  | 'crosshairs'
+  | 'cpu'
+  | 'edit'
+  | 'shieldCheck';
 
 interface IconProps {
   name: IconName;
@@ -134,6 +148,12 @@ const shapes: Record<IconName, React.ReactNode> = {
       <Path d="M8 10V7.5a4 4 0 0 1 8 0V10" />
     </G>
   ),
+  wifi: (
+    <G>
+      <Path d="M2.5 8.8A15 15 0 0 1 21.5 8.8M5.6 12.4a11 11 0 0 1 12.8 0M8.8 16a6 6 0 0 1 6.4 0" />
+      <Circle cx="12" cy="19.6" r="0.8" />
+    </G>
+  ),
   wifiOff: (
     <G>
       <Path d="M2.5 8.8A15 15 0 0 1 8 5.6M16 5.6a15 15 0 0 1 5.5 3.2M5.6 12.4a11 11 0 0 1 3.2-2M15.2 10.4a11 11 0 0 1 3.2 2M8.8 16a6 6 0 0 1 6.4 0" />
@@ -199,6 +219,101 @@ const shapes: Record<IconName, React.ReactNode> = {
     </G>
   ),
   moon: <Path d="M19.5 14.2A7.7 7.7 0 0 1 9.8 4.5 8.3 8.3 0 1 0 19.5 14.2Z" />,
+  home: (
+    <G>
+      <Path d="M3 10.5 12 3l9 7.5v9.5a1.5 1.5 0 0 1-1.5 1.5H15v-6h-6v6H4.5A1.5 1.5 0 0 1 3 20v-9.5z" />
+    </G>
+  ),
+  cases: (
+    <G>
+      <Rect x="3" y="4" width="18" height="4" rx="1.5" />
+      <Path d="M5 8v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8" />
+      <Line x1="10" y1="12" x2="14" y2="12" />
+    </G>
+  ),
+  scan: (
+    <G>
+      <Path d="M3 8V5a2 2 0 0 1 2-2h3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3" />
+      <Circle cx="12" cy="12" r="3" />
+    </G>
+  ),
+  user: (
+    <G>
+      <Circle cx="12" cy="8" r="4" />
+      <Path d="M4 20c0-3.5 3.5-5.5 8-5.5s8 2 8 5.5" />
+    </G>
+  ),
+  fingerprint: (
+    <G>
+      <Path d="M12 2a10 10 0 0 0-8 16M12 5a7 7 0 0 0-5 11M12 8a4 4 0 0 0-3 6.5M12 11a1 1 0 0 0-1 1v4M15 11a2 2 0 0 1 1 2c0 3-1 6-3 8M18 9a6 6 0 0 1 1 3c0 3-1.5 6-3.5 8M21 12c0 3.5-1.5 7-4 9" />
+    </G>
+  ),
+  scale: (
+    <G>
+      <Line x1="12" y1="3" x2="12" y2="21" />
+      <Path d="M5 7l7-3 7 3" />
+      <Path d="M5 7v4a3 3 0 0 0 6 0V7" />
+      <Path d="M13 7v4a3 3 0 0 0 6 0V7" />
+      <Line x1="8" y1="21" x2="16" y2="21" />
+    </G>
+  ),
+  microscope: (
+    <G>
+      <Path d="M6 18h12M10 21v-3M14 21v-3" />
+      <Path d="M9 3l6 6M10 2l5 5-2 2-5-5 2-2z" />
+      <Path d="M5 14a5 5 0 0 0 7 4.5" />
+      <Line x1="12" y1="10" x2="12" y2="14" />
+    </G>
+  ),
+  checkBadge: (
+    <G>
+      <Circle cx="12" cy="12" r="9" />
+      <Path d="m8.5 12.5 2.5 2.5 5-5" />
+    </G>
+  ),
+  palette: (
+    <G>
+      <Circle cx="12" cy="12" r="9" />
+      <Circle cx="7.5" cy="10" r="1.2" />
+      <Circle cx="12" cy="6.5" r="1.2" />
+      <Circle cx="16.5" cy="10" r="1.2" />
+      <Circle cx="14" cy="15" r="1.2" />
+    </G>
+  ),
+  crosshairs: (
+    <G>
+      <Circle cx="12" cy="12" r="7" />
+      <Line x1="12" y1="2" x2="12" y2="5" />
+      <Line x1="12" y1="19" x2="12" y2="22" />
+      <Line x1="2" y1="12" x2="5" y2="12" />
+      <Line x1="19" y1="12" x2="22" y2="12" />
+    </G>
+  ),
+  cpu: (
+    <G>
+      <Rect x="4" y="4" width="16" height="16" rx="2" />
+      <Rect x="9" y="9" width="6" height="6" rx="1" />
+      <Line x1="9" y1="1" x2="9" y2="4" />
+      <Line x1="15" y1="1" x2="15" y2="4" />
+      <Line x1="9" y1="20" x2="9" y2="23" />
+      <Line x1="15" y1="20" x2="15" y2="23" />
+      <Line x1="20" y1="9" x2="23" y2="9" />
+      <Line x1="20" y1="15" x2="23" y2="15" />
+      <Line x1="1" y1="9" x2="4" y2="9" />
+      <Line x1="1" y1="15" x2="4" y2="15" />
+    </G>
+  ),
+  edit: (
+    <G>
+      <Path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+    </G>
+  ),
+  shieldCheck: (
+    <G>
+      <Path d="M12 2.8 5 5.4v5.2c0 4.4 2.9 8.4 7 10.2 4.1-1.8 7-5.8 7-10.2V5.4l-7-2.6z" />
+      <Path d="m9 11.6 2.2 2.2L15.4 9.5" />
+    </G>
+  ),
 };
 
 export const Icon: React.FC<IconProps> = ({ name, size = 22, color, strokeWidth = 1.8 }) => {

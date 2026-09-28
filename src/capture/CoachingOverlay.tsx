@@ -44,7 +44,7 @@ export const CoachingOverlay: React.FC<CoachingOverlayProps> = ({
 
         {/* Central Sample Aperture Target */}
         <View style={styles.sampleAperture}>
-          <Text style={styles.apertureLabel}>SAMPLE REAGENT POUCH</Text>
+          <Text style={styles.apertureLabel}>REACTION WELLS / CARD</Text>
         </View>
       </View>
 

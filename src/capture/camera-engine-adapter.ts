@@ -11,8 +11,16 @@ import type { CalibrationResidual, DecisionResult, LabValue } from '../types/con
 import type { PresumptiveOutcome, ReagentType } from '../types/domain.ts';
 
 export const CAMERA_ENGINE_REAGENT: ReagentType = 'duquenois_levine';
+export const CAMERA_ENGINE_REAGENTS: ReadonlySet<ReagentType> = new Set<ReagentType>([
+  'duquenois_levine',
+  'marquis',
+  'scott',
+  'mecke',
+  'mandelin',
+]);
 
 export interface CameraEngineHardFailure {
+
   code: string;
   message: string;
 }
@@ -68,9 +76,39 @@ function residualFromResult(result: CameraEngineResult): CalibrationResidual | n
 function hardFailureFromResult(result: CameraEngineResult): CameraEngineHardFailure | null {
   if (result.status !== 'FAIL') return null;
   const code = result.quality.failureCodes[0] ?? result.classification.reason ?? 'IMAGE_ANALYSIS_FAILED';
-  const message = result.classification.reason === 'TEST_SWATCH_OUTSIDE_FRAME'
-    ? 'The external test swatch is outside the captured frame. Include the printed swatch beside the card or recapture the full layout.'
-    : `Camera-engine image quality check failed: ${code}. Recapture with the card flat, fully lit, and all markers visible.`;
+
+  let message: string;
+  switch (code) {
+    case 'CALIBRATION_RESIDUAL_HIGH':
+      message =
+        'Card calibration failed — the card appears tilted or the corner markers are partially obscured ' +
+        '(CALIBRATION_RESIDUAL_HIGH).\n\n' +
+        'Hold the phone directly above the card, parallel to the table surface. ' +
+        'Keep the card flat, well-lit, and all 4 ArUco corner markers clearly visible and unblocked before capturing.';
+      break;
+    case 'EXCESSIVE_BLUR':
+      message =
+        'Image is too blurry for reliable colour measurement (EXCESSIVE_BLUR).\n\n' +
+        'Hold the phone steady over the card and wait for the camera to focus before tapping Capture.';
+      break;
+    case 'UNDEREXPOSURE':
+      message =
+        'Image is too dark — move to a brighter area or turn on room lights (UNDEREXPOSURE).';
+      break;
+    case 'OVEREXPOSURE':
+      message =
+        'Image is overexposed — avoid direct sunlight or harsh spotlights directly on the card (OVEREXPOSURE).';
+      break;
+    case 'TEST_SWATCH_OUTSIDE_FRAME':
+    case 'ROI_OUTSIDE_FRAME':
+      message =
+        'The external test swatch is outside the captured frame. ' +
+        'Include the printed swatch beside the card or recapture the full layout.';
+      break;
+    default:
+      message = `Camera-engine image quality check failed: ${code}. Recapture with the card flat, fully lit, and all markers visible.`;
+  }
+
   return { code, message };
 }
 
@@ -102,7 +140,7 @@ export function adaptCameraEngineResult(result: CameraEngineResult, reagent: Rea
     };
   }
 
-  if (reagent !== CAMERA_ENGINE_REAGENT || result.requestedReagent !== CAMERA_ENGINE_REAGENT) {
+  if (reagent !== result.requestedReagent || !CAMERA_ENGINE_REAGENTS.has(reagent)) {
     return {
       lab,
       residual,
@@ -116,6 +154,7 @@ export function adaptCameraEngineResult(result: CameraEngineResult, reagent: Rea
       kinetics: null,
     };
   }
+
 
   const classification = result.classification;
   if (classification.outcome === 'INCONCLUSIVE') {

@@ -86,6 +86,7 @@ export interface CameraEngineResult {
   normalizedColor: { lab: CameraEngineLab; deltaE00ToCardMean: number | null } | null;
   classification: CameraEngineClassificationResult;
   diagnostics: Record<string, unknown>;
+  wells?: any[];
 }
 
 /** The response shape returned by the adapter after JSON decoding. */
@@ -101,6 +102,7 @@ export interface CameraEngineWireResult {
   normalized_color: Record<string, unknown> | null;
   classification: Record<string, unknown>;
   diagnostics: Record<string, unknown>;
+  wells?: unknown[];
 }
 
 /** Serialize the validated in-app object back to the exact wire shape used by the service. */
@@ -167,6 +169,7 @@ export function serializeCameraEngineResult(result: CameraEngineResult): CameraE
       })),
     },
     diagnostics: result.diagnostics,
+    ...(result.wells ? { wells: result.wells } : {}),
   };
 }
 
@@ -337,5 +340,6 @@ export function parseCameraEngineResult(value: unknown): CameraEngineResult {
     normalizedColor,
     classification,
     diagnostics: value.diagnostics,
+    ...(Array.isArray(value.wells) ? { wells: value.wells } : {}),
   };
 }
