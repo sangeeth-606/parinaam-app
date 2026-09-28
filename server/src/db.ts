@@ -332,6 +332,7 @@ export class ServerDb {
     return rows.map(rowFromDatabase);
   }
 
+  /** @deprecated — not routed by HTTP endpoints; user-service.ts patchAccount handles mutations */
   async approveOfficer(officerId: number, approverId: number, note?: string): Promise<OfficerRow> {
     await this.setOfficerStatus(officerId, 'ACTIVE', approverId, note);
     const row = await this.getOfficerById(officerId);
@@ -339,6 +340,7 @@ export class ServerDb {
     return row;
   }
 
+  /** @deprecated — not routed by HTTP endpoints; user-service.ts patchAccount handles mutations */
   async suspendOfficer(officerId: number, actorId: number, note?: string): Promise<OfficerRow> {
     await this.setOfficerStatus(officerId, 'SUSPENDED', actorId, note);
     const row = await this.getOfficerById(officerId);
@@ -346,6 +348,7 @@ export class ServerDb {
     return row;
   }
 
+  /** @deprecated — not routed by HTTP endpoints; user-service.ts patchAccount handles mutations */
   async setOfficerStatus(
     officerId: number,
     status: OfficerStatus,
@@ -383,6 +386,7 @@ export class ServerDb {
     });
   }
 
+  /** @deprecated — not routed by HTTP endpoints; user-service.ts patchAccount handles mutations */
   async setOfficerPassword(officerId: number, password: string, actorOfficerId: number): Promise<void> {
     const credentials = await hashPassword(password);
     const now = new Date().toISOString();

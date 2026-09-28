@@ -1,92 +1,69 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { MIGRATION_V1_SQL } from '../../src/db/migrations.ts';
 import { MIGRATION_APP_V1, MIGRATION_APP_V3 } from '../../src/db/app-migrations.ts';
 
-describe('Database Schema & Append-Only Triggers (Acceptance Test 3)', () => {
+describe('Database Schema & Append-Only Triggers (field_test and projections)', () => {
   function setupTestDb(): DatabaseSync {
     const db = new DatabaseSync(':memory:');
-    db.exec(MIGRATION_V1_SQL);
+    db.exec(MIGRATION_APP_V1);
     return db;
   }
 
   function insertDummyRecord(db: DatabaseSync, recordUuid: string, packageNo: string = 'P-1') {
     const insertStmt = db.prepare(`
-      INSERT INTO test_record (
-        record_uuid, package_no, reagent, kit_entry_method,
+      INSERT INTO field_test (
+        seq, record_uuid, case_ref, package_no, reagent,
         corrected_lab_l, corrected_lab_a, corrected_lab_b,
-        calib_residual_mean, calib_residual_max, calib_grade,
-        card_version, card_is_self_printed, meas_covariance,
+        delta_e, calib_residual_mean, calib_residual_max, calib_grade,
         outcome, confidence, conformal_set,
-        operator_id, biometric_ok, device_model, security_level,
-        gps_mocked, mock_provider_flag, root_detected, dev_settings_on,
-        device_clock_iso, tz_offset_min,
-        image_sha256, payload_jcs, payload_sha256, prev_hash, chain_hash,
-        device_attestation, created_at
+        operator_id, is_demo, created_at,
+        payload_jcs, payload_sha256, prev_hash, chain_hash, seal_state
       ) VALUES (
-        ?, ?, ?, ?,
-        ?, ?, ?,
-        ?, ?, ?,
-        ?, ?, ?,
-        ?, ?, ?,
-        ?, ?, ?, ?,
-        ?, ?, ?, ?,
-        ?, ?,
-        ?, ?, ?, ?, ?,
-        ?, ?
+        1, ?, 'NCB/DZU/CR-01/2026', ?, 'marquis',
+        20.0, 30.0, -10.0,
+        1.05, 0.5, 1.2, 'GOOD',
+        'CONSISTENT_WITH_REAGENT_POSITIVE', 0.95, '["CONSISTENT_WITH_REAGENT_POSITIVE"]',
+        'OFFICER_007', 0, '2026-09-13T03:00:00Z',
+        '{}', ?, ?, ?, 'SEALED'
       )
     `);
-
-    insertStmt.run(
-      recordUuid, packageNo, 'marquis', 'manual',
-      20.0, 30.0, -10.0,
-      1.05, 1.8, 'GOOD',
-      'v1.0', 0, '[[1,0],[0,1]]',
-      'CONSISTENT_WITH_REAGENT_POSITIVE', 0.95, '["CONSISTENT_WITH_REAGENT_POSITIVE"]',
-      'OFFICER_007', 1, 'Pixel 7', 'TrustedEnvironment',
-      0, 0, 0, 0,
-      '2026-09-13T03:00:00Z', 330,
-      'a'.repeat(64), '{}', 'b'.repeat(64), '0'.repeat(64), 'c'.repeat(64),
-      'sig_dummy', '2026-09-13T03:00:00Z'
-    );
+    insertStmt.run(recordUuid, packageNo, 'a'.repeat(64), '0'.repeat(64), 'b'.repeat(64));
   }
 
-  it('allows inserting valid test records', () => {
+  it('allows inserting valid field test records', () => {
     const db = setupTestDb();
     insertDummyRecord(db, 'rec-100', 'P-1');
 
-    const row = db.prepare('SELECT record_uuid, package_no FROM test_record WHERE record_uuid = ?').get('rec-100') as { record_uuid: string; package_no: string };
+    const row = db.prepare('SELECT record_uuid, package_no FROM field_test WHERE record_uuid = ?').get('rec-100') as { record_uuid: string; package_no: string };
     assert.equal(row.record_uuid, 'rec-100');
     assert.equal(row.package_no, 'P-1');
   });
 
-  it('strictly aborts UPDATE operations via SQL trigger test_record_no_update', () => {
+  it('strictly aborts UPDATE operations via SQL trigger field_test_no_update', () => {
     const db = setupTestDb();
     insertDummyRecord(db, 'rec-101', 'P-1');
 
-    // Attempting UPDATE must fail with RAISE(ABORT)
     assert.throws(
       () => {
-        db.prepare("UPDATE test_record SET package_no = 'P-99' WHERE record_uuid = 'rec-101'").run();
+        db.prepare("UPDATE field_test SET package_no = 'P-99' WHERE record_uuid = 'rec-101'").run();
       },
       (err: Error) => {
-        return /test_record table is append-only: UPDATE disallowed/i.test(err.message);
+        return /field_test is append-only: UPDATE disallowed/i.test(err.message);
       }
     );
   });
 
-  it('strictly aborts DELETE operations via SQL trigger test_record_no_delete', () => {
+  it('strictly aborts DELETE operations via SQL trigger field_test_no_delete', () => {
     const db = setupTestDb();
     insertDummyRecord(db, 'rec-102', 'P-2');
 
-    // Attempting DELETE must fail with RAISE(ABORT)
     assert.throws(
       () => {
-        db.prepare("DELETE FROM test_record WHERE record_uuid = 'rec-102'").run();
+        db.prepare("DELETE FROM field_test WHERE record_uuid = 'rec-102'").run();
       },
       (err: Error) => {
-        return /test_record table is append-only: DELETE disallowed/i.test(err.message);
+        return /field_test is append-only: DELETE disallowed/i.test(err.message);
       }
     );
   });
@@ -95,9 +72,6 @@ describe('Database Schema & Append-Only Triggers (Acceptance Test 3)', () => {
     const db = new DatabaseSync(':memory:');
     db.exec(MIGRATION_APP_V1);
     db.exec(MIGRATION_APP_V3);
-    // The projection's FK is exercised by the production adapter; this test
-    // isolates its UPDATE/DELETE triggers without duplicating the full field
-    // record fixture.
     db.exec('PRAGMA foreign_keys = OFF');
     db.prepare(`
       INSERT INTO camera_engine_result
