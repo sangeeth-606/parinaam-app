@@ -21,6 +21,8 @@ export interface DbAdapter {
   close(): Promise<void>;
   /** Wipe the underlying store (DEMO RESET only — deletes the DB file, not row UPDATEs). */
   destroy?(): Promise<void>;
+  /** v4 phase 13 — provides a sync SqliteDatabase handle over the same connection. */
+  toSqliteDatabase?(): import('./case-search.ts').SqliteDatabase;
 }
 
 export interface DbOpenResult {
@@ -76,6 +78,24 @@ class ExpoAdapter implements DbAdapter {
   destroy() {
     return this.onDelete ? this.onDelete() : Promise.resolve();
   }
+  toSqliteDatabase() {
+    const raw = this.db as unknown as {
+      getAllSync?: (sql: string, ...p: unknown[]) => unknown[];
+      getFirstSync?: (sql: string, ...p: unknown[]) => unknown;
+      runSync?: (sql: string, ...p: unknown[]) => { lastInsertRowId: number; changes: number };
+      execSync?: (sql: string) => void;
+    };
+    return {
+      prepare: (sql: string) => ({
+        all: (...p: unknown[]) => (raw.getAllSync ? raw.getAllSync(sql, ...(p as never[])) : []),
+        get: (...p: unknown[]) => (raw.getFirstSync ? raw.getFirstSync(sql, ...(p as never[])) : null),
+        run: (...p: unknown[]) => (raw.runSync ? raw.runSync(sql, ...(p as never[])) : { lastInsertRowid: 0, changes: 0 }),
+      }),
+      exec: (sql: string) => {
+        if (raw.execSync) raw.execSync(sql);
+      },
+    };
+  }
 }
 
 type NodeHandle = {
@@ -118,6 +138,16 @@ class NodeAdapter implements DbAdapter {
   async close() {
     this.handle.close();
   }
+  toSqliteDatabase() {
+    return {
+      prepare: (sql: string) => ({
+        all: (...p: unknown[]) => this.handle.prepare(sql).all(...p),
+        get: (...p: unknown[]) => this.handle.prepare(sql).get(...p),
+        run: (...p: unknown[]) => this.handle.prepare(sql).run(...p),
+      }),
+      exec: (sql: string) => this.handle.exec(sql),
+    };
+  }
 }
 
 /** No-op adapter that records it is fake — used only when both real paths failed. */
@@ -138,6 +168,16 @@ export class MemoryAdapter implements DbAdapter {
   }
   async close() {
     /* nothing */
+  }
+  toSqliteDatabase() {
+    return {
+      prepare: (_sql: string) => ({
+        all: (..._p: unknown[]) => [],
+        get: (..._p: unknown[]) => null,
+        run: (..._p: unknown[]) => ({ lastInsertRowid: 0, changes: 0 }),
+      }),
+      exec: (_sql: string) => {},
+    };
   }
 }
 

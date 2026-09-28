@@ -1,48 +1,36 @@
 /**
- * Sync-sqlite shim (v2 phase E) — the existing OutboxSyncService speaks the SYNCHRONOUS
- * `SqliteDatabase` (prepare().run/get/all) contract from src/db/case-search.ts, while the
- * v2-C driver seam is async. Rather than rewrite a tested engine, this module provides
- * sync handles for both runtimes:
- *   • expo-sqlite: SDK 57's synchronous openDatabaseSync + runSync/getAllSync/getFirstSync
- *   • node:sqlite: DatabaseSync (already synchronous — used by tests/tooling)
- * The handle is a SECOND connection to the same file the async driver opened — SQLite
- * serializes writers; the JS thread's single-threadedness makes interleaving safe.
+ * Sync-sqlite shim (v4 phase 13) — Single connection for both ledger and sync.
+ *
+ * Previously db-shim opened a second, unkeyed SQLite.openDatabaseSync('parinaam.db') connection.
+ * On a SQLCipher build that connection threw SQLITE_NOTADB, so encryption and sync were mutually
+ * exclusive. We now reuse the already-keyed handle from openAppDatabase() / getActiveAdapter().
  */
 
-import type { SqliteDatabase } from '../db/case-search';
+import type { SqliteDatabase } from '../db/case-search.ts';
+import { getActiveAdapter, getActiveMeta } from '../db/ledger-repository.ts';
+import { openAppDatabase, type DbAdapter } from '../db/driver.ts';
 
-const isNode = typeof process !== 'undefined' && process.versions != null && process.versions.node != null;
+export async function openSyncSqlite(providedAdapter?: DbAdapter): Promise<SqliteDatabase | null> {
+  let adapter = providedAdapter ?? getActiveAdapter();
+  let encryption = getActiveMeta()?.encryption;
 
-export async function openSyncSqlite(): Promise<SqliteDatabase | null> {
-  if (isNode) {
-    const file = process.env.PARINAAM_DB_FILE ?? 'parinaam.local.db';
-    try {
-      const { DatabaseSync } = await import('node:sqlite');
-      const db = new DatabaseSync(file);
-      return {
-        prepare: (sql: string) => ({
-          all: (...p: unknown[]) => db.prepare(sql).all(...p),
-          get: (...p: unknown[]) => db.prepare(sql).get(...p),
-          run: (...p: unknown[]) => db.prepare(sql).run(...p),
-        }),
-        exec: (sql: string) => db.exec(sql),
-      };
-    } catch {
-      return null;
+  if (!adapter) {
+    const opened = await openAppDatabase();
+    adapter = opened.adapter;
+    encryption = opened.encryption;
+  }
+
+  // Phase 13 startup guard: ensure sync uses the SQLCipher-keyed handle
+  if (encryption === 'sqlcipher') {
+    const active = getActiveAdapter();
+    if (active && active !== adapter) {
+      throw new Error('sync connection is not using the SQLCipher-keyed handle — refusing to run');
     }
   }
-  try {
-    const SQLite = await import('expo-sqlite');
-    const db = SQLite.openDatabaseSync('parinaam.db');
-    return {
-      prepare: (sql: string) => ({
-        all: (...p: unknown[]) => db.getAllSync(sql, ...(p as never[])),
-        get: (...p: unknown[]) => db.getFirstSync(sql, ...(p as never[])),
-        run: (...p: unknown[]) => db.runSync(sql, ...(p as never[])),
-      }),
-      exec: (sql: string) => db.execSync(sql),
-    };
-  } catch {
-    return null;
+
+  if (adapter && typeof adapter.toSqliteDatabase === 'function') {
+    return adapter.toSqliteDatabase();
   }
+
+  return null;
 }

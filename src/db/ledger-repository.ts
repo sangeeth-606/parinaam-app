@@ -71,6 +71,14 @@ interface FieldTestRow {
 let activeAdapter: DbAdapter | null = null;
 let activeMeta: LedgerDbMeta | null = null;
 
+export function getActiveAdapter(): DbAdapter | null {
+  return activeAdapter;
+}
+
+export function getActiveMeta(): LedgerDbMeta | null {
+  return activeMeta;
+}
+
 interface CameraEngineResultRow {
   record_uuid: string;
   schema_version: string;
