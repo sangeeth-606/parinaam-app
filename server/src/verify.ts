@@ -8,6 +8,9 @@ import {
   ABSTENTION_REASONS,
   CALIBRATION_GRADES,
   FIELD_TEST_SCHEMA_VERSION,
+  GPS_GOOD_ACCURACY_M,
+  GPS_POOR_ACCURACY_M,
+  GPS_SOURCES,
   OFFICER_ROLE_VALUES,
   PRESUMPTIVE_OUTCOMES,
   REAGENT_TYPES,
@@ -136,11 +139,17 @@ function validateKnownShape(record: Record<string, unknown>): string | null {
     }
   }
   if (record.gps !== null) {
-    if (!isRecordObject(record.gps) || !exactKeys(record.gps, ['lat', 'lon', 'accuracy_m', 'mocked'])) return 'gps has an invalid shape';
+    if (!isRecordObject(record.gps)) return 'gps has an invalid shape';
+    const hasRequiredOnly = exactKeys(record.gps, ['lat', 'lon', 'accuracy_m', 'mocked']);
+    const hasWithSource = exactKeys(record.gps, ['lat', 'lon', 'accuracy_m', 'mocked', 'source']);
+    if (!hasRequiredOnly && !hasWithSource) return 'gps has an invalid shape';
     if (!isFiniteNumber(record.gps.lat) || record.gps.lat < -90 || record.gps.lat > 90) return 'gps.lat is outside valid bounds';
     if (!isFiniteNumber(record.gps.lon) || record.gps.lon < -180 || record.gps.lon > 180) return 'gps.lon is outside valid bounds';
     if (record.gps.accuracy_m !== null && (!isFiniteNumber(record.gps.accuracy_m) || record.gps.accuracy_m < 0)) return 'gps.accuracy_m must be null or non-negative';
     if (typeof record.gps.mocked !== 'boolean') return 'gps.mocked must be boolean';
+    if ('source' in record.gps && !(GPS_SOURCES as readonly string[]).includes(record.gps.source as string)) {
+      return 'gps.source must be expo-location, simulator, or manual';
+    }
   }
   if (record.image_sha256 !== null && (typeof record.image_sha256 !== 'string' || !HASH_RE.test(record.image_sha256))) return 'image_sha256 must be null or a lowercase SHA-256 digest';
   if (typeof record.operator_id !== 'string' || !/^[A-Za-z0-9._-]{2,80}$/.test(record.operator_id)) return 'operator_id has an invalid format';
@@ -240,6 +249,15 @@ export async function verifyFieldTestRecord(value: unknown, options: VerifyOptio
       'prev_hash: passed',
       ...(options.operatorCode ? ['operator_binding: passed'] : []),
       ...(options.indexed ? ['indexed_body: passed'] : []),
+      ...(record.gps === null
+        ? ['gps: absent (record sealed without coordinates)']
+        : record.gps.mocked
+          ? ['gps: flagged (coordinates from mock provider)']
+          : record.gps.accuracy_m !== null && record.gps.accuracy_m > GPS_POOR_ACCURACY_M
+            ? [`gps: flagged (marginal accuracy > ${GPS_POOR_ACCURACY_M}m)`]
+            : record.gps.accuracy_m !== null && record.gps.accuracy_m <= GPS_GOOD_ACCURACY_M
+              ? ['gps: passed (survey-grade)']
+              : ['gps: passed']),
       'device_attestation: stored but not cryptographically verified by this API',
     ],
   };

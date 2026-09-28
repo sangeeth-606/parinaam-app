@@ -138,6 +138,124 @@ ALTER TABLE sync_queue ADD COLUMN dead_lettered_at TEXT;
 `;
 
 /**
+ * MIGRATION_APP_V5 — bounds checks on recorded coordinates.
+ *
+ * V1 declared `gps_lat REAL, gps_lon REAL, gps_accuracy_m REAL, gps_mocked INTEGER` with no
+ * constraints, so a row could hold latitude 900 or a negative accuracy. Those values cannot be
+ * produced by `acquireGeoTag`, but the table is the last line of defence for a record whose JSON
+ * arrived from a sync path.
+ *
+ * SQLite cannot add a CHECK to an existing table, so this is a table rebuild. **That drops
+ * `field_test_no_update` and `field_test_no_delete`, so both are re-declared verbatim below.** They
+ * are not optional: losing them silently breaks AGENTS rule 2, and the ledger is append-only.
+ *
+ * The rebuild is copy-forward, not lossy: every existing row is re-inserted unchanged. Rows that
+ * violate a new CHECK would abort the migration rather than be silently dropped — an existing
+ * device with a bad row must fail loudly and visibly, not lose evidence.
+ */
+export const MIGRATION_APP_V5 = `
+CREATE TABLE field_test_v5 (
+  seq                 INTEGER NOT NULL,
+  record_uuid         TEXT PRIMARY KEY NOT NULL UNIQUE,
+
+  case_ref            TEXT NOT NULL,
+  panchnama_ref       TEXT,
+  package_no          TEXT NOT NULL,
+  lot_no              TEXT,
+  reagent             TEXT NOT NULL,
+  kit_test_name       TEXT,
+  kit_make            TEXT,
+  kit_lot_no          TEXT,
+  kit_expiry          TEXT,
+
+  corrected_lab_l     REAL NOT NULL,
+  corrected_lab_a     REAL NOT NULL,
+  corrected_lab_b     REAL NOT NULL,
+  delta_e             REAL NOT NULL,
+  calib_residual_mean REAL NOT NULL,
+  calib_residual_max  REAL NOT NULL,
+  calib_grade         TEXT NOT NULL,
+
+  outcome             TEXT NOT NULL,
+  confidence          REAL NOT NULL,
+  conformal_set       TEXT NOT NULL,
+  abstention_reason   TEXT,
+  kinetics            TEXT,
+
+  gps_lat             REAL,
+  gps_lon             REAL,
+  gps_accuracy_m      REAL,
+  gps_mocked          INTEGER,
+
+  image_ref           TEXT,
+  image_sha256        TEXT,
+
+  operator_id         TEXT NOT NULL,
+  operator_name       TEXT,
+  officer_role        TEXT,
+  is_demo             INTEGER NOT NULL DEFAULT 0,
+  created_at          TEXT NOT NULL,
+
+  payload_jcs         TEXT NOT NULL,
+  payload_sha256      TEXT NOT NULL,
+  prev_hash           TEXT NOT NULL,
+  chain_hash          TEXT NOT NULL,
+  device_attestation  TEXT,
+  seal_state          TEXT NOT NULL,
+
+  -- v5: a recorded fix must be a real coordinate. NULL stays legal — a seizure record
+  -- with no fix is truthful, and inventing (0,0) to satisfy a constraint would be worse.
+  CHECK (gps_lat IS NULL OR (gps_lat >= -90 AND gps_lat <= 90)),
+  CHECK (gps_lon IS NULL OR (gps_lon >= -180 AND gps_lon <= 180)),
+  CHECK (gps_accuracy_m IS NULL OR gps_accuracy_m >= 0),
+  CHECK (gps_mocked IS NULL OR gps_mocked IN (0, 1))
+);
+
+INSERT INTO field_test_v5 (
+  seq, record_uuid, case_ref, panchnama_ref, package_no, lot_no,
+  reagent, kit_test_name, kit_make, kit_lot_no, kit_expiry,
+  corrected_lab_l, corrected_lab_a, corrected_lab_b, delta_e,
+  calib_residual_mean, calib_residual_max, calib_grade,
+  outcome, confidence, conformal_set, abstention_reason, kinetics,
+  gps_lat, gps_lon, gps_accuracy_m, gps_mocked,
+  image_ref, image_sha256,
+  operator_id, operator_name, officer_role, is_demo, created_at,
+  payload_jcs, payload_sha256, prev_hash, chain_hash, device_attestation, seal_state
+)
+SELECT
+  seq, record_uuid, case_ref, panchnama_ref, package_no, lot_no,
+  reagent, kit_test_name, kit_make, kit_lot_no, kit_expiry,
+  corrected_lab_l, corrected_lab_a, corrected_lab_b, delta_e,
+  calib_residual_mean, calib_residual_max, calib_grade,
+  outcome, confidence, conformal_set, abstention_reason, kinetics,
+  gps_lat, gps_lon, gps_accuracy_m, gps_mocked,
+  image_ref, image_sha256,
+  operator_id, operator_name, officer_role, is_demo, created_at,
+  payload_jcs, payload_sha256, prev_hash, chain_hash, device_attestation, seal_state
+FROM field_test;
+
+DROP TABLE field_test;
+ALTER TABLE field_test_v5 RENAME TO field_test;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_field_test_seq ON field_test (seq);
+CREATE INDEX IF NOT EXISTS idx_field_test_case ON field_test (case_ref, package_no);
+CREATE INDEX IF NOT EXISTS idx_field_test_created ON field_test (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_field_test_outcome ON field_test (outcome);
+
+-- Re-declared verbatim from MIGRATION_APP_V1: the rebuild above dropped them with the table.
+-- Without these, the ledger would become mutable and AGENTS rule 2 would be silently broken.
+CREATE TRIGGER IF NOT EXISTS field_test_no_update BEFORE UPDATE ON field_test
+BEGIN
+  SELECT RAISE(ABORT, 'field_test is append-only: UPDATE disallowed (AGENTS rule 2)');
+END;
+
+CREATE TRIGGER IF NOT EXISTS field_test_no_delete BEFORE DELETE ON field_test
+BEGIN
+  SELECT RAISE(ABORT, 'field_test is append-only: DELETE disallowed (AGENTS rule 2)');
+END;
+`;
+
+/**
  * Camera-engine diagnostics are kept in their own append-only projection.
  * The authoritative sealed payload remains the existing field-test contract;
  * this table preserves the exact image-bound engine JSON for local audit and
@@ -230,6 +348,28 @@ export async function applyVersionedAppMigrations(adapter: AppMigrationAdapter):
       // that is not a failure condition.
       const message = error instanceof Error ? error.message : String(error);
       if (!/duplicate column name/i.test(message)) throw error;
+    }
+  }
+
+  // v4 phase 3.4 — rebuild field_test to add coordinate bounds checks.
+  //
+  // No tolerance clause is used here, deliberately: unlike V4's idempotent column add, a
+  // partially-applied table rebuild would mean rows are missing from the ledger. That must
+  // abort loudly so the officer's data is never silently lost (see the MIGRATION_APP_V5 note).
+  const version5 = await adapter.get<{ version: number }>('SELECT MAX(version) AS version FROM app_schema_migrations');
+  if (!version5 || Number(version5.version) < 5) {
+    await adapter.exec('BEGIN IMMEDIATE');
+    try {
+      await adapter.exec(MIGRATION_APP_V5);
+      await adapter.run(
+        'INSERT INTO app_schema_migrations (version, applied_at) VALUES (?, ?)',
+        5,
+        new Date().toISOString()
+      );
+      await adapter.exec('COMMIT');
+    } catch (error) {
+      await adapter.exec('ROLLBACK').catch(() => undefined);
+      throw error;
     }
   }
 }

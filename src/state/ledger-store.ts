@@ -29,7 +29,11 @@ import {
   type HashChainRecordItem,
 } from '../crypto/hash-chain.ts';
 import { buildSealedRecord } from '../services/analysis-pipeline.ts';
-import { sealedPayloadFromCore, type FieldTestOfficerRole } from '../contracts/field-test-record.ts';
+import {
+  sealedPayloadFromCore,
+  type FieldTestOfficerRole,
+  type FieldTestGpsSource,
+} from '../contracts/field-test-record.ts';
 import { seedLedgerRecords } from '../repo/fixtures.ts';
 import {
   initLedgerDb,
@@ -68,7 +72,7 @@ export interface LedgerRecord {
   officerRole?: string;
   isDemo?: boolean;
   kinetics?: KineticPoint[];
-  gps?: { lat: number; lon: number; accuracyM?: number; mocked: boolean };
+  gps?: { lat: number; lon: number; accuracyM?: number; mocked: boolean; source?: FieldTestGpsSource };
   imageRef?: string | null;
   imageSha256?: string | null;
   engineResult?: CameraEngineResult;
@@ -234,6 +238,7 @@ export const useLedgerStore = create<LedgerState>((set, get) => ({
             lon: input.gps.lon,
             accuracy_m: input.gps.accuracyM ?? null,
             mocked: input.gps.mocked,
+            ...(input.gps.source ? { source: input.gps.source } : {}),
           }
         : null,
       image_sha256: input.imageSha256 ?? null,

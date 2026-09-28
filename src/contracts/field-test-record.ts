@@ -45,11 +45,17 @@ export interface FieldTestKineticPoint {
   delta_e: number;
 }
 
+export const GPS_GOOD_ACCURACY_M = 10;
+export const GPS_POOR_ACCURACY_M = 100;
+export const GPS_SOURCES = ['expo-location', 'simulator', 'manual'] as const;
+export type FieldTestGpsSource = (typeof GPS_SOURCES)[number];
+
 export interface FieldTestGps {
   lat: number;
   lon: number;
   accuracy_m: number | null;
   mocked: boolean;
+  source?: FieldTestGpsSource;
 }
 
 export interface FieldTestKit {

@@ -13,7 +13,8 @@
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
-        "NSCameraUsageDescription": "Parinaam uses the camera to capture the printed calibration card. Gallery import is not supported."
+        "NSCameraUsageDescription": "Parinaam uses the camera to capture the printed calibration card. Gallery import is not supported.",
+        "NSLocationWhenInUseUsageDescription": "Parinaam records the approximate coordinates and accuracy of a seizure so the sealed record can be tied to a place. The fix is hashed into the record and cannot be edited afterwards."
       },
       "bundleIdentifier": "in.gov.ncb.parinaam"
     },

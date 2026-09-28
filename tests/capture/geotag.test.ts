@@ -50,6 +50,6 @@ describe('v2 geotag — honest absence', () => {
       ensurePermission: async () => true,
       readPosition: async () => ({ lat: 26.8, lon: 80.9, accuracy: 5 }),
     });
-    assert.deepEqual(tag, { lat: 26.8, lon: 80.9, accuracyM: 5, mocked: false });
+    assert.deepEqual(tag, { lat: 26.8, lon: 80.9, accuracyM: 5, mocked: false, source: 'expo-location' });
   });
 });

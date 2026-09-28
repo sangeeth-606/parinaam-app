@@ -11,11 +11,18 @@
  * Dependency-injectable so the mapping is testable without a device.
  */
 
+import {
+  GPS_GOOD_ACCURACY_M,
+  GPS_POOR_ACCURACY_M,
+  type FieldTestGpsSource,
+} from '../contracts/field-test-record.ts';
+
 export interface SealGeoTag {
   lat: number;
   lon: number;
   accuracyM?: number;
   mocked: boolean;
+  source?: FieldTestGpsSource;
 }
 
 export interface GeoTagDeps {
@@ -40,8 +47,7 @@ export interface GeoTagDeps {
  */
 export type GeoQuality = 'GOOD' | 'MARGINAL' | 'POOR' | 'MOCKED' | 'NONE';
 
-export const GPS_GOOD_ACCURACY_M = 10;
-export const GPS_POOR_ACCURACY_M = 100;
+export { GPS_GOOD_ACCURACY_M, GPS_POOR_ACCURACY_M };
 
 export function gradeGeo(geo: SealGeoTag | null): GeoQuality {
   if (!geo) return 'NONE';
@@ -70,7 +76,8 @@ export function describeGeo(geo: SealGeoTag | null): string {
 }
 
 export async function geoTagFromPosition(
-  pos: Awaited<ReturnType<GeoTagDeps['readPosition']>>
+  pos: Awaited<ReturnType<GeoTagDeps['readPosition']>>,
+  source?: FieldTestGpsSource
 ): Promise<SealGeoTag | null> {
   if (!pos || !Number.isFinite(pos.lat) || !Number.isFinite(pos.lon)) return null;
   return {
@@ -78,6 +85,7 @@ export async function geoTagFromPosition(
     lon: pos.lon,
     ...(Number.isFinite(pos.accuracy ?? NaN) ? { accuracyM: pos.accuracy } : {}),
     mocked: pos.mocked === true,
+    ...(source ? { source } : {}),
   };
 }
 
@@ -122,6 +130,16 @@ export async function acquireGeoTag(
   timeoutMs = 5000
 ): Promise<SealGeoTag | null> {
   try {
+    let source: FieldTestGpsSource = 'expo-location';
+    try {
+      const Constants = await import('expo-constants');
+      if (Constants.default?.isDevice === false) {
+        source = 'simulator';
+      }
+    } catch {
+      // expo-constants unavailable (e.g. node environment)
+    }
+
     const d = deps ?? (await expoDeps());
     const withTimeout = <T>(p: Promise<T>, fallback: T): Promise<T> =>
       new Promise((resolve) => {
@@ -137,7 +155,7 @@ export async function acquireGeoTag(
     const ok = await withTimeout(d.ensurePermission(), false);
     if (!ok) return null;
     const pos = await withTimeout(d.readPosition(), null);
-    return await geoTagFromPosition(pos);
+    return await geoTagFromPosition(pos, source);
   } catch {
     // expo-location unresolvable (node tests, web preview) — honest absence.
     return null;
