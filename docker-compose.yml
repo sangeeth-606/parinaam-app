@@ -20,7 +20,7 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-parinaam}
       POSTGRES_USER: ${POSTGRES_USER:-parinaam}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-parinaam}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       # Deterministic collation so case_ref ordering matches the host tooling.
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
     # Loopback-only by default: the DB is never exposed to the LAN unless the
@@ -52,13 +52,15 @@ services:
       NODE_ENV: production
       PARINAAM_DB: postgres
       # In-network DSN: service name `db`, internal port 5432.
-      DATABASE_URL: postgres://${POSTGRES_USER:-parinaam}:${POSTGRES_PASSWORD:-parinaam}@db:5432/${POSTGRES_DB:-parinaam}
+      DATABASE_URL: postgres://${POSTGRES_USER:-parinaam}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-parinaam}
       # Demo officers seeded on first boot.
       PARINAAM_SEED_PASSWORD: ${PARINAAM_SEED_PASSWORD:-Parinaam#2026}
+      # Explicit bootstrap admin password (min 16 chars).
+      PARINAAM_API_ADMIN_PASSWORD: ${PARINAAM_API_ADMIN_PASSWORD:-}
       # Internal listen port is fixed; the host mapping below is what you change.
       PARINAAM_API_PORT: 8571
-      # Opt-in: load the realistic demo dataset when the database is empty.
-      PARINAAM_SEED: ${PARINAAM_SEED:-1}
+      # Explicit opt-in: load the realistic demo dataset when the database is empty (0 = clean ledger).
+      PARINAAM_SEED: ${PARINAAM_SEED:-0}
       PARINAAM_CORS_ORIGINS: ${PARINAAM_CORS_ORIGINS:-http://localhost:8081,http://127.0.0.1:8081,http://192.168.0.102:8081,*}
       PARINAAM_TRUST_PROXY: ${PARINAAM_TRUST_PROXY:-false}
     ports:
@@ -141,7 +143,7 @@ services:
     environment:
       NODE_ENV: production
       PARINAAM_DB: postgres
-      DATABASE_URL: postgres://${POSTGRES_USER:-parinaam}:${POSTGRES_PASSWORD:-parinaam}@db:5432/${POSTGRES_DB:-parinaam}
+      DATABASE_URL: postgres://${POSTGRES_USER:-parinaam}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-parinaam}
       PARINAAM_SEED_PASSWORD: ${PARINAAM_SEED_PASSWORD:-Parinaam#2026}
     command: ["node", "--experimental-strip-types", "server/src/seed.ts"]
     restart: "no"

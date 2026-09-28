@@ -37,7 +37,7 @@ before(async () => {
   process.env.DATABASE_URL = databaseUrl;
   process.env.PARINAAM_DB = 'postgres';
   process.env.PARINAAM_SEED_PASSWORD = 'Parinaam#2026';
-  process.env.PARINAAM_API_ADMIN_PASSWORD = 'Parinaam#2026';
+  delete process.env.PARINAAM_API_ADMIN_PASSWORD;
   delete process.env.PARINAAM_SEED;
   apiServer = await createApiServer();
   await new Promise<void>((resolve) => apiServer?.server.listen(0, '127.0.0.1', resolve));

@@ -190,7 +190,7 @@ function openSse(
 async function bootstrapAdmin(db: ServerDb): Promise<void> {
   const password = process.env.PARINAAM_API_ADMIN_PASSWORD;
   if (!password) return;
-  if (password.length < 10) throw new Error('PARINAAM_API_ADMIN_PASSWORD must be at least 10 characters');
+  if (password.length < 16) throw new Error('PARINAAM_API_ADMIN_PASSWORD must be at least 16 characters');
   const existing = await db.store.get<{ id: number | string }>('SELECT id FROM officers WHERE username = ?', 'admin');
   if (existing) return;
   const credentials = await hashPassword(password);

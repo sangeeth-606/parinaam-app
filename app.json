@@ -25,7 +25,7 @@
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION"
       ],
-      "usesCleartextTraffic": true,
+      "usesCleartextTraffic": false,
       "adaptiveIcon": {
         "backgroundColor": "#1E293B"
       }
@@ -43,7 +43,7 @@
         {
           "android": {
             "minSdkVersion": 28,
-            "usesCleartextTraffic": true
+            "usesCleartextTraffic": false
           },
           "ios": {
             "deploymentTarget": "16.4"

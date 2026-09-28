@@ -45,8 +45,35 @@ To run a one-shot idempotent seed against the same database:
 docker compose run --rm seed
 ```
 
-`PARINAAM_SEED=1` also seeds an empty database when the API starts. The seed
-refuses to mix the synthetic demo ledger with a non-demo ledger.
+`PARINAAM_SEED=0` is the production default — a fresh server starts with an empty ledger (0 records).
+Set `PARINAAM_SEED=1` only when you explicitly want the server to seed the 15-record synthetic demo ledger
+on first boot. The seed refuses to mix the synthetic demo ledger with a non-demo ledger.
+
+## Cloud Deployment Checklist
+
+Before deploying to any shared host or cloud VM:
+
+```text
+[ ] POSTGRES_PASSWORD set, 16+ chars, no default in compose (mandatory in .env)
+[ ] PARINAAM_API_ADMIN_PASSWORD set, 16+ chars
+[ ] PARINAAM_SEED=0 (default; set 1 only if synthetic demo data is desired)
+[ ] PARINAAM_CORS_ORIGINS set to the real dashboard origin (NOT * in production)
+[ ] TLS terminated upstream (reverse proxy like Caddy/Nginx); mobile app does NOT use cleartext
+[ ] Postgres not exposed to the public interface (db.ports removed or bound to 127.0.0.1)
+[ ] Server credentials issued per officer, not the shared demo password
+```
+
+### CORS Configuration Trap
+`PARINAAM_CORS_ORIGINS` defaults to `http://localhost:8081,http://127.0.0.1:8081`.
+Any browser dashboard connecting to the API must have its origin explicitly listed in `PARINAAM_CORS_ORIGINS`,
+or browser requests will fail with a CORS policy violation. In production, never leave `*` in the allowed origins.
+
+### Data Protection & DPDP / NDPS Section 8(5) Isolation
+In production PostgreSQL deployments, create a dedicated read-only or application role for dashboard reporting
+separate from the admin/migration role. Specifically:
+- The `officers` table contains password salts and hashes (`pass_salt`, `pass_hash`).
+- Dashboard queries should only access views or columns omitting credentials (`officer_code`, `display_name`, `role`, `status`).
+- Granting `SELECT` on `field_test`, `field_test_blob`, and `cases` to an analytics role without granting access to `officers` protects against credential harvesting if a dashboard query vulnerability occurs.
 
 ### Run the API on the host against the container database
 

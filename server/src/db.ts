@@ -217,14 +217,11 @@ export class ServerDb {
     try {
       await runMigrations(store);
       const db = new ServerDb(store);
-      const resolvedSqliteTarget = target ?? defaultDbPath();
       const explicitBootstrapPassword =
         process.env.PARINAAM_BOOTSTRAP_ADMIN_PASSWORD ??
         process.env.PARINAAM_API_ADMIN_PASSWORD ??
         process.env.PARINAAM_SEED_PASSWORD;
-      if (resolvedSqliteTarget === ':memory:') {
-        await db.bootstrapAdminIfEmpty(explicitBootstrapPassword ?? 'adminpass');
-      } else if (explicitBootstrapPassword) {
+      if (explicitBootstrapPassword) {
         await db.bootstrapAdminIfEmpty(explicitBootstrapPassword);
       }
       return db;
