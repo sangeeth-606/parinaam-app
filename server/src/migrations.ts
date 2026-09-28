@@ -16,7 +16,8 @@ export const SCHEMA_MIGRATION_NAME = 'server_schema_v1';
 const MIGRATION_IDENTITY = `${LATEST_SCHEMA_VERSION}:${SCHEMA_MIGRATION_NAME}`;
 const MIGRATION_ALGORITHM = 'transactional-legacy-baseline-v1';
 
-const OFFICER_ROLES = new Set(['JUNIOR', 'SENIOR', 'ADMIN', 'SUPERVISOR', 'JUDICIARY']);
+import { OFFICER_ROLES as OFFICER_ROLES_ARRAY } from '../../src/contracts/officer-roles.ts';
+const OFFICER_ROLES: Set<string> = new Set<string>(OFFICER_ROLES_ARRAY);
 const CASE_STATUSES = new Set(['REPORTED', 'UNDER_REVIEW', 'REVIEWED', 'ESCALATED']);
 
 const SQLITE_CORE_TABLES = [

@@ -5,7 +5,7 @@ import { ApiError } from '../../src/contracts/api-errors.ts';
 import { requireAdmin } from './case-service.ts';
 import { pageMetadata, parsePagination } from './query.ts';
 
-const ROLES = ['JUNIOR', 'SENIOR', 'ADMIN', 'SUPERVISOR', 'JUDICIARY'] as const satisfies readonly OfficerRole[];
+import { OFFICER_ROLES as ROLES } from '../../src/contracts/officer-roles.ts';
 const STATUSES = ['PENDING', 'ACTIVE', 'SUSPENDED'] as const;
 type AccountStatus = (typeof STATUSES)[number];
 

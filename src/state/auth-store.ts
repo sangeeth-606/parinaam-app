@@ -22,7 +22,8 @@ import { getPref, setPref } from '../auth/session-token.ts';
 export const BRIEF_SEEN_PREF = 'briefSeenV2';
 import { revokeServerSession } from '../state/sync-store.ts';
 
-export type OfficerRole = 'JUNIOR' | 'SENIOR' | 'ADMIN' | 'SUPERVISOR' | 'JUDICIARY';
+import type { OfficerRole } from '../contracts/officer-roles.ts';
+export type { OfficerRole };
 
 export interface Officer {
   id: string;

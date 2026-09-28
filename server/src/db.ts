@@ -19,8 +19,8 @@ export type { SqlEngine, SqlRunResult, SqlStore } from './storage.ts';
 export const CASE_STATUSES = ['REPORTED', 'UNDER_REVIEW', 'REVIEWED', 'ESCALATED'] as const;
 export type CaseStatus = (typeof CASE_STATUSES)[number];
 
-export const OFFICER_ROLES = ['JUNIOR', 'SENIOR', 'ADMIN', 'SUPERVISOR', 'JUDICIARY'] as const;
-export type OfficerRole = (typeof OFFICER_ROLES)[number];
+import { OFFICER_ROLES, type OfficerRole } from '../../src/contracts/officer-roles.ts';
+export { OFFICER_ROLES, type OfficerRole };
 
 export const OFFICER_STATUSES = ['PENDING', 'ACTIVE', 'SUSPENDED'] as const;
 export type OfficerStatus = (typeof OFFICER_STATUSES)[number];
