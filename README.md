@@ -97,6 +97,66 @@ The launcher prints the exact API and camera-engine URLs. Do not start
 `camera-engine` separately. `npm run start:lan:go` is the equivalent command
 kept for the previous workflow.
 
+---
+
+## Testing & Running from this Branch (`feat/camera-pipeline-and-ui-polish`)
+
+### 1. Checkout & Setup
+If pulling fresh from GitHub:
+```bash
+git fetch origin
+git checkout feat/camera-pipeline-and-ui-polish
+npm install
+```
+
+### 2. Verify Services & Start Stack
+Start the containerized backend (`server`, `db`, and `camera-engine`):
+```bash
+# Option A: Start all Docker services in background, then launch Metro
+docker compose up -d
+npx expo start --lan --go
+
+# Option B: Run the automated all-in-one launcher
+npm run app:go
+```
+
+### 3. Verify System Health Checks
+Verify that the containers and the Metro reverse proxies are communicating cleanly:
+```bash
+# Direct Docker health checks:
+curl http://localhost:8571/api/v1/health        # Backend API -> {"status":"ok",...}
+curl http://localhost:8572/readyz              # Camera Engine -> {"status":"ready",...}
+
+# Metro reverse proxy health checks (used by Expo Go on physical phones):
+curl http://localhost:8081/api-proxy/api/v1/health
+curl http://localhost:8081/engine-proxy/readyz
+```
+*(Note: The Metro reverse proxy on port `8081` forwards `/engine-proxy` to port `8572` and `/api-proxy` to port `8571`, bypassing Windows/LAN firewall restrictions without manual port rules).*
+
+### 4. Step-by-Step Mobile Test Flow (Expo Go)
+1. **Open in Expo Go**: Scan the QR code in the terminal using the Expo Go app (Android) or the default Camera app (iOS) on the same Wi-Fi.
+2. **Officer Authentication (Login)**:
+   - Select **MPIN** and enter `1234`, or tap **Biometric Authentication** (auto-bypasses in emulators).
+   - Alternatively, use the **Phone OTP** option with any 4+ digit OTP.
+3. **Initiate New Test**:
+   - Tap **Initiate Field Seizure & Test** on the Duty Dashboard.
+   - Enter case parameters (FIR/Case number, Seizure memo, select reagent e.g. *Duquenois-Levine* or *Marquis*).
+   - Tap **PROCEED TO GUIDED SCAN**.
+4. **Field Scan & Photo Pipeline**:
+   - **Live Physical Capture**: Tap **Take Photo** to open the full-screen dark viewfinder, align card fiducials within the frame, and capture.
+   - **Instant Demo Pipeline**: Tap **Demo Image 1** or **Demo Image 2** below the capture button. This streams bundled high-resolution test captures (`src/demo-photos/photo1.jpg` / `photo2.jpg`) directly through the real `camera-engine` microservice and displays live quality checks (fiducial lock, perspective keystoning, glare fraction, well alignment).
+   - To test with your own photos: simply replace `photo1.jpg` or `photo2.jpg` in `src/demo-photos/`.
+5. **View Presumptive Result**:
+   - Tap **PROCEED TO TEST DETAILS & SEALING**.
+   - Review calibrated CIE L\*a\*b\* coordinates, delta E2000, and classified presumptive outcome.
+   - Tap **SIGN & SEAL TO EVIDENCE LEDGER** to commit the record to the append-only cryptographic chain.
+6. **Case Ledger & Chain Integrity**:
+   - Switch to the **Ledger** tab to view your newly created record.
+   - Tap into the record to inspect the complete digital evidence certificate, SHA-256 integrity hash, and QR seal.
+
+---
+
+
 For the custom native development build (recommended for camera validation),
 use:
 
