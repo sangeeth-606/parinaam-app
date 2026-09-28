@@ -59,14 +59,16 @@ export interface SealResult {
  * cannot run (simulator / web / missing native client), the record is still chained and
  * honestly labeled UNATTESTED — never a claimed-when-untrue attestation.
  */
+const defaultSealingService = new SealingService();
+
 export async function buildSealedRecord(
   payload: Record<string, unknown>,
   prevHash: string,
-  _recordUuid: string
+  _recordUuid: string,
+  service: SealingService = defaultSealingService
 ): Promise<{ seal: SealResult }> {
   try {
-    const sealing = new SealingService();
-    const sealed = await sealing.sealRecord(payload, prevHash);
+    const sealed = await service.sealRecord(payload, prevHash);
     return {
       seal: {
         payloadJcs: sealed.canonicalJson,
