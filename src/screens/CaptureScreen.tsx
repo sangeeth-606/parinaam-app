@@ -112,8 +112,14 @@ export const CaptureScreen: React.FC = () => {
           uploadType: FileSystem.FileSystemUploadType.MULTIPART,
           fieldName: 'image',
           mimeType: 'image/jpeg',
-          parameters: { reagent: setup.reagent ?? 'duquenois_levine' },
-          headers: { Accept: 'application/json' },
+          parameters: {
+            reagent: setup.reagent ?? 'duquenois_levine',
+            demo: '1',
+          },
+          headers: {
+            Accept: 'application/json',
+            'X-Demo-Mode': '1',
+          },
         },
       );
       if (response.status < 200 || response.status >= 300) {
