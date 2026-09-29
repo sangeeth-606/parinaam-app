@@ -165,6 +165,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       failures: isLocked ? failures : (rawFailures ? failures : 0),
       lockedUntil: isLocked,
     });
+
+    // Seed default demo MPIN '1234' on fresh device if never configured
+    const savedMpin = await getPref('parinaam_saved_mpin_v1');
+    if (savedMpin === null) {
+      await setPref('parinaam_saved_mpin_v1', '1234');
+    }
   },
 
   attemptBiometric: async () => {

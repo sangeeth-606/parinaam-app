@@ -35,10 +35,13 @@ export const LoginScreen: React.FC = () => {
     registeredPhone,
     attemptBiometric,
     attemptMpin,
+    attempt,
   } = useAuthStore();
 
-  const [returningMethod, setReturningMethod] = useState<'biometric' | 'mpin'>('mpin');
+  const [returningMethod, setReturningMethod] = useState<'biometric' | 'mpin' | 'password'>('mpin');
   const [mpin, setMpin] = useState(['', '', '', '']);
+  const [username, setUsername] = useState('admin');
+  const [password, setPassword] = useState('');
   const mpinInputRef = useRef<any>(null);
 
   const [busy, setBusy] = useState(false);
@@ -69,7 +72,21 @@ export const LoginScreen: React.FC = () => {
     if (res === 'locked') {
       setError('Terminal locked due to repeated failed attempts. Please wait.');
     } else if (res !== 'ok') {
-      setError('Invalid MPIN. Please enter the enrolled 4-digit security PIN.');
+      setError('Invalid MPIN. Please enter the enrolled 4-digit security PIN (Demo: 1234).');
+    }
+  };
+
+  // Handle Password Login
+  const handlePasswordSubmit = async () => {
+    if (busy || !username.trim() || !password) return;
+    setBusy(true);
+    setError(null);
+    const res = await attempt(username.trim(), password);
+    setBusy(false);
+    if (res === 'locked') {
+      setError('Terminal locked due to repeated failed attempts. Please wait.');
+    } else if (res !== 'ok') {
+      setError('Invalid credentials. For demo: username "admin", password "adminpass".');
     }
   };
 
@@ -140,7 +157,7 @@ export const LoginScreen: React.FC = () => {
               <Text style={styles.registeredPhoneSub}>Enrolled Terminal · +91 {registeredPhone || '98452 01842'}</Text>
             </View>
 
-            {/* Toggle Tabs: Biometric vs MPIN */}
+            {/* Toggle Tabs: Biometric vs MPIN vs Password */}
             <View style={styles.methodToggleRow}>
               <TouchableOpacity
                 style={[styles.methodTab, returningMethod === 'biometric' && styles.methodTabActive]}
@@ -153,7 +170,7 @@ export const LoginScreen: React.FC = () => {
               >
                 <Icon
                   name="fingerprint"
-                  size={18}
+                  size={16}
                   color={returningMethod === 'biometric' ? '#2563EB' : '#64748B'}
                   strokeWidth={2.2}
                 />
@@ -179,7 +196,7 @@ export const LoginScreen: React.FC = () => {
               >
                 <Icon
                   name="lock"
-                  size={18}
+                  size={16}
                   color={returningMethod === 'mpin' ? '#2563EB' : '#64748B'}
                   strokeWidth={2.2}
                 />
@@ -189,13 +206,38 @@ export const LoginScreen: React.FC = () => {
                     returningMethod === 'mpin' && styles.methodTabTextActive,
                   ]}
                 >
-                  Enter MPIN
+                  MPIN
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.methodTab, returningMethod === 'password' && styles.methodTabActive]}
+                onPress={() => {
+                  setError(null);
+                  setReturningMethod('password');
+                }}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: returningMethod === 'password' }}
+              >
+                <Icon
+                  name="user"
+                  size={16}
+                  color={returningMethod === 'password' ? '#2563EB' : '#64748B'}
+                  strokeWidth={2.2}
+                />
+                <Text
+                  style={[
+                    styles.methodTabText,
+                    returningMethod === 'password' && styles.methodTabTextActive,
+                  ]}
+                >
+                  Password
                 </Text>
               </TouchableOpacity>
             </View>
 
             {/* Method 1: Biometric View */}
-            {returningMethod === 'biometric' ? (
+            {returningMethod === 'biometric' && (
               <View style={styles.biometricContent}>
                 <TouchableOpacity
                   style={styles.biometricTouchCircle}
@@ -222,8 +264,10 @@ export const LoginScreen: React.FC = () => {
                   </Text>
                 </TouchableOpacity>
               </View>
-            ) : (
-              /* Method 2: MPIN View */
+            )}
+
+            {/* Method 2: MPIN View */}
+            {returningMethod === 'mpin' && (
               <View style={styles.mpinContent}>
                 <Text style={styles.mpinPrompt}>Enter your 4-digit Security MPIN</Text>
 
@@ -250,6 +294,27 @@ export const LoginScreen: React.FC = () => {
                   autoFocus
                 />
 
+                {/* Quick Hint Card for Demo */}
+                <View style={styles.mpinHintCard}>
+                  <View style={styles.mpinHintLeft}>
+                    <Icon name="key" size={14} color="#2563EB" strokeWidth={2.4} />
+                    <Text style={styles.mpinHintText}>
+                      Demo Terminal MPIN: <Text style={{ fontWeight: '800' }}>1234</Text>
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => {
+                      handleMpinChange('1234');
+                    }}
+                    style={styles.quickFillPill}
+                    activeOpacity={0.8}
+                    accessibilityRole="button"
+                    accessibilityLabel="Quick fill default MPIN 1234"
+                  >
+                    <Text style={styles.quickFillText}>1-Tap Fill</Text>
+                  </TouchableOpacity>
+                </View>
+
                 <TouchableOpacity
                   style={styles.primaryAuthBtn}
                   onPress={() => void handleMpinSubmit(mpin.join(''))}
@@ -258,6 +323,78 @@ export const LoginScreen: React.FC = () => {
                 >
                   <Text style={styles.primaryAuthBtnText}>
                     {busy ? 'Verifying MPIN…' : 'Proceed with MPIN'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* Method 3: Officer Password View */}
+            {returningMethod === 'password' && (
+              <View style={styles.passwordContent}>
+                <Text style={styles.mpinPrompt}>Duty Officer Credentials</Text>
+
+                <View style={styles.credentialInputGroup}>
+                  <Text style={styles.credentialLabel}>Officer Username</Text>
+                  <TextInput
+                    value={username}
+                    onChangeText={(val) => {
+                      setError(null);
+                      setUsername(val);
+                    }}
+                    autoCapitalize="none"
+                    placeholder="admin"
+                    placeholderTextColor="#94A3B8"
+                    style={styles.credentialTextInput}
+                    accessibilityLabel="Officer Username"
+                  />
+                </View>
+
+                <View style={styles.credentialInputGroup}>
+                  <Text style={styles.credentialLabel}>Device Password</Text>
+                  <TextInput
+                    value={password}
+                    onChangeText={(val) => {
+                      setError(null);
+                      setPassword(val);
+                    }}
+                    secureTextEntry
+                    placeholder="adminpass"
+                    placeholderTextColor="#94A3B8"
+                    style={styles.credentialTextInput}
+                    accessibilityLabel="Device Password"
+                  />
+                </View>
+
+                <View style={styles.mpinHintCard}>
+                  <View style={styles.mpinHintLeft}>
+                    <Icon name="shieldCheck" size={14} color="#2563EB" strokeWidth={2.4} />
+                    <Text style={styles.mpinHintText}>
+                      Demo: <Text style={{ fontWeight: '800' }}>admin</Text> / <Text style={{ fontWeight: '800' }}>adminpass</Text>
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setUsername('admin');
+                      setPassword('adminpass');
+                    }}
+                    style={styles.quickFillPill}
+                    activeOpacity={0.8}
+                    accessibilityRole="button"
+                    accessibilityLabel="Quick fill default credentials"
+                  >
+                    <Text style={styles.quickFillText}>1-Tap Fill</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <TouchableOpacity
+                  style={styles.primaryAuthBtn}
+                  onPress={() => void handlePasswordSubmit()}
+                  activeOpacity={0.88}
+                  disabled={!username.trim() || !password || busy}
+                  accessibilityRole="button"
+                >
+                  <Text style={styles.primaryAuthBtnText}>
+                    {busy ? 'Authenticating…' : 'Sign In with Password'}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -515,6 +652,29 @@ const createStyles = (theme: Theme) => {
       fontSize: 22,
       fontWeight: '800',
       color: '#1E3A8A',
+    },
+    passwordContent: {
+      paddingVertical: 10,
+    },
+    credentialInputGroup: {
+      marginBottom: 14,
+    },
+    credentialLabel: {
+      fontSize: 12.5,
+      fontWeight: '600',
+      color: '#475569',
+      marginBottom: 6,
+    },
+    credentialTextInput: {
+      backgroundColor: '#F8FAFC',
+      borderWidth: 1.5,
+      borderColor: '#E2E8F0',
+      borderRadius: 12,
+      paddingHorizontal: 14,
+      height: 48,
+      fontSize: 15,
+      fontWeight: '600',
+      color: '#0F172A',
     },
     phoneInputRow: {
       flexDirection: 'row',
