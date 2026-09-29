@@ -33,7 +33,7 @@ export const LoginScreen: React.FC = () => {
 
   const {
     registeredPhone,
-    attemptBiometric,
+    // attemptBiometric,
     attemptMpin,
     attempt,
   } = useAuthStore();
@@ -47,7 +47,8 @@ export const LoginScreen: React.FC = () => {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Handle Biometric Login
+  // Handle Biometric Login (commented out per request)
+  /*
   const handleBiometricLogin = async () => {
     if (busy) return;
     setBusy(true);
@@ -61,6 +62,7 @@ export const LoginScreen: React.FC = () => {
       setReturningMethod('mpin');
     }
   };
+  */
 
   // Handle MPIN Login
   const handleMpinSubmit = async (pinStr: string) => {
@@ -157,8 +159,9 @@ export const LoginScreen: React.FC = () => {
               <Text style={styles.registeredPhoneSub}>Enrolled Terminal · +91 {registeredPhone || '98452 01842'}</Text>
             </View>
 
-            {/* Toggle Tabs: Biometric vs MPIN vs Password */}
+            {/* Toggle Tabs: MPIN vs Password (Biometrics commented out) */}
             <View style={styles.methodToggleRow}>
+              {/* Biometrics tab commented out per request
               <TouchableOpacity
                 style={[styles.methodTab, returningMethod === 'biometric' && styles.methodTabActive]}
                 onPress={() => {
@@ -183,6 +186,7 @@ export const LoginScreen: React.FC = () => {
                   Biometrics
                 </Text>
               </TouchableOpacity>
+              */}
 
               <TouchableOpacity
                 style={[styles.methodTab, returningMethod === 'mpin' && styles.methodTabActive]}
@@ -236,7 +240,7 @@ export const LoginScreen: React.FC = () => {
               </TouchableOpacity>
             </View>
 
-            {/* Method 1: Biometric View */}
+            {/* Method 1: Biometric View (commented out per request)
             {returningMethod === 'biometric' && (
               <View style={styles.biometricContent}>
                 <TouchableOpacity
@@ -265,6 +269,7 @@ export const LoginScreen: React.FC = () => {
                 </TouchableOpacity>
               </View>
             )}
+            */}
 
             {/* Method 2: MPIN View */}
             {returningMethod === 'mpin' && (

@@ -114,16 +114,32 @@ export function makeRecordUuid(): string {
     const g = globalThis as {
       crypto?: { randomUUID?: () => string; getRandomValues?: (b: Uint8Array) => Uint8Array };
     };
-    if (g.crypto?.randomUUID) return g.crypto.randomUUID();
-    if (typeof g.crypto?.getRandomValues === 'function') {
-      const b = new Uint8Array(16);
-      g.crypto.getRandomValues(b);
-      return Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+    if (typeof g.crypto?.randomUUID === 'function') {
+      const u = g.crypto.randomUUID();
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(u)) {
+        return u.toLowerCase();
+      }
     }
+    const b = new Uint8Array(16);
+    if (typeof g.crypto?.getRandomValues === 'function') {
+      g.crypto.getRandomValues(b);
+    } else {
+      for (let i = 0; i < 16; i++) {
+        b[i] = Math.floor(Math.random() * 256);
+      }
+    }
+    b[6] = (b[6] & 0x0f) | 0x40; // RFC 4122 version 4
+    b[8] = (b[8] & 0x3f) | 0x80; // RFC 4122 variant
+    const hex = Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`.toLowerCase();
   } catch {
-    /* fall through to timestamp form */
+    const hex = Array.from({ length: 16 }, () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('');
+    const h = hex.split('');
+    h[12] = '4';
+    h[16] = ['8', '9', 'a', 'b'][Math.floor(Math.random() * 4)];
+    const s = h.join('');
+    return `${s.slice(0, 8)}-${s.slice(8, 12)}-${s.slice(12, 16)}-${s.slice(16, 20)}-${s.slice(20, 32)}`.toLowerCase();
   }
-  return `rec-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`;
 }
 
 export function round2(v: number): number {

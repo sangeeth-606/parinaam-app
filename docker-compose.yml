@@ -44,6 +44,12 @@ services:
       PARINAAM_TRUST_PROXY: ${PARINAAM_TRUST_PROXY:-false}
     ports:
       - "${API_BIND:-127.0.0.1}:${API_PORT:-8571}:8571"
+    volumes:
+      - ./server:/app/server
+      - ./src/contracts:/app/src/contracts
+      - ./src/crypto:/app/src/crypto
+      - ./src/demo:/app/src/demo
+      - ./src/types:/app/src/types
     # Explicit so the service is correct even if pointed at an older image.
     command: ["node", "--experimental-strip-types", "server/src/main.ts"]
     healthcheck:

@@ -281,6 +281,7 @@ export async function createApiServer(target?: string): Promise<{
           requestId,
         };
         const result = await Promise.resolve(matched.handler(ctx));
+        console.log(`[API] ${method} ${url.pathname} -> ${result.status ?? 200}`);
         sendApiResponse(response, requestId, origin, result);
       } catch (error) {
         if (response.headersSent) {
@@ -288,6 +289,7 @@ export async function createApiServer(target?: string): Promise<{
           return;
         }
         if (error instanceof ApiError) {
+          console.error(`[API ERROR] ${currentRouteKey} -> ${error.status} ${error.code}: ${error.message}`);
           if (error.status === 403) {
             await db.audit(
               currentAuthed?.username ?? 'anonymous',
@@ -299,6 +301,7 @@ export async function createApiServer(target?: string): Promise<{
           sendJson(response, requestId, origin, error.status, apiErrorBody(error, requestId));
           return;
         }
+        console.error(`[API 500]`, error);
         process.stderr.write(`[${requestId}] ${error instanceof Error ? error.name : 'Error'}: ${error instanceof Error ? error.message : 'unknown failure'}\n`);
         const internal = new ApiError(500, 'INTERNAL_ERROR', 'internal server error', true);
         sendJson(response, requestId, origin, 500, apiErrorBody(internal, requestId));

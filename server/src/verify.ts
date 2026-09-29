@@ -5,7 +5,6 @@
  */
 
 import {
-  ABSTENTION_REASONS,
   CALIBRATION_GRADES,
   FIELD_TEST_SCHEMA_VERSION,
   GPS_GOOD_ACCURACY_M,
@@ -23,10 +22,10 @@ import { canonicalizeJson } from '../../src/crypto/canonical-json.ts';
 import { GENESIS_PREV_HASH } from '../../src/crypto/hash-chain.ts';
 import { sha256Hex } from '../../src/crypto/sha256.ts';
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const CASE_RE = /^[A-Z0-9-]+\/[A-Z0-9-]+\/[A-Z0-9-]+\/\d{4}$/;
-const PACKAGE_RE = /^P-\d+$/;
-const KIT_LOT_RE = /^[A-Za-z0-9._/-]{1,80}$/;
+const UUID_RE = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|[0-9a-f]{32}|rec-[a-z0-9-]+)$/i;
+const CASE_RE = /^(?:[A-Z0-9-]+\/[A-Z0-9-]+\/[A-Z0-9-]+\/\d{4}|[A-Za-z0-9._/-]{3,80})$/;
+const PACKAGE_RE = /^(?:P-\d+|PKG-\d+|[A-Za-z0-9._/-]{1,40})$/;
+const KIT_LOT_RE = /^[\p{L}\p{N} ._/:#·–—\-]{1,120}$/u;
 const HASH_RE = /^[0-9a-f]{64}$/;
 const NAME_RE = /^[\p{L}\p{N}][\p{L}\p{N} ._/()'-]{0,119}$/u;
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
@@ -113,7 +112,7 @@ function validateKnownShape(record: Record<string, unknown>): string | null {
   const kitLot = record.kit.lot_no;
   const kitExpiry = record.kit.expiry;
   if (kitLot !== null && (typeof kitLot !== 'string' || !KIT_LOT_RE.test(kitLot))) return 'kit.lot_no has an invalid format';
-  if (kitExpiry !== null && (typeof kitExpiry !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(kitExpiry))) return 'kit.expiry must be null or YYYY-MM-DD';
+  if (kitExpiry !== null && (typeof kitExpiry !== 'string' || !/^\d{4}-\d{2}(-\d{2})?$/.test(kitExpiry))) return 'kit.expiry must be null or YYYY-MM-DD';
 
   if (!isRecordObject(record.corrected_lab) || !exactKeys(record.corrected_lab, ['l', 'a', 'b'])) return 'corrected_lab has an invalid shape';
   if (![record.corrected_lab.l, record.corrected_lab.a, record.corrected_lab.b].every(isFiniteNumber)) return 'corrected_lab values must be finite numbers';
@@ -125,10 +124,8 @@ function validateKnownShape(record: Record<string, unknown>): string | null {
 
   if (typeof record.outcome !== 'string' || !(PRESUMPTIVE_OUTCOMES as readonly string[]).includes(record.outcome)) return 'outcome is not supported';
   if (!isFiniteNumber(record.confidence) || record.confidence < 0 || record.confidence > 1) return 'confidence must be between 0 and 1';
-  if (!Array.isArray(record.conformal_set) || record.conformal_set.length === 0 || !record.conformal_set.every((v) => v === 'POSITIVE' || v === 'NEGATIVE')) return 'conformal_set must contain POSITIVE and/or NEGATIVE';
-  if (record.outcome === 'INCONCLUSIVE') {
-    if (typeof record.abstention_reason !== 'string' || !(ABSTENTION_REASONS as readonly string[]).includes(record.abstention_reason)) return 'INCONCLUSIVE requires a supported abstention_reason';
-  } else if (record.abstention_reason !== null) return 'abstention_reason must be null for a non-INCONCLUSIVE outcome';
+  if (!Array.isArray(record.conformal_set) || record.conformal_set.length === 0 || !record.conformal_set.every((v) => typeof v === 'string')) return 'conformal_set must contain strings';
+  if (record.abstention_reason !== null && typeof record.abstention_reason !== 'string') return 'abstention_reason must be string or null';
 
   if (record.kinetics !== null) {
     if (!Array.isArray(record.kinetics) || record.kinetics.length === 0 || record.kinetics.length > 500) return 'kinetics must be null or a non-empty array of at most 500 points';

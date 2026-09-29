@@ -107,10 +107,10 @@ export const NewTestSetupScreen: React.FC = () => {
 
   const [selectedKit, setSelectedKit] = useState<KitType>('NS');
   const [selectedSubstanceId, setSelectedSubstanceId] = useState<string>('heroin_morphine');
-  const [caseRef, setCaseRef] = useState(setup.caseRef || '');
-  const [packageNo, setPackageNo] = useState(setup.packageNo || '');
-  const [panchnamaRef, setPanchnamaRef] = useState(setup.panchnamaRef || '');
-  const [lotNo, setLotNo] = useState(setup.lotNo || '');
+  const [caseRef, setCaseRef] = useState(setup.caseRef || 'NCB/MZU/CR-02/2026');
+  const [packageNo, setPackageNo] = useState(setup.packageNo || 'P-1');
+  const [panchnamaRef, setPanchnamaRef] = useState(setup.panchnamaRef || 'PAN-2026-001');
+  const [lotNo, setLotNo] = useState(setup.lotNo || 'LOT-01');
 
   const selectedSubstance =
     SUBSTANCE_OPTIONS.find((s) => s.id === selectedSubstanceId) || SUBSTANCE_OPTIONS[1];
@@ -121,14 +121,14 @@ export const NewTestSetupScreen: React.FC = () => {
     }
 
     patchSetup({
-      caseRef,
-      packageNo,
-      panchnamaRef,
-      lotNo,
+      caseRef: caseRef.trim() || 'NCB/MZU/CR-02/2026',
+      packageNo: packageNo.trim() || 'P-1',
+      panchnamaRef: panchnamaRef.trim() || 'PAN-2026-001',
+      lotNo: lotNo.trim() || 'LOT-01',
       reagent: selectedSubstance.reagent,
       kitMake: 'Anchor Forensic',
       kitTestName: `${selectedKit} Kit · ${selectedSubstance.name}`,
-      kitLotNo: '31–09–2097',
+      kitLotNo: 'LOT-2026-NS',
     });
 
     navigation.navigate('Capture');

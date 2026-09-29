@@ -32,6 +32,8 @@ import {
   pendingEntriesDb,
   deadLetteredUuidsDb,
   markDeadLetteredDb,
+  requeueDeadLetteredDb,
+  markSyncedDb,
   appendAuditDb,
   getAppStateDb,
   setAppStateDb,
@@ -122,7 +124,8 @@ interface SyncState {
   clearServerCredentials: () => Promise<void>;
   testConnection: () => Promise<boolean>;
   testCameraEngine: () => Promise<boolean>;
-  syncNow: () => Promise<SyncSummary>;
+  syncNow: (force?: boolean) => Promise<SyncSummary>;
+  requeueDeadLetters: () => Promise<void>;
   refreshCases: () => Promise<void>;
 }
 
@@ -148,9 +151,11 @@ async function buildEngine(url: string): Promise<OutboxSyncService | null> {
   // expose for refreshCases / revoke
   tokenProvider = ensureToken;
   tokenCached = currentToken;
+  activeHttpClient = client;
   return new OutboxSyncService(db, client);
 }
 
+let activeHttpClient: ReturnType<typeof createHttpSyncClient>['client'] | null = null;
 let tokenProvider: (() => Promise<string | null>) | null = null;
 let tokenCached: (() => string | null) | null = null;
 let authFailureObserver: (() => 'none' | 'rejected' | 'unreachable' | 'unset') | null = null;
@@ -200,6 +205,17 @@ export const useSyncStore = create<SyncState>((set, get) => ({
     if (cameraEngineUrl !== savedEngine) await setAppStateDb(CAMERA_ENGINE_URL_PREF, cameraEngineUrl);
     enginePromise = null;
     const { credentials, origin } = await resolveServerCredentials();
+    if (credentials && !serverConfirmedOfficer) {
+      try {
+        const check = await verifyServerCredentials(serverUrl, credentials);
+        if (check.ok && check.officer) {
+          serverConfirmedOfficer = check.officer;
+          await setAppStateDb('server_confirmed_officer_v1', JSON.stringify(check.officer));
+        }
+      } catch {
+        // server offline at boot; keeps null until connection answers
+      }
+    }
     set({
       serverUrl,
       cameraEngineUrl,
@@ -283,7 +299,15 @@ export const useSyncStore = create<SyncState>((set, get) => ({
     }
   },
 
-  syncNow: async () => {
+  requeueDeadLetters: async () => {
+    const deadLetters = await deadLetteredUuidsDb();
+    for (const uuid of deadLetters) {
+      await requeueDeadLetteredDb(uuid);
+    }
+    set({ deadLetterCount: 0, pendingCount: await pendingCountDb() });
+  },
+
+  syncNow: async (force = false) => {
     const state = get();
     if (state.busy) return state.lastSync ?? { at: new Date().toISOString(), synced: 0, failed: 0, deadLettered: 0, skippedBackoff: false };
     set({ busy: true });
@@ -307,7 +331,7 @@ export const useSyncStore = create<SyncState>((set, get) => ({
       const earliest = entries
         .map((e) => (e.next_attempt_at ? Date.parse(e.next_attempt_at) : 0))
         .sort((a, b) => a - b)[0];
-      if (earliest && earliest > now) {
+      if (!force && earliest && earliest > now) {
         // batch-level backoff pacing (the engine records per-row exponential schedules)
         const summary: SyncSummary = { at: new Date().toISOString(), synced: 0, failed: 0, deadLettered: 0, skippedBackoff: true };
         set({ busy: false });
@@ -316,6 +340,29 @@ export const useSyncStore = create<SyncState>((set, get) => ({
 
       const before = new Set(entries.map((e) => e.record_uuid));
       const result = await engine.processOutbox();
+
+      // If the synchronous outbox engine didn't process entries (e.g. SQLite sync shim limitation on device),
+      // drain them directly with activeHttpClient:
+      if (result.syncedCount === 0 && result.failureCount === 0 && entries.length > 0 && activeHttpClient) {
+        for (const item of entries) {
+          try {
+            const res = await activeHttpClient.uploadRecord(item.record_uuid, item.idempotency_key);
+            if (res.success) {
+              await markSyncedDb(item.record_uuid);
+              useLedgerStore.getState().markSynced([item.record_uuid]);
+              result.syncedCount++;
+            }
+          } catch (uploadErr) {
+            result.failureCount++;
+            const msg = uploadErr instanceof Error ? uploadErr.message : String(uploadErr);
+            if (msg.includes('[permanent]')) {
+              await markDeadLetteredDb(item.id, new Date().toISOString());
+              await appendAuditDb('sync-service', 'dead-letter', msg, item.record_uuid);
+              useLedgerStore.getState().markDeadLettered([item.record_uuid]);
+            }
+          }
+        }
+      }
 
       // Rows VANISHED from the queue after the pass = acknowledged by the server.
       const after = await pendingEntriesDb();

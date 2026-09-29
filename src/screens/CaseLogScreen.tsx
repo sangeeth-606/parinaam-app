@@ -66,7 +66,8 @@ export const CaseLogScreen: React.FC = () => {
   const pullRefresh = async () => {
     setRefreshing(true);
     try {
-      await useSyncStore.getState().syncNow();
+      await useSyncStore.getState().requeueDeadLetters();
+      await useSyncStore.getState().syncNow(true);
       await useSyncStore.getState().refreshCases();
     } finally {
       setRefreshing(false);

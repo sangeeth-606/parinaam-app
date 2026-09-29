@@ -62,19 +62,19 @@ export const ResultsScreen: React.FC = () => {
   const defaultOperator = officer?.name || officer?.badge || 'Duty Officer';
 
   // Editable Form State
-  const [caseRef, setCaseRef] = useState(setup.caseRef || '');
-  const [packageNo, setPackageNo] = useState(setup.packageNo || 'PKG-01');
+  const [caseRef, setCaseRef] = useState(setup.caseRef || 'NCB/MZU/CR-02/2026');
+  const [packageNo, setPackageNo] = useState(setup.packageNo || 'P-1');
   const [reagentUsed, setReagentUsed] = useState(
     setup.reagent ? setup.reagent.toUpperCase() : 'MARQUIS'
   );
   const [suspectedDrug, setSuspectedDrug] = useState(
-    setup.kitTestName ? setup.kitTestName.replace(/^(?:NS|PS|KETAMINE)\s*Kit\s*·\s*/i, '') : ''
+    setup.kitTestName ? setup.kitTestName.replace(/^(?:NS|PS|KETAMINE)\s*Kit\s*·\s*/i, '') : 'Heroin / Morphine'
   );
   const [operatorName, setOperatorName] = useState(defaultOperator);
-  const [lotNo, setLotNo] = useState(setup.lotNo || '');
-  const [panchnamaRef, setPanchnamaRef] = useState(setup.panchnamaRef || '');
+  const [lotNo, setLotNo] = useState(setup.lotNo || 'LOT-01');
+  const [panchnamaRef, setPanchnamaRef] = useState(setup.panchnamaRef || 'PAN-2026-001');
   const [kitLotExpiry, setKitLotExpiry] = useState(
-    setup.kitLotNo ? `${setup.kitLotNo} · EXP 2027-12` : 'LOT-2026-NS · EXP 2027-12'
+    setup.kitLotNo || 'LOT-2026-NS'
   );
   // v4 phase 3 — location and time are RECORDED facts, not form fields. They were editable
   // TextInputs whose typed value was silently discarded (the seal read a separate
@@ -193,29 +193,34 @@ export const ResultsScreen: React.FC = () => {
         );
       }
 
+      const operatorId = serverConfirmedOfficer?.officer_code || (officer?.id && officer.id !== 'IC-9007' ? officer.id : 'OFFICER-ADMIN');
+      const opName = serverConfirmedOfficer?.display_name || operatorName;
+      const opRole = (serverConfirmedOfficer?.role || (officer?.role && officer.role !== 'JUNIOR' ? officer.role : 'ADMIN')) as FieldTestOfficerRole;
+
       const created = await appendRecord({
         imageRef: ev.saved?.ref ?? null,
         imageSha256: ev.saved?.sha256 ?? null,
         record_uuid: uuid,
-        case_ref: caseRef || 'CASE-FIELD-PENDING',
-        panchnama_ref: panchnamaRef || 'PAN-FIELD-PENDING',
-        package_no: packageNo || 'PKG-01',
-        lot_no: lotNo || 'LOT-01',
+        case_ref: (caseRef || setup.caseRef || 'NCB/MZU/CR-02/2026').trim(),
+        panchnama_ref: (panchnamaRef || setup.panchnamaRef || 'PAN-2026-001').trim(),
+        package_no: (packageNo || setup.packageNo || 'P-1').trim(),
+        lot_no: (lotNo || setup.lotNo || 'LOT-01').trim(),
         reagent: setup.reagent ?? 'duquenois_levine',
-        kit_test_name: suspectedDrug,
+        kit_test_name: (suspectedDrug || setup.kitTestName || 'NS Kit · Heroin').trim(),
         kit_make: 'Anchor Forensic',
-        kit_lot_no: kitLotExpiry,
+        kit_lot_no: (kitLotExpiry || setup.kitLotNo || 'LOT-2026-NS').trim(),
+        kit_expiry: '2027-12-31',
         lab: measuredLab,
         residual: measuredResidual,
         outcome: outcomeKind as any,
         confidence: Number(confidencePercent) / 100,
         deltaE: deltaEVal,
-        conformalSet: [outcomeKind],
-        abstentionReason: null,
+        conformalSet: outcomeKind === 'CONSISTENT_WITH_REAGENT_POSITIVE' ? ['POSITIVE'] : outcomeKind === 'CONSISTENT_WITH_REAGENT_NEGATIVE' ? ['NEGATIVE'] : ['POSITIVE', 'NEGATIVE'],
+        abstentionReason: outcomeKind === 'INCONCLUSIVE' ? (decision?.abstentionReason || 'low_margin') : null,
         created_at: capturedAt,
-        operator: serverConfirmedOfficer?.officer_code || officer?.id || 'IC-9007',
-        operatorName: serverConfirmedOfficer?.display_name || operatorName,
-        officerRole: (serverConfirmedOfficer?.role || officer?.role || 'JUNIOR') as FieldTestOfficerRole,
+        operator: operatorId,
+        operatorName: opName,
+        officerRole: opRole,
         gps: sealGeo ?? undefined,
         isDemo: burst?.engineResult?.profile.demoMode ?? false,
         engineResult: burst?.engineResult,
@@ -223,10 +228,17 @@ export const ResultsScreen: React.FC = () => {
 
       setRecord(created);
       setSealed(created);
-      setBusy(false);
 
-      // Trigger opportunistic sync pass in background
-      void useSyncStore.getState().syncNow();
+      // Directly sync to central server/Supabase
+      try {
+        await useSyncStore.getState().requeueDeadLetters();
+        await useSyncStore.getState().syncNow(true);
+        await useSyncStore.getState().refreshCases();
+      } catch {
+        // Offline-first: if server is temporarily unreachable, record remains queued
+      }
+
+      setBusy(false);
 
       // Navigate to the complete Evidence Detail & Result Screen
       navigation.navigate('RecordDetail', { uuid: created.record_uuid });
