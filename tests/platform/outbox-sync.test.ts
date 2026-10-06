@@ -107,4 +107,39 @@ describe('Phase 5: Offline Outbox Synchronization & Idempotency (Milestone M5.4 
     assert.equal(recoverResult.syncedCount, 1);
     assert.equal(syncService.getPendingCount(), 0);
   });
+
+  it('v4 Phase 15: dead-lettered rows are never re-uploaded and excluded from pending count', async () => {
+    let uploadAttempts = 0;
+    const client: RemoteSyncClient = {
+      async uploadRecord() {
+        uploadAttempts++;
+        return { success: true, status: 200 };
+      },
+    };
+
+    const syncService = new OutboxSyncService(db, client);
+    await syncService.queueRecord('REC-DEAD-01');
+
+    // Mark as dead lettered
+    db.prepare("UPDATE sync_queue SET dead_lettered_at = ? WHERE record_uuid = 'REC-DEAD-01'").run(
+      new Date().toISOString()
+    );
+
+    // Assert getPendingCount excludes it
+    assert.equal(syncService.getPendingCount(), 0, 'getPendingCount must exclude dead-lettered rows');
+
+    // processOutbox must NOT attempt upload of dead-lettered row
+    const result = await syncService.processOutbox();
+    assert.equal(uploadAttempts, 0, 'dead-lettered row must not be re-drained');
+    assert.equal(result.syncedCount, 0);
+    assert.equal(result.failureCount, 0);
+  });
+
+  it('v4 Phase 15: queueRecord is idempotent with INSERT OR IGNORE', async () => {
+    const syncService = new OutboxSyncService(db);
+    await syncService.queueRecord('REC-DUP-01', 'idemp-dup-01');
+    // Repeated enqueue with same key must not throw
+    const key = await syncService.queueRecord('REC-DUP-01', 'idemp-dup-01');
+    assert.equal(key, 'idemp-dup-01');
+  });
 });

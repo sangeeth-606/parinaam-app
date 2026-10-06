@@ -5,6 +5,8 @@ import type { FieldTestRecordV1 } from '../../src/contracts/field-test-record.ts
 import { likeContains, optionalQuery, pageMetadata, parsePagination } from './query.ts';
 import { CASE_STATUSES } from './case-service.ts';
 import { PRESUMPTIVE_OUTCOMES } from '../../src/contracts/field-test-record.ts';
+import { can } from '../../src/contracts/officer-roles.ts';
+import { visibilityScope } from './rbac.ts';
 
 interface SqlClause {
   sql: string;
@@ -81,7 +83,8 @@ function recordClauses(officer: AuthedOfficer, query: URLSearchParams): SqlClaus
     clauses.push({ sql, params: values });
   };
 
-  if (officer.role === 'JUNIOR') add('f.operator_id = ?', officer.officerCode);
+  const scope = visibilityScope(officer);
+  if (scope.sql) add(scope.sql, ...scope.params);
   const from = dateBound(query, 'date_from', false);
   const to = dateBound(query, 'date_to', true);
   if (from) add('f.created_at >= ?', from);
@@ -170,7 +173,7 @@ export async function listRecords(db: ServerDb, officer: AuthedOfficer, query: U
 }
 
 function assertRecordVisible(officer: AuthedOfficer, operatorId: string): void {
-  if (officer.role === 'JUNIOR' && officer.officerCode !== operatorId) {
+  if (!can(officer.role, 'record.read.all') && officer.officerCode !== operatorId) {
     throw new ApiError(403, 'OPERATOR_BINDING_MISMATCH', 'junior officers may only read their own attributed records');
   }
 }
@@ -204,7 +207,7 @@ export async function getRecordDetail(db: ServerDb, officer: AuthedOfficer, uuid
 function caseClauses(officer: AuthedOfficer, query: URLSearchParams): SqlClause {
   const clauses: string[] = [];
   const params: unknown[] = [];
-  if (officer.role === 'JUNIOR') {
+  if (!can(officer.role, 'record.read.all')) {
     clauses.push('EXISTS (SELECT 1 FROM field_test own WHERE own.case_ref = c.case_ref AND own.operator_id = ?)');
     params.push(officer.officerCode);
   }
@@ -225,10 +228,11 @@ function caseClauses(officer: AuthedOfficer, query: URLSearchParams): SqlClause 
 export async function listCases(db: ServerDb, officer: AuthedOfficer, query: URLSearchParams): Promise<Record<string, unknown>> {
   const pagination = parsePagination(query);
   const where = caseClauses(officer, query);
-  const recordCountExpression = officer.role === 'JUNIOR'
-    ? "COUNT(CASE WHEN f.operator_id = ? THEN f.record_uuid END)"
-    : 'COUNT(f.record_uuid)';
-  const recordCountParams = officer.role === 'JUNIOR' ? [officer.officerCode] : [];
+  const canReadAll = can(officer.role, 'record.read.all');
+  const recordCountExpression = canReadAll
+    ? 'COUNT(f.record_uuid)'
+    : 'COUNT(CASE WHEN f.operator_id = ? THEN f.record_uuid END)';
+  const recordCountParams = canReadAll ? [] : [officer.officerCode];
   const count = await db.store.get<{ count: number }>(
     `SELECT COUNT(DISTINCT c.case_ref) AS count FROM cases c ${where.sql}`,
     ...where.params
@@ -274,7 +278,7 @@ export async function getCaseDetail(db: ServerDb, officer: AuthedOfficer, caseRe
     normalized
   );
   if (!row) throw new ApiError(404, 'CASE_NOT_FOUND', 'case not found');
-  if (officer.role === 'JUNIOR') {
+  if (!can(officer.role, 'record.read.all')) {
     const own = await db.store.get<{ present: number }>(
       'SELECT 1 AS present FROM field_test WHERE case_ref = ? AND operator_id = ? LIMIT 1',
       normalized,
@@ -282,8 +286,9 @@ export async function getCaseDetail(db: ServerDb, officer: AuthedOfficer, caseRe
     );
     if (!own) throw new ApiError(403, 'CASE_ACCESS_DENIED', 'junior officers may only read cases containing their own records');
   }
-  const recordVisibility = officer.role === 'JUNIOR' ? ' AND f.operator_id = ?' : '';
-  const recordParams = officer.role === 'JUNIOR' ? [officer.officerCode] : [];
+  const scope = visibilityScope(officer);
+  const recordVisibility = scope.sql ? ` AND ${scope.sql}` : '';
+  const recordParams = scope.params;
   const records = await db.store.all<Record<string, unknown>>(
     `${RECORD_SELECT} WHERE f.case_ref = ?${recordVisibility} ORDER BY f.seq ASC`,
     normalized,
@@ -348,10 +353,18 @@ export async function getStats(db: ServerDb, officer: AuthedOfficer, query: URLS
   const head = await db.store.get<{ seq: number; chain_hash: string; updated_at: string }>(
     'SELECT seq, chain_hash, updated_at FROM ledger_head WHERE id = 1'
   );
-  const accountRows = await db.store.all<{ status: string; count: number }>(
-    'SELECT status, COUNT(*) AS count FROM officers GROUP BY status'
-  );
-  const accounts = Object.fromEntries(accountRows.map((row) => [row.status, Number(row.count)]));
+  let accounts: { active: number; pending: number; suspended: number } | undefined;
+  if (officer.role === 'ADMIN' || officer.role === 'SUPERVISOR') {
+    const accountRows = await db.store.all<{ status: string; count: number }>(
+      'SELECT status, COUNT(*) AS count FROM officers GROUP BY status'
+    );
+    const counts = Object.fromEntries(accountRows.map((row) => [row.status, Number(row.count)]));
+    accounts = {
+      active: Number(counts.ACTIVE ?? 0),
+      pending: Number(counts.PENDING ?? 0),
+      suspended: Number(counts.SUSPENDED ?? 0),
+    };
+  }
   return {
     totals: {
       records: Number(totals?.records ?? 0),
@@ -363,10 +376,6 @@ export async function getStats(db: ServerDb, officer: AuthedOfficer, query: URLS
     records_by_outcome: Object.fromEntries(byOutcome.map((row) => [row.outcome, Number(row.count)])),
     cases_by_region: Object.fromEntries(byRegion.map((row) => [row.region, { cases: Number(row.case_count), records: Number(row.count) }])),
     ledger_head: head ? { seq: Number(head.seq), chain_hash: head.chain_hash, updated_at: head.updated_at } : null,
-    accounts: {
-      active: Number(accounts.ACTIVE ?? 0),
-      pending: Number(accounts.PENDING ?? 0),
-      suspended: Number(accounts.SUSPENDED ?? 0),
-    },
+    ...(accounts ? { accounts } : {}),
   };
 }

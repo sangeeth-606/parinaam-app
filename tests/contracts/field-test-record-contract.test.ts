@@ -387,4 +387,72 @@ describe('evidence envelope rejects tampering', () => {
     assert.equal(result.ok, false);
     assert.equal(result.code, 'schema-validation');
   });
+
+  it('a record with no GPS is still valid and is not defaulted', async () => {
+    const withoutGps = clone(inconclusive);
+    withoutGps.gps = null;
+    const core = toCore(withoutGps);
+    const payload = sealedPayloadFromCore(core);
+    assert.equal(payload.gps, null, 'absence of a fix must stay absence, never a zero coordinate');
+    const jcs = canonicalizeJson(payload);
+    withoutGps.payload_jcs = jcs;
+    withoutGps.record_hash = await sha256Hex(jcs);
+    withoutGps.chain_hash = await sha256Hex(withoutGps.prev_hash + withoutGps.record_hash);
+
+    const verified = await verifyFieldTestRecord(withoutGps);
+    assert.equal(verified.ok, true, verified.reason ?? 'record without GPS must verify');
+    assert.ok(
+      verified.checks.some((c) => c.includes('gps: absent')),
+      'verifier checks must reflect honest absence'
+    );
+  });
+
+  it('a mocked fix is preserved verbatim through the seal and flagged in verification', async () => {
+    const mockedRec = clone(inconclusive);
+    mockedRec.gps = { lat: 12.9716, lon: 77.5946, accuracy_m: 5, mocked: true };
+    const core = toCore(mockedRec);
+    const payload = sealedPayloadFromCore(core);
+    assert.equal(payload.gps?.mocked, true);
+    const jcs = canonicalizeJson(payload);
+    assert.ok(jcs.includes('"mocked":true'));
+    mockedRec.payload_jcs = jcs;
+    mockedRec.record_hash = await sha256Hex(jcs);
+    mockedRec.chain_hash = await sha256Hex(mockedRec.prev_hash + mockedRec.record_hash);
+
+    const verified = await verifyFieldTestRecord(mockedRec);
+    assert.equal(verified.ok, true);
+    assert.ok(
+      verified.checks.some((c) => c.includes('coordinates from mock provider')),
+      'verifier checks must flag mocked GPS provider'
+    );
+  });
+
+  it('gps provenance source survives canonicalization and hash verification', async () => {
+    const withSource = clone(inconclusive);
+    withSource.gps = {
+      lat: 12.9716,
+      lon: 77.5946,
+      accuracy_m: 8.5,
+      mocked: false,
+      source: 'simulator',
+    };
+    const core = toCore(withSource);
+    const payload = sealedPayloadFromCore(core);
+    assert.equal(payload.gps?.source, 'simulator');
+    const jcs = canonicalizeJson(payload);
+    assert.ok(jcs.includes('"source":"simulator"'));
+    withSource.payload_jcs = jcs;
+    withSource.record_hash = await sha256Hex(jcs);
+    withSource.chain_hash = await sha256Hex(withSource.prev_hash + withSource.record_hash);
+
+    const verified = await verifyFieldTestRecord(withSource);
+    assert.equal(verified.ok, true, verified.reason ?? 'record with source must verify');
+
+    // Invalid source must be rejected by schema-validation
+    const invalidSource = clone(withSource);
+    (invalidSource.gps as any).source = 'satellite-spoof';
+    const failRes = await verifyFieldTestRecord(invalidSource);
+    assert.equal(failRes.ok, false);
+    assert.equal(failRes.code, 'schema-validation');
+  });
 });

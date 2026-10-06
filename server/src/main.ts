@@ -4,8 +4,9 @@ import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { ServerDb, hashPassword, insertOfficer } from './db.ts';
-import { authenticate } from './auth.ts';
-import { routes, type ApiResponse, type Ctx } from './routes.ts';
+import { authenticate, type AuthedOfficer } from './auth.ts';
+import { routes, ROUTE_PERMISSIONS, LEGACY_ROUTE_CODES, type ApiResponse, type Ctx } from './routes.ts';
+import { requirePermission } from './rbac.ts';
 import { subscribe, subscriberCount } from './bus.ts';
 import { seedDemo } from './seed.ts';
 import { ApiError, apiErrorBody } from '../../src/contracts/api-errors.ts';
@@ -15,7 +16,7 @@ const JSON_BODY_LIMIT = 1_000_000;
 const MAX_SSE_CLIENTS = 100;
 const PUBLIC_ROUTES = new Set(['GET /api/v1/health', 'POST /api/v1/auth/login']);
 
-type RouteMatch = { handler: (ctx: Ctx) => Promise<ApiResponse> | ApiResponse; params: Record<string, string> };
+type RouteMatch = { key: string; handler: (ctx: Ctx) => Promise<ApiResponse> | ApiResponse; params: Record<string, string> };
 
 function matchRoute(method: string, pathname: string): RouteMatch | null {
   const routeTable: Record<string, (ctx: Ctx) => Promise<ApiResponse> | ApiResponse> = routes;
@@ -42,7 +43,7 @@ function matchRoute(method: string, pathname: string): RouteMatch | null {
         break;
       }
     }
-    if (matched) return { handler, params };
+    if (matched) return { key, handler, params };
   }
   return null;
 }
@@ -189,7 +190,7 @@ function openSse(
 async function bootstrapAdmin(db: ServerDb): Promise<void> {
   const password = process.env.PARINAAM_API_ADMIN_PASSWORD;
   if (!password) return;
-  if (password.length < 10) throw new Error('PARINAAM_API_ADMIN_PASSWORD must be at least 10 characters');
+  if (password.length < 16) throw new Error('PARINAAM_API_ADMIN_PASSWORD must be at least 16 characters');
   const existing = await db.store.get<{ id: number | string }>('SELECT id FROM officers WHERE username = ?', 'admin');
   if (existing) return;
   const credentials = await hashPassword(password);
@@ -209,6 +210,9 @@ export async function createApiServer(target?: string): Promise<{
     void (async () => {
       const requestId = randomUUID();
       let origin: string | null = null;
+      let currentRouteKey = 'UNKNOWN';
+      let currentAuthed: AuthedOfficer | null = null;
+      const ip = trustedClientIp(request);
       try {
         origin = allowedOrigin(request.headers.origin);
         if (request.method === 'OPTIONS') {
@@ -225,21 +229,27 @@ export async function createApiServer(target?: string): Promise<{
         }
         const method = request.method ?? 'GET';
         const routeKey = `${method} ${url.pathname}`;
+        currentRouteKey = routeKey;
         const stream = method === 'GET' && url.pathname === '/api/v1/stream';
         const matched = stream ? null : matchRoute(method, url.pathname);
         if (!stream && !matched) throw new ApiError(404, 'ROUTE_NOT_FOUND', 'API route not found');
 
-        const authed = PUBLIC_ROUTES.has(routeKey) ? null : await authenticate(db, request.headers.authorization);
+        const authed = PUBLIC_ROUTES.has(routeKey) ? null : await authenticate(db, request.headers.authorization, ip, requestId);
+        currentAuthed = authed;
         if (!PUBLIC_ROUTES.has(routeKey) && !authed) throw new ApiError(401, 'AUTH_REQUIRED', 'authentication required');
 
-        if (stream && authed) {
-          if (authed.role === 'JUNIOR') {
-            throw new ApiError(403, 'STREAM_ROLE_REQUIRED', 'the live stream is restricted to reviewer roles', false);
-          }
-          openSse(request, response, requestId, origin, authed.officerCode);
+        if (stream) {
+          requirePermission(authed, 'event.stream', 'STREAM_ROLE_REQUIRED');
+          openSse(request, response, requestId, origin, authed!.officerCode);
           return;
         }
         if (!matched) throw new ApiError(404, 'ROUTE_NOT_FOUND', 'API route not found');
+
+        if (!PUBLIC_ROUTES.has(routeKey)) {
+          const perm = ROUTE_PERMISSIONS[matched.key];
+          const needed = perm !== undefined ? perm : 'record.read.own';
+          if (needed) requirePermission(authed, needed, LEGACY_ROUTE_CODES[matched.key]);
+        }
 
         let body: Record<string, unknown> | null = null;
         let rawBody: Uint8Array | null = null;
@@ -271,6 +281,7 @@ export async function createApiServer(target?: string): Promise<{
           requestId,
         };
         const result = await Promise.resolve(matched.handler(ctx));
+        console.log(`[API] ${method} ${url.pathname} -> ${result.status ?? 200}`);
         sendApiResponse(response, requestId, origin, result);
       } catch (error) {
         if (response.headersSent) {
@@ -278,9 +289,19 @@ export async function createApiServer(target?: string): Promise<{
           return;
         }
         if (error instanceof ApiError) {
+          console.error(`[API ERROR] ${currentRouteKey} -> ${error.status} ${error.code}: ${error.message}`);
+          if (error.status === 403) {
+            await db.audit(
+              currentAuthed?.username ?? 'anonymous',
+              'permission-denied',
+              currentRouteKey,
+              `${currentRouteKey}: ${error.message} (${error.code})`
+            ).catch(() => {});
+          }
           sendJson(response, requestId, origin, error.status, apiErrorBody(error, requestId));
           return;
         }
+        console.error(`[API 500]`, error);
         process.stderr.write(`[${requestId}] ${error instanceof Error ? error.name : 'Error'}: ${error instanceof Error ? error.message : 'unknown failure'}\n`);
         const internal = new ApiError(500, 'INTERNAL_ERROR', 'internal server error', true);
         sendJson(response, requestId, origin, 500, apiErrorBody(internal, requestId));

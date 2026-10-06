@@ -19,6 +19,8 @@ function requestedFormats(query: URLSearchParams): ExportFormat[] {
   return [...new Set(values as ExportFormat[])];
 }
 
+import { visibilityScope } from './rbac.ts';
+
 export async function buildCaseExport(
   db: ServerDb,
   officer: AuthedOfficer,
@@ -27,8 +29,9 @@ export async function buildCaseExport(
 ): Promise<Record<string, unknown>> {
   const detail = await getCaseDetail(db, officer, caseRef);
   const normalized = caseRef.toUpperCase();
-  const recordVisibility = officer.role === 'JUNIOR' ? ' AND f.operator_id = ?' : '';
-  const recordParams = officer.role === 'JUNIOR' ? [officer.officerCode] : [];
+  const scope = visibilityScope(officer);
+  const recordVisibility = scope.sql ? ` AND ${scope.sql}` : '';
+  const recordParams = scope.params;
   const bodyRows = await db.store.all<{ body: string; record_uuid: string; image_sha256: string | null }>(
     `SELECT f.body, f.record_uuid, f.image_sha256
      FROM field_test f WHERE f.case_ref = ?${recordVisibility} ORDER BY f.seq ASC`,

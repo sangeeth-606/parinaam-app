@@ -15,6 +15,15 @@ import type { LedgerRecord } from '../state/ledger-store';
 import { toFieldTestRecord } from './field-test-record.ts';
 import { readEvidenceImageBytes } from '../capture/evidence-image.ts';
 
+export interface ServerConfirmedOfficer {
+  id: number;
+  officer_code: string;
+  username: string;
+  display_name: string;
+  role: string;
+  status: string;
+}
+
 export interface SyncHttpConfig {
   serverUrl: string;
   credentials: { username: string; password: string } | null;
@@ -22,11 +31,13 @@ export interface SyncHttpConfig {
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
   getEvidenceBytes?: (record: LedgerRecord) => Promise<Uint8Array | null>;
+  onOfficerConfirmed?: (officer: ServerConfirmedOfficer) => void;
 }
 
 export interface SyncSession {
   token: string | null;
   expiresAt: number;
+  officer?: ServerConfirmedOfficer | null;
 }
 
 export function createHttpSyncClient(cfg: SyncHttpConfig) {
@@ -68,12 +79,20 @@ export function createHttpSyncClient(cfg: SyncHttpConfig) {
         authFailure = res.status === 401 || res.status === 403 ? 'rejected' : 'unreachable';
         return null;
       }
-      const data = (await res.json()) as { token?: string; expires_at?: string };
+      const data = (await res.json()) as {
+        token?: string;
+        expires_at?: string;
+        officer?: ServerConfirmedOfficer;
+      };
       if (!data.token) {
         authFailure = 'rejected';
         return null;
       }
       session.token = data.token;
+      session.officer = data.officer ?? null;
+      if (cfg.onOfficerConfirmed && data.officer) {
+        cfg.onOfficerConfirmed(data.officer);
+      }
       // Prefer the server's own expiry; fall back to refreshing before the 12 h TTL.
       const serverExpiry = typeof data.expires_at === 'string' ? Date.parse(data.expires_at) : NaN;
       session.expiresAt = Number.isFinite(serverExpiry)
@@ -180,7 +199,11 @@ export async function verifyServerCredentials(
   credentials: { username: string; password: string },
   fetchImpl?: typeof fetch,
   timeoutMs = 12_000
-): Promise<{ ok: boolean; reason: 'accepted' | 'rejected' | 'unreachable' | 'malformed' }> {
+): Promise<{
+  ok: boolean;
+  reason: 'accepted' | 'rejected' | 'unreachable' | 'malformed';
+  officer?: ServerConfirmedOfficer;
+}> {
   const doFetch = fetchImpl ?? fetch;
   const url = serverUrl.trim().replace(/\/$/, '');
   if (!/^https?:\/\/[^\s/]+/i.test(url)) return { ok: false, reason: 'malformed' };
@@ -194,8 +217,8 @@ export async function verifyServerCredentials(
       signal: ctrl.signal,
     });
     if (res.ok) {
-      // Do not keep the token: this probe only answers "are these credentials valid?".
-      return { ok: true, reason: 'accepted' };
+      const data = (await res.json()) as { token?: string; officer?: ServerConfirmedOfficer };
+      return { ok: true, reason: 'accepted', officer: data.officer };
     }
     return { ok: false, reason: res.status === 401 || res.status === 403 ? 'rejected' : 'unreachable' };
   } catch {

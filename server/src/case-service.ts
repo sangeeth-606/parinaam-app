@@ -2,6 +2,8 @@ import type { OfficerRole } from './db.ts';
 import type { AuthedOfficer } from './auth.ts';
 import { ApiError } from '../../src/contracts/api-errors.ts';
 
+import { requirePermission } from './rbac.ts';
+
 export const REVIEW_ROLES = ['ADMIN', 'SUPERVISOR', 'SENIOR'] as const satisfies readonly OfficerRole[];
 export type CaseStatus = 'REPORTED' | 'UNDER_REVIEW' | 'REVIEWED' | 'ESCALATED';
 export const CASE_STATUSES = ['REPORTED', 'UNDER_REVIEW', 'REVIEWED', 'ESCALATED'] as const;
@@ -14,17 +16,11 @@ const transitions: Record<CaseStatus, readonly CaseStatus[]> = {
 };
 
 export function requireReviewer(officer: AuthedOfficer | null): AuthedOfficer {
-  if (!officer) throw new ApiError(401, 'AUTH_REQUIRED', 'authentication required');
-  if (!(REVIEW_ROLES as readonly string[]).includes(officer.role)) {
-    throw new ApiError(403, 'REVIEW_ROLE_REQUIRED', 'case review is restricted to senior, supervisor, and admin roles');
-  }
-  return officer;
+  return requirePermission(officer, 'case.review', 'REVIEW_ROLE_REQUIRED');
 }
 
 export function requireAdmin(officer: AuthedOfficer | null): AuthedOfficer {
-  if (!officer) throw new ApiError(401, 'AUTH_REQUIRED', 'authentication required');
-  if (officer.role !== 'ADMIN') throw new ApiError(403, 'ADMIN_REQUIRED', 'administrator role required');
-  return officer;
+  return requirePermission(officer, 'account.manage', 'ADMIN_REQUIRED');
 }
 
 export function assertStatusTransition(from: CaseStatus, to: CaseStatus): void {
@@ -43,6 +39,8 @@ export function parseCaseStatus(value: unknown): CaseStatus {
   return value.toUpperCase() as CaseStatus;
 }
 
+import { can } from '../../src/contracts/officer-roles.ts';
+
 export function canReadOfficerRecord(officer: AuthedOfficer, operatorId: string): boolean {
-  return officer.role !== 'JUNIOR' || officer.officerCode === operatorId;
+  return can(officer.role, 'record.read.all') || officer.officerCode === operatorId;
 }

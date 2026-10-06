@@ -18,6 +18,24 @@ export function toFieldTestRecord(record: LedgerRecord): FieldTestRecordV1 {
   if (record.residual.grade === 'REJECT') {
     throw new Error('[permanent] REJECT calibration cannot be transmitted as valid field evidence');
   }
+  if (record.payloadJcs) {
+    try {
+      const parsed = JSON.parse(record.payloadJcs) as ReturnType<typeof sealedPayloadFromCore>;
+      if (canonicalizeJson(parsed) === record.payloadJcs) {
+        return {
+          ...parsed,
+          payload_jcs: record.payloadJcs,
+          record_hash: record.payloadSha256,
+          prev_hash: record.prevHash,
+          chain_hash: record.chainHash,
+          device_attestation: record.deviceAttestation,
+        };
+      }
+    } catch {
+      /* fallback to core reconstruction */
+    }
+  }
+
   const payload = sealedPayloadFromCore({
     seq: record.seq,
     record_uuid: record.record_uuid,
@@ -49,6 +67,7 @@ export function toFieldTestRecord(record: LedgerRecord): FieldTestRecordV1 {
           lon: record.gps.lon,
           accuracy_m: record.gps.accuracyM ?? null,
           mocked: record.gps.mocked,
+          ...(record.gps.source ? { source: record.gps.source } : {}),
         }
       : null,
     image_sha256: record.imageSha256 ?? null,

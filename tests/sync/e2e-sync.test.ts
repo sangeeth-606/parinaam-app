@@ -20,7 +20,8 @@ process.env.PARINAAM_DB_FILE = dbFile;
 // test server with the real stack's account value (and syncing with it) is what makes
 // this suite prove the separation rather than assume it.
 const API_USER = 'admin';
-const API_PASSWORD = 'parinaam-admin-2026';
+const API_PASSWORD = 'Parinaam#Admin#2026';
+process.env.PARINAAM_SEED_PASSWORD = API_PASSWORD;
 process.env.PARINAAM_API_ADMIN_PASSWORD = API_PASSWORD;
 
 const repo = await import('../../src/db/ledger-repository.ts');

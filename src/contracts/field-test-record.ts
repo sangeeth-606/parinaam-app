@@ -31,25 +31,33 @@ export const PRESUMPTIVE_OUTCOMES = [
   'INCONCLUSIVE',
 ] as const;
 
+import { OFFICER_ROLES, type OfficerRole } from './officer-roles.ts';
+
 export const ABSTENTION_REASONS = ['low_margin', 'novelty_ood', 'calibration_failed'] as const;
 export const CALIBRATION_GRADES = ['GOOD', 'DEGRADED'] as const;
-export const OFFICER_ROLE_VALUES = ['JUNIOR', 'SENIOR', 'ADMIN', 'SUPERVISOR', 'JUDICIARY'] as const;
+export const OFFICER_ROLE_VALUES = OFFICER_ROLES;
 
 export type FieldTestOutcome = (typeof PRESUMPTIVE_OUTCOMES)[number];
 export type FieldTestAbstentionReason = (typeof ABSTENTION_REASONS)[number];
 export type FieldTestCalibrationGrade = (typeof CALIBRATION_GRADES)[number];
-export type FieldTestOfficerRole = (typeof OFFICER_ROLE_VALUES)[number];
+export type FieldTestOfficerRole = OfficerRole;
 
 export interface FieldTestKineticPoint {
   t_ms: number;
   delta_e: number;
 }
 
+export const GPS_GOOD_ACCURACY_M = 10;
+export const GPS_POOR_ACCURACY_M = 100;
+export const GPS_SOURCES = ['expo-location', 'simulator', 'manual'] as const;
+export type FieldTestGpsSource = (typeof GPS_SOURCES)[number];
+
 export interface FieldTestGps {
   lat: number;
   lon: number;
   accuracy_m: number | null;
   mocked: boolean;
+  source?: FieldTestGpsSource;
 }
 
 export interface FieldTestKit {

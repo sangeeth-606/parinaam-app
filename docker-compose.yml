@@ -1,11 +1,15 @@
-# Parinaam — self-hosted backend stack (PostgreSQL 15 + REST API).
+# Parinaam — self-hosted backend stack (REST API + camera engine).
 #
-#   docker compose up -d db      # just the database, mapped to 127.0.0.1:55433
-#   docker compose up -d server  # database + API (waits for db health)
-#   docker compose run --rm seed # load the realistic demo dataset (idempotent)
+# The database is NOT in this file. Parinaam runs against the Supabase-hosted
+# PostgreSQL named by DATABASE_URL in .env, which is the single shared ledger
+# also read by `parinaam-web`. Both applications therefore see the same
+# records; there is no second, local database.
+#
+#   docker compose up -d server  # the API
+#   docker compose run --rm seed # only to rebuild an EMPTY database (idempotent)
 #
 # Every knob is overridable via .env (see .env.example):
-#   POSTGRES_PORT   host port for the DB        (default 55433, loopback-only)
+#   DATABASE_URL    Supabase PostgreSQL DSN — REQUIRED, the single source of truth
 #   API_PORT        host port for the API       (default 8571)
 #   API_BIND        host interface for the API  (default 127.0.0.1; 0.0.0.0 to expose on LAN)
 #   ENGINE_PORT     host port for the camera engine (default 8572)
@@ -13,31 +17,6 @@
 # All container ports are fixed internally; only the host-side mapping is configurable.
 
 services:
-  # -------------------------------------------------------------- PostgreSQL 15
-  db:
-    image: postgres:15-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-parinaam}
-      POSTGRES_USER: ${POSTGRES_USER:-parinaam}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-parinaam}
-      # Deterministic collation so case_ref ordering matches the host tooling.
-      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
-    # Loopback-only by default: the DB is never exposed to the LAN unless the
-    # operator explicitly changes POSTGRES_BIND. The API reaches it over the
-    # compose network by service name, so host exposure is only for psql/tooling.
-    ports:
-      - "${POSTGRES_BIND:-127.0.0.1}:${POSTGRES_PORT:-55433}:5432"
-    volumes:
-      - parinaam_pgdata_v2:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-parinaam} -d ${POSTGRES_DB:-parinaam}"]
-      interval: 5s
-      timeout: 5s
-      retries: 12
-      start_period: 10s
-    networks: [parinaam]
-
   # -------------------------------------------------------------- REST API (server runtime)
   server:
     build:
@@ -45,24 +24,32 @@ services:
       dockerfile: Dockerfile
       target: server
     restart: unless-stopped
-    depends_on:
-      db:
-        condition: service_healthy
     environment:
       NODE_ENV: production
       PARINAAM_DB: postgres
-      # In-network DSN: service name `db`, internal port 5432.
-      DATABASE_URL: postgres://${POSTGRES_USER:-parinaam}:${POSTGRES_PASSWORD:-parinaam}@db:5432/${POSTGRES_DB:-parinaam}
-      # Demo officer seeded on first boot.
-      PARINAAM_API_ADMIN_PASSWORD: ${PARINAAM_API_ADMIN_PASSWORD:-parinaam-admin-2026}
+      # The single source of truth is DATABASE_URL in .env — the Supabase-hosted
+      # PostgreSQL shared with parinaam-web. This must NOT be rebuilt from the
+      # POSTGRES_* vars: doing so silently repoints the API at the local `db`
+      # container and splits the ledger into two divergent databases.
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env to the Supabase connection string}
+      # Demo officers seeded on first boot.
+      PARINAAM_SEED_PASSWORD: ${PARINAAM_SEED_PASSWORD:-Parinaam#2026}
+      # Explicit bootstrap admin password (min 16 chars).
+      PARINAAM_API_ADMIN_PASSWORD: ${PARINAAM_API_ADMIN_PASSWORD:-}
       # Internal listen port is fixed; the host mapping below is what you change.
       PARINAAM_API_PORT: 8571
-      # Opt-in: load the realistic demo dataset when the database is empty.
-      PARINAAM_SEED: ${PARINAAM_SEED:-1}
+      # Explicit opt-in: load the realistic demo dataset when the database is empty (0 = clean ledger).
+      PARINAAM_SEED: ${PARINAAM_SEED:-0}
       PARINAAM_CORS_ORIGINS: ${PARINAAM_CORS_ORIGINS:-http://localhost:8081,http://127.0.0.1:8081,http://192.168.0.102:8081,*}
       PARINAAM_TRUST_PROXY: ${PARINAAM_TRUST_PROXY:-false}
     ports:
       - "${API_BIND:-127.0.0.1}:${API_PORT:-8571}:8571"
+    volumes:
+      - ./server:/app/server
+      - ./src/contracts:/app/src/contracts
+      - ./src/crypto:/app/src/crypto
+      - ./src/demo:/app/src/demo
+      - ./src/types:/app/src/types
     # Explicit so the service is correct even if pointed at an older image.
     command: ["node", "--experimental-strip-types", "server/src/main.ts"]
     healthcheck:
@@ -130,19 +117,20 @@ services:
     networks: [parinaam]
 
   # -------------------------------------------------------------- demo data seed (one-shot)
+  # NOTE: Supabase is already seeded, so this is not part of the normal start
+  # path. It is retained for rebuilding an empty database from scratch and now
+  # targets the SAME Supabase DATABASE_URL as the API.
   seed:
     build:
       context: .
       dockerfile: Dockerfile
       target: server
-    depends_on:
-      db:
-        condition: service_healthy
+    profiles: ["seed"]
     environment:
       NODE_ENV: production
       PARINAAM_DB: postgres
-      DATABASE_URL: postgres://${POSTGRES_USER:-parinaam}:${POSTGRES_PASSWORD:-parinaam}@db:5432/${POSTGRES_DB:-parinaam}
-      PARINAAM_API_ADMIN_PASSWORD: ${PARINAAM_API_ADMIN_PASSWORD:-parinaam-admin-2026}
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env to the Supabase connection string}
+      PARINAAM_SEED_PASSWORD: ${PARINAAM_SEED_PASSWORD:-Parinaam#2026}
     command: ["node", "--experimental-strip-types", "server/src/seed.ts"]
     restart: "no"
     # No host port: an init-style job, run on demand (`docker compose run --rm seed`).
@@ -169,6 +157,3 @@ services:
 networks:
   parinaam: {}
 
-volumes:
-  # Project-scoped and versioned so it can never reuse the retired v1 demo volume.
-  parinaam_pgdata_v2:

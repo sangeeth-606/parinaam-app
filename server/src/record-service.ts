@@ -37,8 +37,8 @@ export async function ingestRecord(
   if (!idempotencyKey || !/^[A-Za-z0-9._:-]{8,160}$/.test(idempotencyKey)) {
     throw new ApiError(400, 'IDEMPOTENCY_KEY_REQUIRED', 'a valid Idempotency-Key header (8-160 characters) is required');
   }
-  const candidate = value && typeof value === 'object' && !Array.isArray(value) ? value as { is_demo?: unknown } : null;
-  if (candidate?.is_demo === true) {
+  const candidate = value && typeof value === 'object' && !Array.isArray(value) ? value as { is_demo?: unknown; record_uuid?: unknown } : null;
+  if (candidate?.is_demo === true && typeof candidate.record_uuid === 'string' && candidate.record_uuid.startsWith('00000000-')) {
     throw new ApiError(400, 'DEMO_RECORD_UPLOAD_FORBIDDEN', 'deterministic demo records are installed only by the local seed and cannot be uploaded');
   }
   const preliminary = await verifyFieldTestRecord(value, { operatorCode: officer.officerCode });
@@ -132,15 +132,16 @@ export async function ingestRecord(
     const receivedAt = new Date().toISOString();
     await tx.run(
       `INSERT INTO field_test (
-        seq, record_uuid, case_ref, package_no, operator_id, operator_name, outcome, confidence,
+        seq, record_uuid, case_ref, package_no, officer_code, operator_id, operator_name, outcome, confidence,
         reagent, kit_type, kit_batch, region, department, location_label,
         created_at, received_at, payload_jcs, record_hash, prev_hash, chain_hash,
         device_attestation, image_ref, image_sha256, is_demo, body
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       record.seq,
       record.record_uuid,
       record.case_ref,
       record.package_no,
+      officer.officerCode,
       record.operator_id,
       record.operator_name,
       record.outcome,

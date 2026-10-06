@@ -29,7 +29,11 @@ import {
   type HashChainRecordItem,
 } from '../crypto/hash-chain.ts';
 import { buildSealedRecord } from '../services/analysis-pipeline.ts';
-import { sealedPayloadFromCore, type FieldTestOfficerRole } from '../contracts/field-test-record.ts';
+import {
+  sealedPayloadFromCore,
+  type FieldTestOfficerRole,
+  type FieldTestGpsSource,
+} from '../contracts/field-test-record.ts';
 import { seedLedgerRecords } from '../repo/fixtures.ts';
 import {
   initLedgerDb,
@@ -68,7 +72,7 @@ export interface LedgerRecord {
   officerRole?: string;
   isDemo?: boolean;
   kinetics?: KineticPoint[];
-  gps?: { lat: number; lon: number; accuracyM?: number; mocked: boolean };
+  gps?: { lat: number; lon: number; accuracyM?: number; mocked: boolean; source?: FieldTestGpsSource };
   imageRef?: string | null;
   imageSha256?: string | null;
   engineResult?: CameraEngineResult;
@@ -85,6 +89,12 @@ export interface LedgerRecord {
    * must say so instead of reporting an empty outbox.
    */
   syncStatus: 'demo-seed' | 'queued' | 'synced' | 'dead-letter';
+  /**
+   * v4 phase 2 — set only when the write-through to the ledger file failed. The record exists
+   * in memory for this session but is NOT on disk; screens must say so rather than presenting
+   * an unsaved record as sealed evidence.
+   */
+  persistError?: string;
 }
 
 type SealOutcome = Awaited<ReturnType<typeof buildSealedRecord>> extends { seal: infer S } ? S : never;
@@ -253,6 +263,7 @@ export const useLedgerStore = create<LedgerState>((set, get) => ({
             lon: input.gps.lon,
             accuracy_m: input.gps.accuracyM ?? null,
             mocked: input.gps.mocked,
+            ...(input.gps.source ? { source: input.gps.source } : {}),
           }
         : null,
       image_sha256: input.imageSha256 ?? null,
@@ -277,13 +288,32 @@ export const useLedgerStore = create<LedgerState>((set, get) => ({
     set({ records, verification: state.demoCorrupted ? state.verification : verification });
 
     // Persist for real (phase C): write-through + outbox queue row + audit entry.
+    //
+    // v4 phase 2 — this catch was empty and its comment claimed the failure "surfaces via
+    // persistence facts on next read". Nothing surfaced it: no state was written and no
+    // screen read it. `persistRecord` also returns `false` rather than throwing when no
+    // adapter is active, so the MemoryAdapter path made every write a silent no-op and the
+    // officer saw a sealed record that vanished on restart. Both paths are now reported.
+    let persistError: string | null = null;
     try {
-      await persistRecord(record);
-      if (record.engineResult) await persistEngineResult(record.record_uuid, record.engineResult);
-      await queueForSync(record.record_uuid, record.record_uuid);
-    } catch {
-      // The file write failed — surface via persistence facts on next read; the in-memory
-      // view stays honest for the session, syncStatus 'queued' already reflects reality.
+      const written = await persistRecord(record);
+      if (!written) {
+        persistError =
+          'no database adapter is active — this record is held in memory only and will be lost when the app closes';
+      } else {
+        if (record.engineResult) await persistEngineResult(record.record_uuid, record.engineResult);
+        await queueForSync(record.record_uuid, record.record_uuid);
+      }
+    } catch (e) {
+      persistError = e instanceof Error ? e.message : String(e);
+    }
+    if (persistError) {
+      const current = get().persistence;
+      if (current) {
+        set({ persistence: { ...current, error: persistError } });
+      }
+      // The in-memory record must carry the fact so the confirmation panel can say so.
+      record.persistError = persistError;
     }
     return record;
   },

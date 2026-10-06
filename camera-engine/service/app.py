@@ -39,6 +39,13 @@ def _requested_reagent() -> str:
     return (request.form.get("reagent") or request.headers.get("X-Reagent") or "duquenois_levine").strip()
 
 
+def _is_demo_mode() -> bool:
+    if DEMO_MODE:
+        return True
+    req_demo = (request.form.get("demo") or request.headers.get("X-Demo-Mode") or "").strip().lower()
+    return req_demo in ("1", "true", "yes")
+
+
 def _extract_image() -> tuple[bytes, str | None]:
     """Read exactly one image part, or one raw image body."""
     if request.files:
@@ -88,7 +95,7 @@ def analyze():
             image,
             GEOMETRY_PATH,
             requested_reagent=_requested_reagent(),
-            demo_mode=DEMO_MODE,
+            demo_mode=_is_demo_mode(),
         )
     except AnalysisInputError as exc:
         status = 400

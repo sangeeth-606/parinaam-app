@@ -46,4 +46,10 @@ describe('Phase 4: Hardware Key Management & Integrity Seal Attestation', () => 
     assert.ok(keyDetails);
     assert.equal(typeof keyDetails.securityLevel, 'string');
   });
+
+  it('honestly returns Software in test/Node environment without native enclave', async () => {
+    const fresh = new HardwareKeyManager();
+    const key = await fresh.generateKeyPair('auto_probed_key');
+    assert.equal(key.securityLevel, 'Software', 'must not pretend TrustedEnvironment when unprobed');
+  });
 });

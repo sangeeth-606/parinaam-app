@@ -107,12 +107,24 @@ export class HardwareKeyManager {
 
   /**
    * Probe hardware security level following Constraint 10:
-   * Try StrongBox -> Catch StrongBoxUnavailableException -> Fall back to TEE.
+   * Try StrongBox -> Fall back to TEE -> Fall back to Software honestly (rule 10).
    */
   private probeHardwareSecurityLevel(): SecurityLevel {
-    // If Android StrongBox keystore feature flag is available
-    // For mid-range test phones, default to TrustedEnvironment (TEE)
-    return 'TrustedEnvironment';
+    try {
+      const NativeModules = (
+        globalThis as unknown as {
+          NativeModules?: { HardwareKeyModule?: { getSecurityLevel?: () => string } };
+        }
+      ).NativeModules;
+      if (NativeModules?.HardwareKeyModule?.getSecurityLevel) {
+        const lvl = NativeModules.HardwareKeyModule.getSecurityLevel();
+        if (lvl === 'StrongBox') return 'StrongBox';
+        if (lvl === 'TrustedEnvironment') return 'TrustedEnvironment';
+      }
+    } catch {
+      // prober failed or native module not available
+    }
+    return 'Software';
   }
 
   /**

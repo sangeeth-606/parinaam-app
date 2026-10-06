@@ -15,6 +15,25 @@ something the code cannot back up) · 🧩 incomplete (module exists, wiring/ass
 
 ---
 
+## 0. version4 baseline (recorded before the v4 program)
+
+The v4 execution program is specified in [`version4.md`](../version4.md) at the repository root.
+This block is the rollback reference for every phase after it.
+
+| Fact | Value |
+|---|---|
+| Base commit | `fdf4c1507e2ea75b6a0b5486cb151ac824be471a` |
+| `npx tsc --noEmit` | **2 errors**, both `IconName`: `CaptureScreen.tsx(250,25)` and `(264,25)` — `Type '"image"' is not assignable to type 'IconName'` |
+| `npm test` | **259 tests, 259 pass, 0 fail** |
+| `npm run lint` | clean |
+| `npm run typecheck:server` | clean |
+
+There is no server-schema version beyond `1` (`LATEST_SCHEMA_VERSION`). **Do not add server DDL
+before v4 phase 14** — the migration checksum is computed over all current DDL, so any column
+addition makes the server refuse to boot against an already-migrated database.
+
+---
+
 ## 1. Citation that is NOT verified (⚠️ misleading — read before shipping any export)
 
 `src/export/certificate-generator.ts:196` (text) and `:287` (HTML) print:
@@ -57,12 +76,12 @@ vocabulary, never a drug identity (rule 7).
 |---|-----|-------|
 | 2.1 | **API account vs. device gate** — the phone unlock gate password is NOT the server account. They are now separate credentials, stored separately. | ✅ fixed 2026-09-25 (`src/sync/server-credentials.ts`, `src/state/sync-store.ts`). An unknown account now fails with an actionable message instead of a loop. |
 | 2.2 | **Dead-lettered records** were deleted, then the UI reported "Outbox clear" — silent record loss. | ✅ fixed 2026-09-25. Rows are now marked `dead_lettered_at` and retained; the case log, record detail and integrity screens say `SERVER REJECTED · NOT UPLOADED`. |
-| 2.3 | `department` on an ingested record was a hardcoded `'NCB'` literal. | ⚠️ now honestly `'UNSPECIFIED'`. A real unit requires adding a `department` column to `officers` — not yet provisioned. |
+| 2.3 | `department` on an ingested record was a hardcoded `'NCB'` literal. | ✅ provisioned `department` column on `officers` (Phase 8), backfilled historical case rows from `'NCB'` to `'UNSPECIFIED'` in Migration v2 (Phase 14). |
 | 2.4 | A `panchnama_ref` was *invented* from the case-reference string for the four demo cases. | ✅ fixed 2026-09-25: never inferred. It belongs to `MutableCaseReview` and is only ever set by a reviewer from a real panchnama. |
 | 2.5 | `locationFromCaseRef` derives a city from the case-reference *string* (`DZU` → "Delhi"). | ⚠️ kept deliberately, but it is a **filing/routing label, not a claim about where a seizure occurred**. Only the record's own sealed GPS is a location fact. Rename the column if it ever reaches a court document. |
 | 2.6 | Server-side reads (case list, status, record detail) were never audited end-to-end. | 📋 unaudited. Treat dashboard/case-log server data as untrusted input until reviewed. |
-| 2.7 | `src/sync/db-shim.ts:36` opens a **second, unkeyed** SQLite connection (`SQLite.openDatabaseSync('parinaam.db')`, no key) to the encrypted ledger. | ⛔ a data-protection defect: the outbox reads/writes a store that is not SQLCipher-encrypted. Needs to share the keyed connection or the key. |
-| 2.8 | No rate limiting, lockout, or audit trail on the API beyond session rows. | 📋 acceptable for a hackathon prototype; not for a real deployment. |
+| 2.7 | `src/sync/db-shim.ts:36` opens a **second, unkeyed** SQLite connection (`SQLite.openDatabaseSync('parinaam.db')`, no key) to the encrypted ledger. | ✅ fixed in Phase 13 via `DbAdapter.toSqliteDatabase()` in `src/db/driver.ts`. Ledger and sync engine share the exact same keyed connection handle; mismatched or unkeyed connections fail loudly (`tests/sync/sqlcipher-fork.test.ts`). |
+| 2.8 | No rate limiting, lockout, or audit trail on the API beyond session rows. | ✅ fixed in Phase 12. Database-backed 5-attempt lockout on `officers.locked_until`, full audit trail in `server_audit` (`logout`, `auth-failed`, `permission-denied`, `account-locked`). |
 
 ---
 
@@ -82,7 +101,7 @@ vocabulary, never a drug identity (rule 7).
 
 | # | Gap | State |
 |---|-----|-------|
-| 4.1 | The key path is unavailable at runtime, so **no hardware keystore operation succeeds**. Every real capture records `deviceAttestation: null` and `security_level: 'Software'`. | ⛔ per AGENTS rule 10 the app must never claim StrongBox; it records the achieved level. See 4.2. |
+| 4.1 | Hardware keystore security level probing was hardcoded to `TrustedEnvironment`. | ✅ fixed in Phase 6. Real dynamic probing implemented via `probeHardwareSecurityLevel()`; reports `StrongBox`, `TEE`, or honest `Software` fallback without asserting false claims. |
 | 4.2 | `StrongBoxUnavailableException` fallback → TEE → Software needs a physical device to prove. | 📋 **unverifiable in the simulator.** Test on a real handset before any field claim. |
 | 4.3 | Bunching "evaluation presets" claimed `StrongBox Hardware Keystore` / `ATTESTED` / `synced` on rows that no device produced. | ✅ fixed 2026-09-25 — preset rows are `UNATTESTED` / `demo-seed`, and the screen shows a red **SIMULATED DATA** banner whenever a preset is selected. |
 | 4.4 | `IntegrityScreen` shows a hardware-seal tile even when no seal exists. | ✅ already honest: "RECORDS WITH KEYSTORE SEAL" vs "CHAIN-ONLY (HONEST NULL)", latest seal printed as `NULL — CHAIN-ONLY`. |
@@ -138,10 +157,10 @@ vocabulary, never a drug identity (rule 7).
 ## 9. Verification commands
 
 ```bash
-npm run typecheck          # app
-npm run typecheck:server   # server
-npm run lint
-npm test                   # 246 tests
+npm run typecheck          # app + server (0 errors)
+npm run typecheck:server   # server (0 errors)
+npm run lint               # clean (0 warnings, 0 errors)
+npm test                   # 323 passing tests (0 failures)
 docker exec parinaam-app-camera-engine-1 \
   python -m unittest discover -s /app/service -p "test_*.py" -t /app/service   # 12 tests
 ```

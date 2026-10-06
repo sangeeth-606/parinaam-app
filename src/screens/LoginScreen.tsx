@@ -9,9 +9,8 @@
  *      - Verify 6-digit OTP -> Auto-registers device & unlocks Home dashboard.
  */
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
-  Keyboard,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -33,53 +32,37 @@ export const LoginScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
 
   const {
-    isDeviceRegistered,
     registeredPhone,
-    attemptBiometric,
+    // attemptBiometric,
     attemptMpin,
-    attemptPhoneOtp,
+    attempt,
   } = useAuthStore();
 
-  // Mode: 'returning' (Biometric / MPIN) or 'first_time' (Phone -> OTP)
-  const [authMode, setAuthMode] = useState<'returning' | 'first_time'>('returning');
-
-  // For returning: 'biometric' | 'mpin'
-  const [returningMethod, setReturningMethod] = useState<'biometric' | 'mpin'>('mpin');
+  const [returningMethod, setReturningMethod] = useState<'biometric' | 'mpin' | 'password'>('mpin');
   const [mpin, setMpin] = useState(['', '', '', '']);
+  const [username, setUsername] = useState('admin');
+  const [password, setPassword] = useState('');
   const mpinInputRef = useRef<any>(null);
-
-  // For first_time: 'phone' | 'otp'
-  const [step, setStep] = useState<'phone' | 'otp'>('phone');
-  const [phoneNumber, setPhoneNumber] = useState('');
-  const [otpDigits, setOtpDigits] = useState(['', '', '', '', '', '']);
-  const [activeOtpIndex, setActiveOtpIndex] = useState(0);
-  const [countdown, setCountdown] = useState(24);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const hiddenOtpRef = useRef<any>(null);
 
-  // Countdown timer for OTP
-  useEffect(() => {
-    if (step !== 'otp' || countdown <= 0) return;
-    const timer = setInterval(() => {
-      setCountdown((prev) => Math.max(0, prev - 1));
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [step, countdown]);
-
-  // Handle Biometric Login
+  // Handle Biometric Login (commented out per request)
+  /*
   const handleBiometricLogin = async () => {
     if (busy) return;
     setBusy(true);
     setError(null);
     const res = await attemptBiometric();
     setBusy(false);
-    if (res !== 'ok') {
+    if (res === 'locked') {
+      setError('Terminal locked due to repeated failed attempts. Please wait.');
+    } else if (res !== 'ok') {
       setError('Biometric authentication failed. Please enter your MPIN instead.');
       setReturningMethod('mpin');
     }
   };
+  */
 
   // Handle MPIN Login
   const handleMpinSubmit = async (pinStr: string) => {
@@ -88,8 +71,24 @@ export const LoginScreen: React.FC = () => {
     setError(null);
     const res = await attemptMpin(pinStr);
     setBusy(false);
-    if (res !== 'ok') {
-      setError('Invalid MPIN. Try default demo MPIN: 1234 or verify via phone OTP.');
+    if (res === 'locked') {
+      setError('Terminal locked due to repeated failed attempts. Please wait.');
+    } else if (res !== 'ok') {
+      setError('Invalid MPIN. Please enter the enrolled 4-digit security PIN (Demo: 1234).');
+    }
+  };
+
+  // Handle Password Login
+  const handlePasswordSubmit = async () => {
+    if (busy || !username.trim() || !password) return;
+    setBusy(true);
+    setError(null);
+    const res = await attempt(username.trim(), password);
+    setBusy(false);
+    if (res === 'locked') {
+      setError('Terminal locked due to repeated failed attempts. Please wait.');
+    } else if (res !== 'ok') {
+      setError('Invalid credentials. For demo: username "admin", password "adminpass".');
     }
   };
 
@@ -102,48 +101,6 @@ export const LoginScreen: React.FC = () => {
     setMpin(newArr);
     if (clean.length === 4) {
       void handleMpinSubmit(clean);
-    }
-  };
-
-  // Handle Phone OTP
-  const handleGenerateOtp = () => {
-    Keyboard.dismiss();
-    const cleanPhone = phoneNumber.replace(/\s+/g, '');
-    if (cleanPhone.length < 10) {
-      setError('Please enter a valid 10-digit phone number');
-      return;
-    }
-    setError(null);
-    setCountdown(24);
-    setStep('otp');
-    setTimeout(() => hiddenOtpRef.current?.focus(), 250);
-  };
-
-  const handleProceedToApp = async () => {
-    Keyboard.dismiss();
-    if (busy) return;
-    setBusy(true);
-    setError(null);
-
-    const otpString = otpDigits.join('');
-    const res = await attemptPhoneOtp(phoneNumber, otpString, '1234');
-    setBusy(false);
-
-    if (res !== 'ok') {
-      setError('Invalid verification code. Please check and retry.');
-    }
-  };
-
-  const handleOtpChange = (val: string) => {
-    const clean = val.replace(/\D/g, '').slice(0, 6);
-    const newArr = clean.split('');
-    while (newArr.length < 6) {
-      newArr.push('');
-    }
-    setOtpDigits(newArr);
-    setActiveOtpIndex(Math.min(5, clean.length));
-    if (clean.length === 6) {
-      setTimeout(() => void handleProceedToApp(), 200);
     }
   };
 
@@ -192,7 +149,6 @@ export const LoginScreen: React.FC = () => {
         {/* ========================================================================= */}
         {/* RETURNING OFFICER ENROLLED: BIOMETRIC / MPIN LOGIN                        */}
         {/* ========================================================================= */}
-        {authMode === 'returning' ? (
           <View style={styles.card}>
             <View style={styles.returningHeader}>
               <View style={styles.returningOfficerBadge}>
@@ -203,8 +159,9 @@ export const LoginScreen: React.FC = () => {
               <Text style={styles.registeredPhoneSub}>Enrolled Terminal · +91 {registeredPhone || '98452 01842'}</Text>
             </View>
 
-            {/* Toggle Tabs: Biometric vs MPIN */}
+            {/* Toggle Tabs: MPIN vs Password (Biometrics commented out) */}
             <View style={styles.methodToggleRow}>
+              {/* Biometrics tab commented out per request
               <TouchableOpacity
                 style={[styles.methodTab, returningMethod === 'biometric' && styles.methodTabActive]}
                 onPress={() => {
@@ -216,7 +173,7 @@ export const LoginScreen: React.FC = () => {
               >
                 <Icon
                   name="fingerprint"
-                  size={18}
+                  size={16}
                   color={returningMethod === 'biometric' ? '#2563EB' : '#64748B'}
                   strokeWidth={2.2}
                 />
@@ -229,6 +186,7 @@ export const LoginScreen: React.FC = () => {
                   Biometrics
                 </Text>
               </TouchableOpacity>
+              */}
 
               <TouchableOpacity
                 style={[styles.methodTab, returningMethod === 'mpin' && styles.methodTabActive]}
@@ -242,7 +200,7 @@ export const LoginScreen: React.FC = () => {
               >
                 <Icon
                   name="lock"
-                  size={18}
+                  size={16}
                   color={returningMethod === 'mpin' ? '#2563EB' : '#64748B'}
                   strokeWidth={2.2}
                 />
@@ -252,13 +210,38 @@ export const LoginScreen: React.FC = () => {
                     returningMethod === 'mpin' && styles.methodTabTextActive,
                   ]}
                 >
-                  Enter MPIN
+                  MPIN
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.methodTab, returningMethod === 'password' && styles.methodTabActive]}
+                onPress={() => {
+                  setError(null);
+                  setReturningMethod('password');
+                }}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: returningMethod === 'password' }}
+              >
+                <Icon
+                  name="user"
+                  size={16}
+                  color={returningMethod === 'password' ? '#2563EB' : '#64748B'}
+                  strokeWidth={2.2}
+                />
+                <Text
+                  style={[
+                    styles.methodTabText,
+                    returningMethod === 'password' && styles.methodTabTextActive,
+                  ]}
+                >
+                  Password
                 </Text>
               </TouchableOpacity>
             </View>
 
-            {/* Method 1: Biometric View */}
-            {returningMethod === 'biometric' ? (
+            {/* Method 1: Biometric View (commented out per request)
+            {returningMethod === 'biometric' && (
               <View style={styles.biometricContent}>
                 <TouchableOpacity
                   style={styles.biometricTouchCircle}
@@ -285,8 +268,11 @@ export const LoginScreen: React.FC = () => {
                   </Text>
                 </TouchableOpacity>
               </View>
-            ) : (
-              /* Method 2: MPIN View */
+            )}
+            */}
+
+            {/* Method 2: MPIN View */}
+            {returningMethod === 'mpin' && (
               <View style={styles.mpinContent}>
                 <Text style={styles.mpinPrompt}>Enter your 4-digit Security MPIN</Text>
 
@@ -313,11 +299,12 @@ export const LoginScreen: React.FC = () => {
                   autoFocus
                 />
 
+                {/* Quick Hint Card for Demo */}
                 <View style={styles.mpinHintCard}>
                   <View style={styles.mpinHintLeft}>
                     <Icon name="key" size={14} color="#2563EB" strokeWidth={2.4} />
                     <Text style={styles.mpinHintText}>
-                      Authorized Duty MPIN: <Text style={{ fontWeight: '800' }}>1234</Text>
+                      Demo Terminal MPIN: <Text style={{ fontWeight: '800' }}>1234</Text>
                     </Text>
                   </View>
                   <TouchableOpacity
@@ -346,166 +333,78 @@ export const LoginScreen: React.FC = () => {
               </View>
             )}
 
-            {/* Switch Account / Reset Link */}
-            <TouchableOpacity
-              style={styles.switchAuthLink}
-              onPress={() => {
-                setError(null);
-                setAuthMode('first_time');
-                setStep('phone');
-              }}
-              accessibilityRole="button"
-            >
-              <Text style={styles.switchAuthLinkText}>
-                First time setup or switch registered number? Enter Phone & OTP
-              </Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          /* ========================================================================= */
-          /* FIRST TIME ON DEVICE: ENTER PHONE -> ENTER OTP                            */
-          /* ========================================================================= */
-          <View style={styles.card}>
-            {step === 'phone' ? (
-              <>
-                <Text style={styles.cardTitle}>Enter registered phone number</Text>
-                <Text style={styles.firstTimeSub}>
-                  First time signing in on this terminal. Enter your official field number.
-                </Text>
+            {/* Method 3: Officer Password View */}
+            {returningMethod === 'password' && (
+              <View style={styles.passwordContent}>
+                <Text style={styles.mpinPrompt}>Duty Officer Credentials</Text>
 
-                <View style={styles.phoneInputRow}>
-                  <View style={styles.countryPill}>
-                    <Text style={styles.flagText}>🇮🇳</Text>
-                    <Text style={styles.countryCodeText}>+91</Text>
-                  </View>
-
-                  <View style={styles.phoneInputBox}>
-                    <TextInput
-                      value={phoneNumber}
-                      onChangeText={(val) => {
-                        setError(null);
-                        setPhoneNumber(val);
-                      }}
-                      keyboardType="phone-pad"
-                      placeholder="98452 01842"
-                      placeholderTextColor="#94A3B8"
-                      style={styles.phoneTextInput}
-                      accessibilityLabel="Phone Number"
-                    />
-                    {phoneNumber.length > 0 && (
-                      <TouchableOpacity
-                        onPress={() => setPhoneNumber('')}
-                        style={styles.clearBtn}
-                        accessibilityRole="button"
-                        accessibilityLabel="Clear phone number"
-                      >
-                        <Icon name="close" size={14} color="#64748B" strokeWidth={2.4} />
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                </View>
-
-                <View style={styles.secureNotice}>
-                  <Icon name="lock" size={14} color="#2563EB" strokeWidth={2.2} />
-                  <Text style={styles.secureNoticeText}>
-                    A 6-digit one-time code will be dispatched to authenticate this terminal.
-                  </Text>
-                </View>
-
-                <TouchableOpacity
-                  style={styles.primaryAuthBtn}
-                  onPress={handleGenerateOtp}
-                  activeOpacity={0.88}
-                  accessibilityRole="button"
-                >
-                  <Text style={styles.primaryAuthBtnText}>Generate OTP</Text>
-                  <Icon name="chevronRight" size={18} color="#FFFFFF" strokeWidth={2.5} />
-                </TouchableOpacity>
-
-                {isDeviceRegistered && (
-                  <TouchableOpacity
-                    style={styles.switchAuthLink}
-                    onPress={() => {
+                <View style={styles.credentialInputGroup}>
+                  <Text style={styles.credentialLabel}>Officer Username</Text>
+                  <TextInput
+                    value={username}
+                    onChangeText={(val) => {
                       setError(null);
-                      setAuthMode('returning');
+                      setUsername(val);
                     }}
-                    accessibilityRole="button"
-                  >
-                    <Text style={styles.switchAuthLinkText}>
-                      ← Return to Biometric / MPIN Login
-                    </Text>
-                  </TouchableOpacity>
-                )}
-              </>
-            ) : (
-              <>
-                <View style={styles.otpHeaderRow}>
-                  <Text style={styles.cardTitle}>Enter OTP</Text>
-                  <TouchableOpacity onPress={() => setStep('phone')} accessibilityRole="button">
-                    <Text style={styles.editText}>Edit</Text>
-                  </TouchableOpacity>
+                    autoCapitalize="none"
+                    placeholder="admin"
+                    placeholderTextColor="#94A3B8"
+                    style={styles.credentialTextInput}
+                    accessibilityLabel="Officer Username"
+                  />
                 </View>
-                <Text style={styles.otpSentTo}>Sent to +91 {phoneNumber}</Text>
 
-                {/* 6 Digit Boxes */}
-                <TouchableOpacity
-                  activeOpacity={1}
-                  onPress={() => hiddenOtpRef.current?.focus()}
-                  style={styles.otpBoxesRow}
-                >
-                  {otpDigits.map((digit, index) => {
-                    const isFocused = index === activeOtpIndex;
-                    return (
-                      <View
-                        key={index}
-                        style={[
-                          styles.otpBox,
-                          digit ? styles.otpBoxFilled : null,
-                          isFocused ? styles.otpBoxActive : null,
-                        ]}
-                      >
-                        <Text style={styles.otpDigitText}>{digit}</Text>
-                      </View>
-                    );
-                  })}
-                </TouchableOpacity>
+                <View style={styles.credentialInputGroup}>
+                  <Text style={styles.credentialLabel}>Device Password</Text>
+                  <TextInput
+                    value={password}
+                    onChangeText={(val) => {
+                      setError(null);
+                      setPassword(val);
+                    }}
+                    secureTextEntry
+                    placeholder="adminpass"
+                    placeholderTextColor="#94A3B8"
+                    style={styles.credentialTextInput}
+                    accessibilityLabel="Device Password"
+                  />
+                </View>
 
-                <TextInput
-                  ref={hiddenOtpRef}
-                  value={otpDigits.join('')}
-                  onChangeText={handleOtpChange}
-                  keyboardType="number-pad"
-                  maxLength={6}
-                  style={styles.hiddenInput}
-                />
-
-                <View style={styles.resendRow}>
-                  <Text style={styles.resendLabel}>Didn't receive code?</Text>
-                  {countdown > 0 ? (
-                    <Text style={styles.countdownText}>Resend in {countdown}s</Text>
-                  ) : (
-                    <TouchableOpacity onPress={handleGenerateOtp}>
-                      <Text style={styles.resendBtnText}>Resend OTP</Text>
-                    </TouchableOpacity>
-                  )}
+                <View style={styles.mpinHintCard}>
+                  <View style={styles.mpinHintLeft}>
+                    <Icon name="shieldCheck" size={14} color="#2563EB" strokeWidth={2.4} />
+                    <Text style={styles.mpinHintText}>
+                      Demo: <Text style={{ fontWeight: '800' }}>admin</Text> / <Text style={{ fontWeight: '800' }}>adminpass</Text>
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setUsername('admin');
+                      setPassword('adminpass');
+                    }}
+                    style={styles.quickFillPill}
+                    activeOpacity={0.8}
+                    accessibilityRole="button"
+                    accessibilityLabel="Quick fill default credentials"
+                  >
+                    <Text style={styles.quickFillText}>1-Tap Fill</Text>
+                  </TouchableOpacity>
                 </View>
 
                 <TouchableOpacity
                   style={styles.primaryAuthBtn}
-                  onPress={() => void handleProceedToApp()}
+                  onPress={() => void handlePasswordSubmit()}
                   activeOpacity={0.88}
-                  disabled={busy}
+                  disabled={!username.trim() || !password || busy}
                   accessibilityRole="button"
                 >
                   <Text style={styles.primaryAuthBtnText}>
-                    {busy ? 'Verifying…' : 'Proceed to App'}
+                    {busy ? 'Authenticating…' : 'Sign In with Password'}
                   </Text>
-                  <Icon name="chevronRight" size={18} color="#FFFFFF" strokeWidth={2.5} />
                 </TouchableOpacity>
-              </>
+              </View>
             )}
           </View>
-        )}
 
         {/* Security / Legal Badges */}
         <View style={styles.footerBadges}>
@@ -758,6 +657,29 @@ const createStyles = (theme: Theme) => {
       fontSize: 22,
       fontWeight: '800',
       color: '#1E3A8A',
+    },
+    passwordContent: {
+      paddingVertical: 10,
+    },
+    credentialInputGroup: {
+      marginBottom: 14,
+    },
+    credentialLabel: {
+      fontSize: 12.5,
+      fontWeight: '600',
+      color: '#475569',
+      marginBottom: 6,
+    },
+    credentialTextInput: {
+      backgroundColor: '#F8FAFC',
+      borderWidth: 1.5,
+      borderColor: '#E2E8F0',
+      borderRadius: 12,
+      paddingHorizontal: 14,
+      height: 48,
+      fontSize: 15,
+      fontWeight: '600',
+      color: '#0F172A',
     },
     phoneInputRow: {
       flexDirection: 'row',

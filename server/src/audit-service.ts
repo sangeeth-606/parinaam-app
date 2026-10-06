@@ -1,14 +1,10 @@
 import type { ServerDb } from './db.ts';
 import type { AuthedOfficer } from './auth.ts';
-import { ApiError } from '../../src/contracts/api-errors.ts';
+import { requirePermission } from './rbac.ts';
 import { likeContains, optionalQuery, pageMetadata, parsePagination } from './query.ts';
 
 function requireAuditRole(officer: AuthedOfficer | null): AuthedOfficer {
-  if (!officer) throw new ApiError(401, 'AUTH_REQUIRED', 'authentication required');
-  if (officer.role !== 'ADMIN' && officer.role !== 'SUPERVISOR') {
-    throw new ApiError(403, 'AUDIT_ROLE_REQUIRED', 'audit access is restricted to admin and supervisor roles');
-  }
-  return officer;
+  return requirePermission(officer, 'audit.read', 'AUDIT_ROLE_REQUIRED');
 }
 
 export async function listAudit(

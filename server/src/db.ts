@@ -19,8 +19,8 @@ export type { SqlEngine, SqlRunResult, SqlStore } from './storage.ts';
 export const CASE_STATUSES = ['REPORTED', 'UNDER_REVIEW', 'REVIEWED', 'ESCALATED'] as const;
 export type CaseStatus = (typeof CASE_STATUSES)[number];
 
-export const OFFICER_ROLES = ['JUNIOR', 'SENIOR', 'ADMIN', 'SUPERVISOR', 'JUDICIARY'] as const;
-export type OfficerRole = (typeof OFFICER_ROLES)[number];
+import { OFFICER_ROLES, type OfficerRole } from '../../src/contracts/officer-roles.ts';
+export { OFFICER_ROLES, type OfficerRole };
 
 export const OFFICER_STATUSES = ['PENDING', 'ACTIVE', 'SUSPENDED'] as const;
 export type OfficerStatus = (typeof OFFICER_STATUSES)[number];
@@ -217,12 +217,11 @@ export class ServerDb {
     try {
       await runMigrations(store);
       const db = new ServerDb(store);
-      const resolvedSqliteTarget = target ?? defaultDbPath();
       const explicitBootstrapPassword =
-        process.env.PARINAAM_BOOTSTRAP_ADMIN_PASSWORD ?? process.env.PARINAAM_API_ADMIN_PASSWORD;
-      if (resolvedSqliteTarget === ':memory:') {
-        await db.bootstrapAdminIfEmpty(process.env.PARINAAM_API_ADMIN_PASSWORD ?? 'adminpass');
-      } else if (explicitBootstrapPassword) {
+        process.env.PARINAAM_BOOTSTRAP_ADMIN_PASSWORD ??
+        process.env.PARINAAM_API_ADMIN_PASSWORD ??
+        process.env.PARINAAM_SEED_PASSWORD;
+      if (explicitBootstrapPassword) {
         await db.bootstrapAdminIfEmpty(explicitBootstrapPassword);
       }
       return db;
@@ -333,6 +332,7 @@ export class ServerDb {
     return rows.map(rowFromDatabase);
   }
 
+  /** @deprecated — not routed by HTTP endpoints; user-service.ts patchAccount handles mutations */
   async approveOfficer(officerId: number, approverId: number, note?: string): Promise<OfficerRow> {
     await this.setOfficerStatus(officerId, 'ACTIVE', approverId, note);
     const row = await this.getOfficerById(officerId);
@@ -340,6 +340,7 @@ export class ServerDb {
     return row;
   }
 
+  /** @deprecated — not routed by HTTP endpoints; user-service.ts patchAccount handles mutations */
   async suspendOfficer(officerId: number, actorId: number, note?: string): Promise<OfficerRow> {
     await this.setOfficerStatus(officerId, 'SUSPENDED', actorId, note);
     const row = await this.getOfficerById(officerId);
@@ -347,6 +348,7 @@ export class ServerDb {
     return row;
   }
 
+  /** @deprecated — not routed by HTTP endpoints; user-service.ts patchAccount handles mutations */
   async setOfficerStatus(
     officerId: number,
     status: OfficerStatus,
@@ -384,6 +386,7 @@ export class ServerDb {
     });
   }
 
+  /** @deprecated — not routed by HTTP endpoints; user-service.ts patchAccount handles mutations */
   async setOfficerPassword(officerId: number, password: string, actorOfficerId: number): Promise<void> {
     const credentials = await hashPassword(password);
     const now = new Date().toISOString();

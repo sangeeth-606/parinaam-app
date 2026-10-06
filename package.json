@@ -17,9 +17,9 @@
     "test": "node --experimental-strip-types --test tests/**/*.test.ts",
     "prebuild": "expo prebuild",
     "postinstall": "node scripts/patch-react-native.js",
-    "server": "node --experimental-strip-types server/src/main.ts",
-    "seed:server": "node --experimental-strip-types server/src/seed.ts",
-    "seed": "node --experimental-strip-types server/src/seed.ts",
+    "server": "node --experimental-strip-types --env-file=.env server/src/main.ts",
+    "seed:server": "node --experimental-strip-types --env-file=.env server/src/seed.ts",
+    "seed": "node --experimental-strip-types --env-file=.env server/src/seed.ts",
     "typecheck:server": "tsc -p server/tsconfig.json",
     "typecheck": "tsc --noEmit && tsc -p server/tsconfig.json"
   },

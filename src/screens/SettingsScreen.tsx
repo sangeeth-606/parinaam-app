@@ -283,7 +283,7 @@ export const SettingsScreen: React.FC = () => {
             <TouchableOpacity
               style={[styles.syncBtn, syncBusy && { opacity: 0.5 }]}
               disabled={syncBusy}
-              onPress={() => void (async () => { setSyncBusy(true); const sum = await useSyncStore.getState().syncNow(); await useSyncStore.getState().refreshCases(); setSyncBusy(false); setSyncNote(sum.error ? `FAILED — ${sum.error.toUpperCase()}` : sum.skippedBackoff ? 'RETRY SCHEDULED (backoff)' : `${sum.synced} UPLOADED · ${sum.failed} RETRYING`); })()}
+              onPress={() => void (async () => { setSyncBusy(true); await useSyncStore.getState().requeueDeadLetters(); const sum = await useSyncStore.getState().syncNow(true); await useSyncStore.getState().refreshCases(); setSyncBusy(false); setSyncNote(sum.error ? `FAILED — ${sum.error.toUpperCase()}` : sum.skippedBackoff ? 'RETRY SCHEDULED (backoff)' : `${sum.synced} UPLOADED · ${sum.failed} RETRYING`); })()}
               accessibilityRole="button"
               accessibilityLabel="Synchronize queued records now"
             >

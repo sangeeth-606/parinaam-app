@@ -18,6 +18,7 @@ export interface AuthedOfficer {
   role: OfficerRole;
   status: OfficerStatus;
   token: string;
+  expiresAt: string;
 }
 
 interface OfficerCredentialRow {
@@ -29,6 +30,8 @@ interface OfficerCredentialRow {
   status: OfficerStatus;
   pass_salt: string;
   pass_hash: string;
+  failed_attempts?: number | null;
+  locked_until?: string | null;
 }
 
 interface SessionOfficerRow {
@@ -128,6 +131,7 @@ function officerFromRow(row: SessionOfficerRow, token: string): AuthedOfficer | 
     role: row.role,
     status: row.status,
     token,
+    expiresAt: row.expires_at,
   };
 }
 
@@ -146,21 +150,48 @@ export async function login(
 
   const row = normalizedUsername
     ? await db.store.get<OfficerCredentialRow>(
-        `SELECT id, officer_code, username, display_name, role, status, pass_salt, pass_hash
+        `SELECT id, officer_code, username, display_name, role, status, pass_salt, pass_hash, failed_attempts, locked_until
            FROM officers WHERE username = ?`,
         normalizedUsername,
       )
     : undefined;
+
+  const now = new Date();
+  if (row?.locked_until) {
+    const lockedUntilMs = Date.parse(row.locked_until);
+    if (Number.isFinite(lockedUntilMs) && lockedUntilMs > now.getTime()) {
+      await db.audit('auth', 'login-locked', normalizedUsername, `locked until ${row.locked_until} (from ${ip})`);
+      return null;
+    }
+  }
+
   const passwordValid = row
     ? await verifyPassword(password, row.pass_salt, row.pass_hash)
     : await verifyPassword(password, DUMMY_SALT, DUMMY_HASH).then(() => false);
   if (!row || !passwordValid || row.status !== 'ACTIVE') {
+    if (row && Number.isSafeInteger(Number(row.id))) {
+      const currentFailures = Number(row.failed_attempts ?? 0) + 1;
+      if (currentFailures >= MAX_LOGIN_ATTEMPTS) {
+        const lockUntil = new Date(now.getTime() + LOGIN_WINDOW_MS).toISOString();
+        await db.store.run(
+          'UPDATE officers SET failed_attempts = 0, locked_until = ? WHERE id = ?',
+          lockUntil,
+          row.id,
+        );
+        await db.audit('auth', 'account-locked', normalizedUsername, `5 failed attempts; locked until ${lockUntil} from ${ip}`);
+      } else {
+        await db.store.run(
+          'UPDATE officers SET failed_attempts = ? WHERE id = ?',
+          currentFailures,
+          row.id,
+        );
+      }
+    }
     await db.audit('auth', 'login-failed', normalizedUsername, `from ${ip}`);
     return null;
   }
 
   const token = randomBytes(32).toString('hex');
-  const now = new Date();
   const expiresAt = new Date(now.getTime() + SESSION_TTL_MS);
   const officerId = Number(row.id);
   if (!Number.isSafeInteger(officerId) || officerId <= 0) {
@@ -182,7 +213,11 @@ export async function login(
       now.toISOString(),
       expiresAt.toISOString(),
     );
-    await tx.run('UPDATE officers SET last_login_at = ? WHERE id = ?', now.toISOString(), officerId);
+    await tx.run(
+      'UPDATE officers SET last_login_at = ?, failed_attempts = 0, locked_until = NULL WHERE id = ?',
+      now.toISOString(),
+      officerId,
+    );
     await tx.run(
       `INSERT INTO server_audit (officer_code, actor, action, subject, at, detail)
        VALUES (?,?,?,?,?,?)`,
@@ -208,12 +243,23 @@ export async function login(
     role: row.role,
     status: row.status,
     token,
+    expiresAt: expiresAt.toISOString(),
   };
 }
 
-export async function authenticate(db: ServerDb, headerValue: string | undefined): Promise<AuthedOfficer | null> {
+export async function authenticate(
+  db: ServerDb,
+  headerValue: string | undefined,
+  ip = 'unknown',
+  requestId = 'unknown',
+): Promise<AuthedOfficer | null> {
   const token = bearerToken(headerValue);
-  if (!token) return null;
+  if (!token) {
+    if (headerValue) {
+      await db.audit('auth', 'auth-failed', 'anonymous', `malformed bearer header from ${ip} (req ${requestId})`);
+    }
+    return null;
+  }
   const tokenHash = hashBearerToken(token);
   const row = await db.store.get<SessionOfficerRow>(
     `SELECT o.id, o.officer_code, o.username, o.display_name, o.role, o.status, s.expires_at
@@ -221,19 +267,28 @@ export async function authenticate(db: ServerDb, headerValue: string | undefined
       WHERE s.token_hash = ?`,
     tokenHash,
   );
-  if (!row) return null;
+  if (!row) {
+    await db.audit('auth', 'auth-failed', 'anonymous', `unknown token from ${ip} (req ${requestId})`);
+    return null;
+  }
   const expiresAt = Date.parse(row.expires_at);
   if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
     await db.store.run('DELETE FROM sessions WHERE token_hash = ?', tokenHash);
+    await db.audit('auth', 'auth-failed', row.username, `expired token from ${ip} (req ${requestId})`);
     return null;
   }
   if (row.status !== 'ACTIVE') {
     await db.store.run('DELETE FROM sessions WHERE token_hash = ?', tokenHash);
+    await db.audit('auth', 'auth-failed', row.username, `inactive officer (${row.status}) from ${ip} (req ${requestId})`);
     return null;
   }
   return officerFromRow(row, token);
 }
 
-export async function logout(db: ServerDb, token: string): Promise<void> {
-  await db.store.run('DELETE FROM sessions WHERE token_hash = ?', hashBearerToken(token));
+export async function logout(db: ServerDb, token: string, officer?: AuthedOfficer | null): Promise<void> {
+  const tokenHash = hashBearerToken(token);
+  if (officer) {
+    await db.audit(officer.username, 'logout', officer.officerCode, `session terminated (${officer.officerCode})`);
+  }
+  await db.store.run('DELETE FROM sessions WHERE token_hash = ?', tokenHash);
 }

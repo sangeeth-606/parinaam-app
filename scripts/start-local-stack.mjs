@@ -13,7 +13,10 @@
  *   node scripts/start-local-stack.mjs --lan --go
  *   node scripts/start-local-stack.mjs --tunnel
  *
- * The launcher starts db, server, and camera-engine. It removes only services
+ * The launcher starts the API server and camera-engine. The database is the
+ * Supabase-hosted PostgreSQL named by DATABASE_URL in .env, shared with
+ * parinaam-web — no local `db` container is started or managed here.
+ * It removes only services
  * that it started itself when Metro exits; the PostgreSQL volume is preserved.
  */
 
@@ -101,11 +104,11 @@ const expoEnv = {
   // credential (admin/adminpass), which the API rejects. Sourced from the same
   // compose variables the server starts with, so the two always agree.
   EXPO_PUBLIC_API_USERNAME: process.env.PARINAAM_API_ADMIN_USER ?? 'admin',
-  EXPO_PUBLIC_API_PASSWORD: process.env.PARINAAM_API_ADMIN_PASSWORD ?? 'parinaam-admin-2026',
+  EXPO_PUBLIC_API_PASSWORD: process.env.PARINAAM_SEED_PASSWORD ?? process.env.PARINAAM_API_ADMIN_PASSWORD ?? 'Parinaam#2026',
 };
 if (flags.go) expoEnv.EXPO_NO_REDIRECT_PAGE = '1';
 
-const composeArgs = ['compose', 'up', '-d', 'db', 'server', 'camera-engine'];
+const composeArgs = ['compose', 'up', '-d', 'server', 'camera-engine'];
 const expoArgs = ['start'];
 if (flags.tunnel) expoArgs.push('--tunnel');
 else if (flags.lan) expoArgs.push('--lan');
@@ -125,7 +128,7 @@ if (flags.dryRun) {
 }
 
 const alreadyRunning = new Set(
-  ['db', 'server', 'camera-engine'].filter((service) => runningServiceIds(service).length > 0),
+  ['server', 'camera-engine'].filter((service) => runningServiceIds(service).length > 0),
 );
 let stackStarted = false;
 let child = null;
@@ -136,7 +139,18 @@ process.on('SIGINT', () => requestShutdown('SIGINT'));
 process.on('SIGTERM', () => requestShutdown('SIGTERM'));
 
 try {
-  console.log('[Parinaam] Starting the self-hosted stack (database, API, camera-engine)…');
+  // Preflight: the API and camera-engine bind fixed host ports. If something
+  // outside this stack already holds one (most often a bare `npm run server`
+  // left running in another terminal), `docker compose up` fails deep inside
+  // the daemon with an opaque "address already in use" and the launcher then
+  // tears down the services it just started. Detect it up front and explain
+  // exactly what to stop instead.
+  assertPortsAvailable([
+    { port: Number(apiPort), label: 'API', hint: 'npm run server' },
+    { port: Number(enginePort), label: 'camera-engine', hint: 'docker compose stop camera-engine' },
+  ]);
+
+  console.log('[Parinaam] Starting the stack (Supabase database, API, camera-engine)…');
   stackStarted = true;
   run('docker', composeArgs, composeEnv);
 
@@ -198,7 +212,7 @@ function requestShutdown(signal) {
 
 function cleanupStartedServices() {
   if (!stackStarted || flags.keepServices) return;
-  const startedByLauncher = ['camera-engine', 'server', 'db'].filter(
+  const startedByLauncher = ['camera-engine', 'server'].filter(
     (service) => !alreadyRunning.has(service),
   );
   for (const service of startedByLauncher) {
@@ -252,6 +266,87 @@ function findLanIp() {
   const preferred = candidates.find(({ name }) => /^(wl|en|eth)/i.test(name));
   const fallback = candidates.find(({ address }) => !address.startsWith('172.17.'));
   return (preferred ?? fallback ?? candidates[0])?.address ?? null;
+}
+
+/**
+ * Refuse to start when a required host port is already held by a process this
+ * launcher does not own. A port held by one of our own already-running compose
+ * services is fine — `docker compose up` will simply reuse it.
+ */
+function assertPortsAvailable(targets) {
+  const ownedPorts = new Set(
+    ['server', 'camera-engine'].flatMap((service) =>
+      runningServiceIds(service).map((id) => composePublishedPort(service, id)),
+    ),
+  );
+
+  const conflicts = targets
+    .filter((t) => Number.isInteger(t.port) && t.port > 0)
+    .filter((t) => !ownedPorts.has(t.port))
+    .filter((t) => isPortListening(t.port));
+
+  if (conflicts.length === 0) return;
+
+  const lines = conflicts.map(
+    ({ port, label, hint }) => `  • port ${port} (${label}) is already in use — stop it with: ${hint}`,
+  );
+  throw new Error(
+    [
+      'Cannot start the local stack — required ports are already in use:',
+      ...lines,
+      '',
+      'This launcher starts the API and camera-engine itself, so it must be the',
+      'only thing binding those ports. The usual cause is a standalone',
+      "'npm run server' left running in another terminal — press Ctrl+C there first.",
+      '',
+      'Already-running containers of this stack are reused and need no action.',
+      `To see what holds a port: lsof -i :${conflicts[0].port}`,
+    ].join('\n'),
+  );
+}
+
+/** True when something is accepting connections on `port` on the loopback. */
+function isPortListening(port) {
+  const probe = spawnSync(
+    process.execPath,
+    [
+      '-e',
+      `const net=require('net');const s=net.connect(${port},'127.0.0.1');` +
+        `s.on('connect',()=>{s.destroy();process.exit(0)});` +
+        `s.on('error',()=>process.exit(1));` +
+        `setTimeout(()=>process.exit(1),1500);`,
+    ],
+    { stdio: 'ignore', timeout: 5_000 },
+  );
+  return probe.status === 0;
+}
+
+/**
+ * The host port a running compose service publishes, or null when unknown.
+ * Used so we don't report a conflict against our own containers.
+ *
+ * `NetworkSettings.Ports` has the shape
+ *   {"8572/tcp":[{"HostIp":"0.0.0.0","HostPort":"8572"}]}
+ * so the published HOST port is the `HostPort` field — not the container port
+ * that forms the object key (those differ whenever a host mapping is remapped).
+ */
+function composePublishedPort(service, containerId) {
+  const result = spawnSync(
+    'docker',
+    ['inspect', '-f', '{{json .NetworkSettings.Ports}}', containerId],
+    { cwd: ROOT, env: composeEnv, encoding: 'utf8' },
+  );
+  if (result.error || result.status !== 0 || !result.stdout.trim()) return null;
+  try {
+    const ports = JSON.parse(result.stdout.trim());
+    const hostPorts = Object.values(ports ?? {})
+      .flat()
+      .map((binding) => Number(binding?.HostPort))
+      .filter((port) => Number.isInteger(port) && port > 0);
+    return hostPorts.length > 0 ? hostPorts[0] : null;
+  } catch {
+    return null;
+  }
 }
 
 function expoBinary() {

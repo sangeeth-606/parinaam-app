@@ -36,7 +36,7 @@ export class OutboxSyncService implements SyncModule {
     const key = idempotencyKey ?? `rec:${recordUuid}`;
 
     const insertStmt = this.db.prepare(`
-      INSERT INTO sync_queue (record_uuid, idempotency_key, attempts, next_attempt_at)
+      INSERT OR IGNORE INTO sync_queue (record_uuid, idempotency_key, attempts, next_attempt_at)
       VALUES (?, ?, 0, ?)
     `);
 
@@ -46,11 +46,13 @@ export class OutboxSyncService implements SyncModule {
 
   /**
    * Processes all pending records in the outbox queue with exponential backoff.
+   * v4 phase 15: dead-lettered rows must not be re-drained in an infinite loop.
    */
   public async processOutbox(): Promise<{ syncedCount: number; failureCount: number }> {
     const pendingStmt = this.db.prepare(`
       SELECT id, record_uuid, idempotency_key, attempts, next_attempt_at, last_error
       FROM sync_queue
+      WHERE dead_lettered_at IS NULL
       ORDER BY id ASC
     `);
 
@@ -114,7 +116,9 @@ export class OutboxSyncService implements SyncModule {
   }
 
   public getPendingCount(): number {
-    const countRow = this.db.prepare('SELECT COUNT(*) as count FROM sync_queue').get() as { count: number };
+    const countRow = this.db
+      .prepare('SELECT COUNT(*) as count FROM sync_queue WHERE dead_lettered_at IS NULL')
+      .get() as { count: number };
     return countRow?.count ?? 0;
   }
 

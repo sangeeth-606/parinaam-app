@@ -97,13 +97,15 @@ async function makeLive(
 }
 
 before(async () => {
+  process.env.PARINAAM_SEED_PASSWORD = 'Parinaam#2026';
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   await seedDemo(db);
-  const admin = await login('admin', 'adminpass');
+  const admin = await login('admin', 'Parinaam#2026');
+  console.log('ADMIN LOGIN RESULT:', admin.status, admin.json);
   adminToken = String(admin.json.token);
-  juniorToken = String((await login('gill', 'parinaam-officer-2026')).json.token);
-  supervisorToken = String((await login('supervisor', 'parinaam-super-2026')).json.token);
+  juniorToken = String((await login('gill', 'Parinaam#2026')).json.token);
+  supervisorToken = String((await login('supervisor', 'Parinaam#2026')).json.token);
 });
 
 after(async () => {
@@ -223,6 +225,10 @@ describe('Parinaam self-hosted API contract', () => {
     const stats = await api('GET', '/api/v1/stats');
     assert.equal(stats.status, 200);
     assert.ok((stats.json.totals as { records: number }).records >= 18);
+    assert.ok(stats.json.accounts, 'admin should see accounts breakdown in stats');
+    const juniorStats = await api('GET', '/api/v1/stats', { token: juniorToken });
+    assert.equal(juniorStats.status, 200);
+    assert.equal(juniorStats.json.accounts, undefined, 'junior should not see accounts breakdown in stats');
     const exported = await api('GET', '/api/v1/cases/LIVE%2FAPI%2FCR-01%2F2026/export?formats=pdf,docx,xlsx');
     assert.equal(exported.status, 200);
     assert.deepEqual(exported.json.requested_formats, ['pdf', 'docx', 'xlsx']);
@@ -274,6 +280,7 @@ describe('Parinaam self-hosted API contract', () => {
       role: 'ADMIN',
       status: 'ACTIVE',
       token: adminToken,
+      expiresAt: new Date(Date.now() + 3600_000).toISOString(),
     };
     const outcomes = await Promise.allSettled([
       patchAccount(db, actor, 'admin', { role: 'SENIOR' }),

@@ -36,7 +36,8 @@ before(async () => {
   if (!databaseUrl) return;
   process.env.DATABASE_URL = databaseUrl;
   process.env.PARINAAM_DB = 'postgres';
-  process.env.PARINAAM_API_ADMIN_PASSWORD = 'parinaam-admin-2026';
+  process.env.PARINAAM_SEED_PASSWORD = 'Parinaam#2026';
+  delete process.env.PARINAAM_API_ADMIN_PASSWORD;
   delete process.env.PARINAAM_SEED;
   apiServer = await createApiServer();
   await new Promise<void>((resolve) => apiServer?.server.listen(0, '127.0.0.1', resolve));
@@ -47,7 +48,7 @@ before(async () => {
   assert.equal(health.engine, 'postgres');
   assert.equal(health.records, 15);
   await useLedgerStore.getState().seed();
-  await rememberServerCredentials({ username: 'admin', password: 'parinaam-admin-2026' });
+  await rememberServerCredentials({ username: 'admin', password: 'Parinaam#2026' });
   await useSyncStore.getState().init();
   await useSyncStore.getState().setServerUrl(base);
 });
@@ -127,7 +128,7 @@ suite('optional app SQLite → PostgreSQL live sync', () => {
     const loginResponse = await fetch(`${base}/api/v1/auth/login`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ username: 'admin', password: 'parinaam-admin-2026' }),
+      body: JSON.stringify({ username: 'admin', password: 'Parinaam#2026' }),
     });
     const login = (await loginResponse.json()) as { token: string };
     assert.equal(loginResponse.status, 200);

@@ -144,4 +144,157 @@ describe('Honesty guards: nothing may assert a fact it did not measure', () => {
       assert.ok(/dead_lettered_at/.test(repo), 'the ledger must record the dead-letter marker');
     });
   });
+
+  describe('Rule 4/7 — a missing measurement is absent, never defaulted', () => {
+    const results = code('src/screens/ResultsScreen.tsx');
+
+    it('does not substitute a neutral-grey CIE-Lab triple for an unmeasured capture', () => {
+      assert.ok(
+        !/l:\s*50(\.0)?\s*,\s*a:\s*0(\.0)?\s*,\s*b:\s*0(\.0)?/.test(results),
+        'a capture the engine could not measure returns normalized_color:null; that absence must be ' +
+          'refused, never sealed as {l:50,a:0,b:0}'
+      );
+    });
+
+    it('never invents a calibration grade', () => {
+      assert.ok(
+        !/grade:\s*'GOOD'/.test(results),
+        "grade 'GOOD' must come from the calibration card result, never from a literal fallback"
+      );
+    });
+
+    it('never invents a delta-E residual with a numeric fallback', () => {
+      assert.ok(
+        !/(meanDeltaE|maxDeltaE):[^,}\n]*\?\?\s*\d/.test(results),
+        'delta-E residuals must not carry numeric ?? fallbacks — absent is absent'
+      );
+    });
+
+    it('refuses to seal when no measurement exists', () => {
+      assert.ok(
+        /!\s*measuredLab\s*\|\|\s*!\s*measuredResidual/.test(results),
+        'the seal path must block on a missing Lab measurement or calibration residual'
+      );
+    });
+  });
+
+  describe('Sealing — a control must do what its label says', () => {
+    const detail = code('src/screens/RecordDetailScreen.tsx');
+
+    it('offers no control on RecordDetail that claims to seal', () => {
+      assert.ok(
+        !/accessibilityLabel="[^"]*seal[^"]*"/i.test(detail),
+        'a record on RecordDetail was already sealed by ResultsScreen; the screen must not offer a seal action'
+      );
+      assert.ok(
+        !/SEAL EVIDENCE/i.test(detail),
+        'the SEAL EVIDENCE & CREATE RECORD button was a pure navigate() stub'
+      );
+    });
+
+    it('never fabricates a record for an unknown uuid', () => {
+      // `CONSISTENT_WITH_REAGENT_POSITIVE` legitimately appears when READING a real record;
+      // the fabrication was the fallback object literal built when the uuid was missing.
+      assert.ok(
+        !/recordFromStore\s*\?\?/.test(detail),
+        'a fallback record object makes any stale uuid render as a sealed positive dossier'
+      );
+      assert.ok(
+        !/deltaE:\s*1\.48/.test(detail) && !/confidence:\s*0\.942/.test(detail),
+        'the invented ΔE 1.48 / confidence 0.942 must not come back'
+      );
+      assert.ok(/RECORD NOT FOUND/.test(detail), 'the not-found empty state must exist');
+    });
+
+    it('never hardcodes a SEALED label', () => {
+      assert.ok(
+        !/>\s*SEALED \(SHA-256\)\s*</.test(detail),
+        'the integrity line must be derived from deviceAttestation'
+      );
+    });
+  });
+
+  describe('Sealing — a chain-sealed record is never called PENDING SEAL', () => {
+    const caseLog = code('src/screens/CaseLogScreen.tsx');
+    const home = code('src/screens/HomeScreen.tsx');
+
+    it('the case-log pill is derived from seal state, not a missing attestation', () => {
+      assert.ok(
+        !/'PENDING SEAL'/.test(caseLog),
+        'deviceAttestation is always null on device; a chain-linked record is sealed'
+      );
+      assert.ok(/CHAIN-ONLY/.test(caseLog), 'the absent device tier must be stated explicitly');
+    });
+
+    it('the duty-board SEALED counter counts chain-sealed records', () => {
+      assert.ok(
+        !/syncStatus === 'synced' \|\| r\.deviceAttestation/.test(home),
+        '"sealed" must not mean "uploaded" — a freshly sealed record is sealed before it syncs'
+      );
+    });
+  });
+
+  describe('A failed ledger write is surfaced, not swallowed', () => {
+    const store = code('src/state/ledger-store.ts');
+
+    it('persistence failure is recorded on the record and the store', () => {
+      assert.ok(
+        /persistError/.test(store),
+        'appendRecord must attach persistError so the UI can say the record is not on disk'
+      );
+      assert.ok(
+        /const written = await persistRecord/.test(store),
+        'persistRecord returns false on a missing adapter; the false branch must be honoured'
+      );
+    });
+  });
+
+  describe('Recorded facts are not form fields', () => {
+    const results = code('src/screens/ResultsScreen.tsx');
+
+    it('no screen accepts a typed location or timestamp for the sealed record', () => {
+      assert.ok(
+        !/setLocationStr|setTimestampStr/.test(results),
+        'the GPS/timestamp TextInputs silently discarded what was typed; they are read-only now'
+      );
+    });
+
+    it('the displayed fix and the sealed fix are the same acquisition', () => {
+      const acquisitions = (results.match(/acquireGeoTag\(\)/g) ?? []).length;
+      assert.ok(
+        acquisitions === 1,
+        `acquireGeoTag must be called once; found ${acquisitions} call sites, so display and seal can disagree`
+      );
+      assert.ok(
+        /gps: sealGeo/.test(results),
+        'the sealed payload must carry the same fix that was displayed'
+      );
+    });
+
+    it('the intake wizard offers no manual coordinate entry', () => {
+      const wizard = code('src/screens/NewTestSetupScreen.tsx');
+      assert.ok(
+        !/\blatitude\b|\blongitude\b/i.test(wizard),
+        'manual coordinate entry would recreate the discarded-input bug'
+      );
+    });
+  });
+
+  describe('Phase 11 — Device gate honesty', () => {
+    const authStore = code('src/state/auth-store.ts');
+    it('no unlock path mints a session without verifying credentials', () => {
+      assert.ok(
+        !/mpin === '1234' \|\| mpin === '9007'/.test(authStore),
+        'attemptMpin must not hardcode 1234 or 9007 bypasses'
+      );
+      assert.ok(
+        !/otp\.length >= 4/.test(authStore),
+        'attemptPhoneOtp must not accept arbitrary OTP strings'
+      );
+      assert.ok(
+        !/officer:\s*DEMO_OFFICER/.test(code('src/state/auth-store.ts').slice(code('src/state/auth-store.ts').indexOf('restore:'))),
+        'restore() must not pre-load DEMO_OFFICER when the phone is locked'
+      );
+    });
+  });
 });

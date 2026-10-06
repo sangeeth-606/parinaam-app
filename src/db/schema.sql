@@ -109,7 +109,8 @@ CREATE TABLE IF NOT EXISTS sync_queue (
   idempotency_key TEXT NOT NULL UNIQUE,
   attempts        INTEGER NOT NULL DEFAULT 0,
   next_attempt_at TEXT,
-  last_error      TEXT
+  last_error      TEXT,
+  dead_lettered_at TEXT
 );
 
 -- Full-Text Search Table (FTS5)

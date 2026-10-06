@@ -52,7 +52,10 @@ paths:
               $ref: '#/components/schemas/LoginRequest'
       responses:
         '200':
-          description: A newly issued bearer session.
+          description: >-
+            A newly issued bearer session. Note integration asymmetry: POST /auth/login
+            returns { token, expires_at, officer: {...} } with officer fields nested,
+            whereas GET /auth/me returns the officer object flat at root.
           content:
             application/json:
               schema:
@@ -83,7 +86,10 @@ paths:
       operationId: getCurrentOfficer
       responses:
         '200':
-          description: Current authenticated officer.
+          description: >-
+            Current authenticated officer. Returned as a flat object (id, officer_code,
+            username, display_name, role, status), unlike POST /auth/login which nests
+            officer under 'officer'.
           content:
             application/json:
               schema:
@@ -104,13 +110,17 @@ paths:
               $ref: '#/components/schemas/FieldTestRecord'
       responses:
         '201':
-          description: Record and case facts committed atomically.
+          description: >-
+            Record and case facts committed atomically on first ingestion.
+            Returns { status: 'stored', ... }.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/IngestResponse'
         '200':
-          description: Existing UUID or idempotency replay.
+          description: >-
+            Existing UUID or idempotency replay. Returns { status: 'already-stored', ... }.
+            Clients MUST read body.status rather than assuming 201 on all successful submissions.
           content:
             application/json:
               schema:
@@ -164,10 +174,10 @@ paths:
           application/json:
             schema:
               type: object
-              required: [uuid]
-              additionalProperties: false
+              description: Accepts either uuid or record_uuid identifying the record to verify.
               properties:
-                uuid: { type: string, format: uuid }
+                uuid: { type: string, format: uuid, description: Record UUID }
+                record_uuid: { type: string, format: uuid, description: Alternate alias for record UUID }
       responses:
         '200':
           description: Integrity result, including a non-OK verification code when appropriate.
@@ -753,9 +763,10 @@ components:
         password: { type: string, minLength: 1, maxLength: 256 }
     LoginResponse:
       type: object
-      required: [token, officer]
+      required: [token, expires_at, officer]
       properties:
         token: { type: string, description: Opaque bearer token; only its SHA-256 digest is stored server-side. }
+        expires_at: { type: string, format: date-time, description: Session expiry timestamp in ISO 8601 UTC. }
         officer: { $ref: '#/components/schemas/Officer' }
     Outcome:
       type: string
@@ -763,6 +774,13 @@ components:
     CaseStatus:
       type: string
       enum: [REPORTED, UNDER_REVIEW, REVIEWED, ESCALATED]
+      description: >-
+        Workflow state of a case. Permitted transitions:
+        REPORTED -> UNDER_REVIEW, ESCALATED;
+        UNDER_REVIEW -> REVIEWED, ESCALATED;
+        ESCALATED -> UNDER_REVIEW, REVIEWED.
+        REVIEWED is a strictly terminal status (cannot transition to any other status).
+        Invalid transitions return 400 INVALID_STATUS_TRANSITION with allowed destinations in details.allowed[].
     FieldTestRecord:
       type: object
       additionalProperties: false

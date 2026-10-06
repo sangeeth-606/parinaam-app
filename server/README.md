@@ -13,6 +13,22 @@ platform. The API does not write to any government system.
 The normative HTTP description is [`openapi.yaml`](openapi.yaml). The shared
 record contract is [`../src/contracts/field-test-record.ts`](../src/contracts/field-test-record.ts).
 
+### Documentation Guides for Dashboard & Integration Teams
+For complete specifications beyond the HTTP interface, consult:
+- [**Data Model Reference**](../docs/data-model-reference.md) — Comprehensive guide to all 10 server tables, constraints, append-only triggers, and projection columns.
+- [**Mobile-to-Server Ingestion Contract**](../docs/mobile-to-server-contract.md) — The 28-key wire format, two-step ingestion protocol, and what stays on the mobile phone.
+- [**Integration Gotchas**](../docs/integration-gotchas.md) — 16 non-obvious integration gotchas for web and dashboard engineers.
+
+### Role-Based Access Control (RBAC)
+Role definitions, capability matrices, and endpoint access controls are consolidated in:
+- [`src/contracts/officer-roles.ts`](../src/contracts/officer-roles.ts) — Canonical roles (`JUNIOR`, `SENIOR`, `ADMIN`, `SUPERVISOR`, `JUDICIARY`) and capability definitions.
+- [`server/src/rbac.ts`](src/rbac.ts) — Guard functions (`can()`, `requirePermission()`, `visibilityScope()`) used across API route dispatch.
+
+### Demo Credentials Card
+When the server seeds synthetic demo accounts on first boot or via `docker compose run --rm seed`, credentials
+are generated from `PARINAAM_SEED_PASSWORD` and printed to the terminal. They are also written to a gitignored credentials card at:
+`server/data/DEMO-CREDENTIALS.txt` (local inspection only; never committed).
+
 ## Run with PostgreSQL
 
 Requirements: Docker Compose v2 and Node.js 22+ (Node is only needed for the
@@ -45,8 +61,35 @@ To run a one-shot idempotent seed against the same database:
 docker compose run --rm seed
 ```
 
-`PARINAAM_SEED=1` also seeds an empty database when the API starts. The seed
-refuses to mix the synthetic demo ledger with a non-demo ledger.
+`PARINAAM_SEED=0` is the production default — a fresh server starts with an empty ledger (0 records).
+Set `PARINAAM_SEED=1` only when you explicitly want the server to seed the 15-record synthetic demo ledger
+on first boot. The seed refuses to mix the synthetic demo ledger with a non-demo ledger.
+
+## Cloud Deployment Checklist
+
+Before deploying to any shared host or cloud VM:
+
+```text
+[ ] POSTGRES_PASSWORD set, 16+ chars, no default in compose (mandatory in .env)
+[ ] PARINAAM_API_ADMIN_PASSWORD set, 16+ chars
+[ ] PARINAAM_SEED=0 (default; set 1 only if synthetic demo data is desired)
+[ ] PARINAAM_CORS_ORIGINS set to the real dashboard origin (NOT * in production)
+[ ] TLS terminated upstream (reverse proxy like Caddy/Nginx); mobile app does NOT use cleartext
+[ ] Postgres not exposed to the public interface (db.ports removed or bound to 127.0.0.1)
+[ ] Server credentials issued per officer, not the shared demo password
+```
+
+### CORS Configuration Trap
+`PARINAAM_CORS_ORIGINS` defaults to `http://localhost:8081,http://127.0.0.1:8081`.
+Any browser dashboard connecting to the API must have its origin explicitly listed in `PARINAAM_CORS_ORIGINS`,
+or browser requests will fail with a CORS policy violation. In production, never leave `*` in the allowed origins.
+
+### Data Protection & DPDP / NDPS Section 8(5) Isolation
+In production PostgreSQL deployments, create a dedicated read-only or application role for dashboard reporting
+separate from the admin/migration role. Specifically:
+- The `officers` table contains password salts and hashes (`pass_salt`, `pass_hash`).
+- Dashboard queries should only access views or columns omitting credentials (`officer_code`, `display_name`, `role`, `status`).
+- Granting `SELECT` on `field_test`, `field_test_blob`, and `cases` to an analytics role without granting access to `officers` protects against credential harvesting if a dashboard query vulnerability occurs.
 
 ### Run the API on the host against the container database
 
@@ -88,20 +131,22 @@ as uploaded by the officer app.
 
 ### Seed accounts
 
-The following are **local demonstration credentials only**. On Compose, the
-admin account is created from `PARINAAM_API_ADMIN_PASSWORD` before the seed
-runs; if that variable is changed, the Compose default below is not used.
-The other accounts are created by `server/src/seed.ts` with these passwords.
+The following are **local demonstration credentials only**. All seeded demo
+accounts share the demo password from `PARINAAM_SEED_PASSWORD` (set in `.env`).
+On initial seed, the complete credential card is written to `server/data/DEMO-CREDENTIALS.txt` (gitignored).
 
-| Username | Password | Role | Access summary |
-|---|---|---|---|
-| `admin` | `parinaam-admin-2026` (or `PARINAAM_API_ADMIN_PASSWORD`) | `ADMIN` | Full account, analytics, audit, ingest, and review access |
-| `supervisor` | `parinaam-super-2026` | `SUPERVISOR` | Read, analytics, audit, and case review; no account management |
-| `judiciary` | `parinaam-jud-2026` | `JUDICIARY` | Read, verification, and export access only |
-| `sharma` | `parinaam-officer-2026` | `SENIOR` | Ingest as self, read all, verify, and review |
-| `gill` | `parinaam-officer-2026` | `JUNIOR` | Ingest as self and read only attributed records/cases |
-| `mukherjee` | `parinaam-officer-2026` | `SENIOR` | Ingest as self, read all, verify, and review |
-| `rao` | `parinaam-officer-2026` | `SENIOR` | Ingest as self, read all, verify, and review |
+| Username | Role | Officer Code | Display Name | Unit |
+|---|---|---|---|---|
+| `admin` | `ADMIN` | `OFFICER-ADMIN` | Anil Kumar Verma | NCB Headquarters, New Delhi |
+| `supervisor` | `SUPERVISOR` | `OFFICER-SUPERVISOR` | Farah Nasim Qureshi | NCB Zonal Office, Mumbai |
+| `iyer` | `SUPERVISOR` | `AC-7788` | Meenakshi Iyer | NCB Zonal Office, Bengaluru |
+| `sharma` | `SENIOR` | `HC-4412` | Baljinder Singh Sidhu | NCB Zonal Office, Delhi |
+| `mukherjee` | `SENIOR` | `SI-5521` | Priya Mukherjee | Kolkata Railway Parcel Intelligence Unit |
+| `rao` | `SENIOR` | `INSP-1044` | Venkateswara Rao | NCB Intelligence Bureau, Bengaluru |
+| `kapoor` | `SENIOR` | `DSP-3310` | Ranjeet Singh Kapoor | Delhi Police Crime Branch, Central District |
+| `patel` | `SENIOR` | `IC-2264` | Hetalben Patel | Air Cargo Intelligence Cell, Delhi |
+| `gill` | `JUNIOR` | `IC-9007` | Sukhdev Singh Gill | NCB Zonal Office, Delhi |
+| `reddy` | `JUDICIARY` | `JM-5501` | Ananya Reddy | Fast Track Court, Hyderabad |
 
 New accounts created through the API start as `PENDING`, must be approved by
 an `ADMIN`, and cannot log in until approved. Suspended or pending accounts
@@ -245,7 +290,7 @@ installed only by the local seed process.
 BASE=http://127.0.0.1:8571/api/v1
 ADMIN_TOKEN=$(curl -fsS -X POST "$BASE/auth/login" \
   -H 'content-type: application/json' \
-  -d '{"username":"admin","password":"parinaam-admin-2026"}' | jq -r .token)
+  -d '{"username":"admin","password":"'"${PARINAAM_SEED_PASSWORD:-Parinaam#2026}"'"}' | jq -r .token)
 
 curl -fsS -H "Authorization: Bearer $ADMIN_TOKEN" "$BASE/stats" | jq
 curl -fsS -H "Authorization: Bearer $ADMIN_TOKEN" \
