@@ -182,7 +182,7 @@ export async function initLedgerDb(opts?: OpenOptions): Promise<{ records: Ledge
     records: rows.map((row) =>
       rowToRecord(
         row,
-        stateByUuid.get(row.record_uuid) ?? (row.is_demo === 1 ? 'demo-seed' : 'queued'),
+        stateByUuid.get(row.record_uuid) ?? 'queued',
         engineByUuid.get(row.record_uuid)
       )
     ),
@@ -261,8 +261,8 @@ export async function persistRecord(rec: LedgerRecord): Promise<boolean> {
        VALUES (?, ?, ?, ?)
        ON CONFLICT(record_uuid) DO UPDATE SET state = excluded.state, reason = excluded.reason, updated_at = excluded.updated_at`,
       rec.record_uuid,
-      rec.isDemo ? 'demo-seed' : 'queued',
-      rec.isDemo ? 'preinstalled deterministic demo record' : null,
+      rec.syncStatus === 'demo-seed' ? 'demo-seed' : 'queued',
+      rec.syncStatus === 'demo-seed' ? 'preinstalled deterministic demo record' : null,
       new Date().toISOString()
     );
     return true;
@@ -353,11 +353,27 @@ export async function markDeadLetterStateDb(recordUuid: string, reason: string |
   );
 }
 
+async function ensureDeadLetterColumn(): Promise<void> {
+  const a = activeAdapter;
+  if (!a || a.kind === 'none') return;
+  try {
+    await a.exec('ALTER TABLE sync_queue ADD COLUMN dead_lettered_at TEXT;');
+  } catch {
+    /* column already exists */
+  }
+}
+
 export async function pendingCountDb(): Promise<number> {
   const a = activeAdapter;
   if (!a || a.kind === 'none') return 0;
-  const row = await a.get<{ c: number }>('SELECT COUNT(*) AS c FROM sync_queue WHERE dead_lettered_at IS NULL');
-  return row?.c ?? 0;
+  try {
+    const row = await a.get<{ c: number }>('SELECT COUNT(*) AS c FROM sync_queue WHERE dead_lettered_at IS NULL');
+    return row?.c ?? 0;
+  } catch {
+    await ensureDeadLetterColumn();
+    const row = await a.get<{ c: number }>('SELECT COUNT(*) AS c FROM sync_queue WHERE dead_lettered_at IS NULL').catch(() => null);
+    return row?.c ?? 0;
+  }
 }
 
 export interface QueueEntry {
@@ -372,7 +388,12 @@ export interface QueueEntry {
 export async function pendingEntriesDb(): Promise<QueueEntry[]> {
   const a = activeAdapter;
   if (!a || a.kind === 'none') return [];
-  return a.all<QueueEntry>(`SELECT id, record_uuid, idempotency_key, attempts, next_attempt_at, last_error FROM sync_queue WHERE dead_lettered_at IS NULL ORDER BY id ASC`);
+  try {
+    return await a.all<QueueEntry>(`SELECT id, record_uuid, idempotency_key, attempts, next_attempt_at, last_error FROM sync_queue WHERE dead_lettered_at IS NULL ORDER BY id ASC`);
+  } catch {
+    await ensureDeadLetterColumn();
+    return await a.all<QueueEntry>(`SELECT id, record_uuid, idempotency_key, attempts, next_attempt_at, last_error FROM sync_queue WHERE dead_lettered_at IS NULL ORDER BY id ASC`).catch(() => []);
+  }
 }
 
 /**
@@ -382,10 +403,18 @@ export async function pendingEntriesDb(): Promise<QueueEntry[]> {
 export async function deadLetteredUuidsDb(): Promise<string[]> {
   const a = activeAdapter;
   if (!a || a.kind === 'none') return [];
-  const rows = await a.all<{ record_uuid: string }>(
-    `SELECT record_uuid FROM sync_queue WHERE dead_lettered_at IS NOT NULL ORDER BY id ASC`
-  );
-  return rows.map((r) => r.record_uuid);
+  try {
+    const rows = await a.all<{ record_uuid: string }>(
+      `SELECT record_uuid FROM sync_queue WHERE dead_lettered_at IS NOT NULL ORDER BY id ASC`
+    );
+    return rows.map((r) => r.record_uuid);
+  } catch {
+    await ensureDeadLetterColumn();
+    const rows = await a.all<{ record_uuid: string }>(
+      `SELECT record_uuid FROM sync_queue WHERE dead_lettered_at IS NOT NULL ORDER BY id ASC`
+    ).catch(() => []);
+    return rows.map((r) => r.record_uuid);
+  }
 }
 
 export async function markDeadLetteredDb(id: number, at: string): Promise<void> {

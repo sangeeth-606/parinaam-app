@@ -144,12 +144,12 @@ mvp_test1_kit_profile:
     - outcome_label: "POSITIVE_CANNABINOID"
       print_target_hex: "#6B2C91"  # card patch P13 (violet) - cutout used as the mock POSITIVE swatch
       reference_lab: {L: 41.9, a: 24.5, b: -38.7}  # SCANNER-DERIVED, same provenance as patch_layout P13
-      tolerance_radius_de00: 8.0  # P13<->P14 separation is 21.8 dE00; 8.0 each leaves a ~5.8 dE abstention corridor
+      tolerance_radius_de00: 10.0  # Increased to 10.0 per user instruction for testing
       source: "Cutout of card patch P13 from a second printed card - mock demo target, not reagent chemistry"
     - outcome_label: "NEGATIVE"
       print_target_hex: "#1B3B6F"  # card patch P14 (navy) - cutout used as the mock NEGATIVE swatch
       reference_lab: {L: 37.4, a: -5.8, b: -38.5}  # SCANNER-DERIVED, same provenance as patch_layout P14
-      tolerance_radius_de00: 8.0
+      tolerance_radius_de00: 10.0
       source: "Cutout of card patch P14 from a second printed card - mock demo target, not reagent chemistry"
   abstention_demo_swatch:
     # NOT an outcome - deliberately matches neither target, to demo correct INCONCLUSIVE behaviour.

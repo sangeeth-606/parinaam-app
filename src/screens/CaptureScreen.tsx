@@ -202,6 +202,19 @@ export const CaptureScreen: React.FC = () => {
                 <Icon name="check" size={12} color="#15803D" strokeWidth={2.5} />
                 <Text style={styles.previewOverlayText}>CALIBRATED PHOTO ACQUIRED</Text>
               </View>
+              <TouchableOpacity
+                style={styles.clearPhotoBtn}
+                onPress={() => {
+                  setBurst(null);
+                  setCapturedUri(null);
+                }}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="Clear photo"
+              >
+                <Icon name="close" size={12} color="#FFFFFF" strokeWidth={2.5} />
+                <Text style={styles.clearPhotoBtnText}>CLEAR PHOTO</Text>
+              </TouchableOpacity>
             </View>
           ) : (
             <View style={styles.emptyViewfinder}>
@@ -247,7 +260,7 @@ export const CaptureScreen: React.FC = () => {
             >
               {demoLoading === 1
                 ? <ActivityIndicator size="small" color="#6366F1" />
-                : <Icon name="image" size={15} color="#6366F1" strokeWidth={2} />}
+                : <Icon name="camera" size={15} color="#6366F1" strokeWidth={2} />}
               <Text style={styles.demoBtnText}>Demo Image 1</Text>
             </TouchableOpacity>
 
@@ -261,7 +274,7 @@ export const CaptureScreen: React.FC = () => {
             >
               {demoLoading === 2
                 ? <ActivityIndicator size="small" color="#6366F1" />
-                : <Icon name="image" size={15} color="#6366F1" strokeWidth={2} />}
+                : <Icon name="camera" size={15} color="#6366F1" strokeWidth={2} />}
               <Text style={styles.demoBtnText}>Demo Image 2</Text>
             </TouchableOpacity>
           </View>
@@ -619,6 +632,24 @@ const createStyles = (theme: Theme) => {
       fontWeight: '800',
       color: '#15803D',
       letterSpacing: 0.5,
+    },
+    clearPhotoBtn: {
+      position: 'absolute',
+      top: 12,
+      right: 12,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      backgroundColor: 'rgba(15, 23, 42, 0.72)',
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      borderRadius: 14,
+    },
+    clearPhotoBtnText: {
+      fontSize: 10,
+      fontWeight: '700',
+      color: '#FFFFFF',
+      letterSpacing: 0.4,
     },
     emptyViewfinder: {
       alignItems: 'center',

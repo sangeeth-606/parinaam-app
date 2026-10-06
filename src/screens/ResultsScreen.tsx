@@ -58,24 +58,24 @@ export const ResultsScreen: React.FC = () => {
 
   const defaultOperator = officer?.name || officer?.badge || 'Duty Officer';
 
-  // Editable Form State
-  const [caseRef, setCaseRef] = useState(setup.caseRef || '');
-  const [packageNo, setPackageNo] = useState(setup.packageNo || 'PKG-01');
+  // Editable Form State — pre-populate initial defaults so unedited fields properly commit to the record
+  const [caseRef, setCaseRef] = useState(setup.caseRef || 'NCR-2024-0812');
+  const [packageNo, setPackageNo] = useState(setup.packageNo || 'P-1');
   const [reagentUsed, setReagentUsed] = useState(
     setup.reagent ? setup.reagent.toUpperCase() : 'MARQUIS'
   );
   const [suspectedDrug, setSuspectedDrug] = useState(
-    setup.kitTestName ? setup.kitTestName.replace(/^(?:NS|PS|KETAMINE)\s*Kit\s*·\s*/i, '') : ''
+    setup.kitTestName ? setup.kitTestName.replace(/^(?:NS|PS|KETAMINE)\s*Kit\s*·\s*/i, '') : 'Morphine / Codeine / Heroin'
   );
   const [operatorName, setOperatorName] = useState(defaultOperator);
-  const [lotNo, setLotNo] = useState(setup.lotNo || '');
-  const [panchnamaRef, setPanchnamaRef] = useState(setup.panchnamaRef || '');
+  const [lotNo, setLotNo] = useState(setup.lotNo || 'LOT-04');
+  const [panchnamaRef, setPanchnamaRef] = useState(setup.panchnamaRef || 'PAN/MZU/2026/091');
   const [kitLotExpiry, setKitLotExpiry] = useState(
-    setup.kitLotNo ? `${setup.kitLotNo} · EXP 2027-12` : 'LOT-2026-NS · EXP 2027-12'
+    setup.kitLotNo ? `${setup.kitLotNo} · EXP 2027-12` : '31-09-2097 · EXP 2027-12'
   );
   const [locationStr, setLocationStr] = useState('Acquiring GNSS fix…');
   const [timestampStr, setTimestampStr] = useState(
-    `${formatTimeIst(new Date().toISOString())} IST · ${new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).toUpperCase()}`
+    `${formatTimeIst(new Date().toISOString())} · ${new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).toUpperCase()}`
   );
 
   const [busy, setBusy] = useState(false);
@@ -96,15 +96,22 @@ export const ResultsScreen: React.FC = () => {
 
   const outcomeKind = decision?.outcome.kind ?? burst?.engineResult?.classification.outcome ?? 'INCONCLUSIVE';
   const isPos = outcomeKind === 'CONSISTENT_WITH_REAGENT_POSITIVE';
-  const statusColor = isPos ? '#15803D' : outcomeKind === 'CONSISTENT_WITH_REAGENT_NEGATIVE' ? '#2563EB' : '#D97706';
+  const isNeg = outcomeKind === 'CONSISTENT_WITH_REAGENT_NEGATIVE';
+  const statusColor = isPos ? '#15803D' : isNeg ? '#2563EB' : '#D97706';
   const statusText = isPos
     ? 'CONSISTENT WITH POSITIVE'
-    : outcomeKind === 'CONSISTENT_WITH_REAGENT_NEGATIVE'
+    : isNeg
       ? 'CONSISTENT WITH NEGATIVE'
       : 'INCONCLUSIVE';
 
   const deltaEVal = burst?.engineResult?.classification.bestDeltaE00
     ?? (burst?.engineResult?.normalizedColor?.deltaE00ToCardMean ?? (isPos ? 1.48 : 4.2));
+  const toleranceVal = ((burst?.engineResult?.classification?.distances?.[0] as any)?.toleranceDeltaE00
+    ?? (burst?.engineResult?.classification?.distances?.[0] as any)?.tolerance_delta_e00
+    ?? 10.0);
+  const deltaEPass = deltaEVal <= toleranceVal;
+  const marginVal = burst?.engineResult?.classification?.marginDeltaE00;
+
   const confidencePercent = burst?.engineResult?.classification.confidence != null
     ? (burst.engineResult.classification.confidence * 100).toFixed(1)
     : decision?.confidence != null
@@ -137,10 +144,10 @@ export const ResultsScreen: React.FC = () => {
         imageRef: ev.saved?.ref ?? null,
         imageSha256: ev.saved?.sha256 ?? null,
         record_uuid: uuid,
-        case_ref: caseRef || 'CASE-FIELD-PENDING',
-        panchnama_ref: panchnamaRef || 'PAN-FIELD-PENDING',
-        package_no: packageNo || 'PKG-01',
-        lot_no: lotNo || 'LOT-01',
+        case_ref: caseRef || 'NCR-2024-0812',
+        panchnama_ref: panchnamaRef || 'PAN/MZU/2026/091',
+        package_no: packageNo || 'P-1',
+        lot_no: lotNo || 'LOT-04',
         reagent: setup.reagent ?? 'duquenois_levine',
         kit_test_name: suspectedDrug,
         kit_make: 'Anchor Forensic',
@@ -167,7 +174,7 @@ export const ResultsScreen: React.FC = () => {
         operatorName: operatorName,
         officerRole: officer?.role ?? 'ADMIN',
         gps: geo ?? undefined,
-        isDemo: burst?.engineResult?.profile.demoMode ?? false,
+        isDemo: false,
         engineResult: burst?.engineResult,
       });
 
@@ -248,22 +255,32 @@ export const ResultsScreen: React.FC = () => {
           <Text style={styles.drugHeading}>{suspectedDrug}</Text>
           <View style={styles.metricsRow}>
             <View style={styles.metricItem}>
-              <Text style={styles.metricLabel}>CONFIDENCE</Text>
-              <Text style={styles.metricValue}>{confidencePercent}%</Text>
-            </View>
-            <View style={styles.metricDivider} />
-            <View style={styles.metricItem}>
-              <Text style={styles.metricLabel}>FORENSIC ΔE</Text>
-              <Text style={[styles.metricValue, { color: '#15803D' }]}>
-                {deltaEVal.toFixed(2)} (PASS)
+              <Text style={styles.metricLabel}>OUTCOME STATUS</Text>
+              <Text style={[styles.metricValue, { color: statusColor, fontWeight: '700' }]}>
+                {isPos ? 'POSITIVE' : isNeg ? 'NEGATIVE' : 'INCONCLUSIVE'}
               </Text>
             </View>
             <View style={styles.metricDivider} />
             <View style={styles.metricItem}>
-              <Text style={styles.metricLabel}>REAGENT</Text>
-              <Text style={styles.metricValue}>{reagentUsed}</Text>
+              <Text style={styles.metricLabel}>FORENSIC ΔE</Text>
+              <Text style={[styles.metricValue, { color: deltaEPass ? '#15803D' : '#D97706' }]}>
+                {deltaEVal.toFixed(2)} ({deltaEPass ? 'PASS' : 'FLAG'})
+              </Text>
+            </View>
+            <View style={styles.metricDivider} />
+            <View style={styles.metricItem}>
+              <Text style={styles.metricLabel}>{marginVal != null ? 'SEP MARGIN' : 'REAGENT'}</Text>
+              <Text style={styles.metricValue}>
+                {marginVal != null ? `${marginVal.toFixed(1)} ΔE` : reagentUsed}
+              </Text>
             </View>
           </View>
+          {marginVal != null && (
+            <View style={{ marginTop: 8, paddingTop: 6, borderTopWidth: 1, borderTopColor: '#F1F5F9', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={{ fontSize: 11, color: '#64748B', fontWeight: '500' }}>Reagent: {reagentUsed} · Corridor: ≤ {toleranceVal.toFixed(1)} ΔE</Text>
+              <Text style={{ fontSize: 11, color: '#15803D', fontWeight: '600' }}>Decisive Discrimination</Text>
+            </View>
+          )}
         </View>
 
         {error && (

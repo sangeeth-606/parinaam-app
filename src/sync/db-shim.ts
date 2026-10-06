@@ -34,11 +34,12 @@ export async function openSyncSqlite(): Promise<SqliteDatabase | null> {
   try {
     const SQLite = await import('expo-sqlite');
     const db = SQLite.openDatabaseSync('parinaam.db');
+    const clean = (p: unknown[]) => p.map((x) => (x === undefined ? null : x));
     return {
       prepare: (sql: string) => ({
-        all: (...p: unknown[]) => db.getAllSync(sql, ...(p as never[])),
-        get: (...p: unknown[]) => db.getFirstSync(sql, ...(p as never[])),
-        run: (...p: unknown[]) => db.runSync(sql, ...(p as never[])),
+        all: (...p: unknown[]) => db.getAllSync(sql, ...(clean(p) as never[])),
+        get: (...p: unknown[]) => db.getFirstSync(sql, ...(clean(p) as never[])),
+        run: (...p: unknown[]) => db.runSync(sql, ...(clean(p) as never[])),
       }),
       exec: (sql: string) => db.execSync(sql),
     };

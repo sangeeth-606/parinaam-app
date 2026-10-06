@@ -100,6 +100,26 @@ export const SettingsScreen: React.FC = () => {
   const [apiPass, setApiPass] = useState('');
   const [apiNote, setApiNote] = useState<string | null>(null);
   const [apiBusy, setApiBusy] = useState(false);
+
+  const [clearModalVisible, setClearModalVisible] = useState(false);
+  const [clearBusy, setClearBusy] = useState(false);
+  const [clearNote, setClearNote] = useState<string | null>(null);
+
+  const handleClearAllData = async () => {
+    setClearBusy(true);
+    setClearNote(null);
+    try {
+      await useLedgerStore.getState().clearAllRecords();
+      await useSyncStore.getState().init();
+      setClearNote('✓ LOCAL DATABASE CLEARED · 0 RECORDS ACTIVE');
+    } catch (err) {
+      setClearNote(err instanceof Error ? `ERROR: ${err.message}` : 'FAILED TO CLEAR LEDGER');
+    } finally {
+      setClearBusy(false);
+      setClearModalVisible(false);
+    }
+  };
+
   const saveApiAccount = async () => {
     setApiBusy(true);
     setApiNote(null);
@@ -416,53 +436,30 @@ export const SettingsScreen: React.FC = () => {
           </Text>
         </View>
 
-        {/* ============ DEMONSTRATION — DEMO PLUMBING, OFF THE OPERATIONAL PATH ============ */}
+        {/* ============ DATA & STORAGE MAINTENANCE ============ */}
         <View style={styles.card}>
-          <Text style={styles.cardEyebrow}>DEMONSTRATION</Text>
-          <Text style={styles.cardHeading}>Demonstration controls</Text>
+          <Text style={styles.cardEyebrow}>DATA & STORAGE MAINTENANCE</Text>
+          <Text style={styles.cardHeading}>Clear Local Field Test Data</Text>
+          <Text style={styles.cardSubtext}>
+            Purges locally saved field test records, outbox sync queues, and failed upload attempts from the SQLite database on this device. Confirmatory cases and recent evidentiary feeds will reset to 0 items.
+          </Text>
+
           <TouchableOpacity
-            style={styles.navRow}
-            onPress={() => navigation.navigate('Integrity')}
+            style={[styles.secondaryBtn, styles.btnDanger]}
+            onPress={() => setClearModalVisible(true)}
             accessibilityRole="button"
-            accessibilityLabel="Open the integrity cockpit with the tamper demonstration"
+            accessibilityLabel="Clear all local field test records"
           >
-            <View style={styles.rowIcon}>
-              <Icon name="shield" size={16} color={T.textSecondary} strokeWidth={2.2} />
-            </View>
-            <View style={styles.flex}>
-              <Text style={styles.rowTitle}>Tamper demonstration</Text>
-              <Text style={styles.rowSub}>Open the integrity cockpit — chain health + tamper demo</Text>
-            </View>
-            <Icon name="chevronRight" size={16} color={T.textMuted} strokeWidth={2.5} />
+            <Icon name="alert" size={16} color={T.dangerText} strokeWidth={2.4} />
+            <Text style={[styles.secondaryBtnText, { color: T.dangerText }]}>CLEAR ALL LOCAL TEST DATA</Text>
           </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.navRow}
-            onPress={() => void useLedgerStore.getState().resetDemo()}
-            accessibilityRole="button"
-            accessibilityLabel="Re-seed the ledger — resets the in-session chain and records"
-          >
-            <View style={styles.rowIcon}>
-              <Icon name="package" size={16} color={T.textSecondary} strokeWidth={2.2} />
-            </View>
-            <View style={styles.flex}>
-              <Text style={styles.rowTitle}>Re-seed ledger</Text>
-              <Text style={styles.rowSub}>Resets the in-session chain and records</Text>
-            </View>
-            <Icon name="chevronRight" size={18} color={T.textMuted} strokeWidth={2.4} />
-          </TouchableOpacity>
+
+          {clearNote ? (
+            <Text style={[styles.syncNote, { color: T.successText, marginTop: 10 }]} accessibilityLiveRegion="polite">
+              {clearNote}
+            </Text>
+          ) : null}
         </View>
-
-        <TouchableOpacity
-          style={styles.aboutBtn}
-          onPress={() => setAboutOpen(true)}
-          accessibilityRole="button"
-          accessibilityLabel="About Parinaam"
-        >
-          <Icon name="info" size={16} color={T.accent} strokeWidth={2.4} />
-          <Text style={styles.aboutBtnText}>ABOUT PARINAAM — WHAT IS REAL, WHAT IS SIMULATED</Text>
-        </TouchableOpacity>
-
-      </ScrollView>
 
         {/* ============ DEVICE — LANGUAGE & COACHING ============ */}
         <View style={styles.card}>
@@ -512,6 +509,99 @@ export const SettingsScreen: React.FC = () => {
             />
           </View>
         </View>
+
+        {/* ============ DEMONSTRATION — DEMO PLUMBING, OFF THE OPERATIONAL PATH ============ */}
+        <View style={styles.card}>
+          <Text style={styles.cardEyebrow}>DEMONSTRATION</Text>
+          <Text style={styles.cardHeading}>Demonstration controls</Text>
+          <TouchableOpacity
+            style={styles.navRow}
+            onPress={() => navigation.navigate('Integrity')}
+            accessibilityRole="button"
+            accessibilityLabel="Open the integrity cockpit with the tamper demonstration"
+          >
+            <View style={styles.rowIcon}>
+              <Icon name="shield" size={16} color={T.textSecondary} strokeWidth={2.2} />
+            </View>
+            <View style={styles.flex}>
+              <Text style={styles.rowTitle}>Tamper demonstration</Text>
+              <Text style={styles.rowSub}>Open the integrity cockpit — chain health + tamper demo</Text>
+            </View>
+            <Icon name="chevronRight" size={16} color={T.textMuted} strokeWidth={2.5} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.navRow}
+            onPress={() => void useLedgerStore.getState().resetDemo()}
+            accessibilityRole="button"
+            accessibilityLabel="Re-seed the ledger — resets the in-session chain and records"
+          >
+            <View style={styles.rowIcon}>
+              <Icon name="package" size={16} color={T.textSecondary} strokeWidth={2.2} />
+            </View>
+            <View style={styles.flex}>
+              <Text style={styles.rowTitle}>Re-seed ledger</Text>
+              <Text style={styles.rowSub}>Resets the in-session chain and records</Text>
+            </View>
+            <Icon name="chevronRight" size={18} color={T.textMuted} strokeWidth={2.4} />
+          </TouchableOpacity>
+        </View>
+
+        <TouchableOpacity
+          style={styles.aboutBtn}
+          onPress={() => setAboutOpen(true)}
+          accessibilityRole="button"
+          accessibilityLabel="About Parinaam"
+        >
+          <Icon name="info" size={16} color={T.accent} strokeWidth={2.4} />
+          <Text style={styles.aboutBtnText}>ABOUT PARINAAM — WHAT IS REAL, WHAT IS SIMULATED</Text>
+        </TouchableOpacity>
+
+      </ScrollView>
+
+      {/* ============ CONFIRM CLEAR MODAL ============ */}
+      <Modal
+        visible={clearModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !clearBusy && setClearModalVisible(false)}
+      >
+        <Pressable style={styles.scrimCentered} onPress={() => !clearBusy && setClearModalVisible(false)}>
+          <Pressable style={styles.modalCard} accessibilityViewIsModal>
+            <View style={styles.modalIconWrap}>
+              <Icon name="alert" size={24} color={T.dangerText} strokeWidth={2.4} />
+            </View>
+            <Text style={styles.modalTitle}>Clear Local Field Test Data?</Text>
+            <Text style={styles.modalSubtext}>
+              This will permanently purge all local field test records, outbox queue entries, and server-rejected logs stored in parinaam.db on this device.
+            </Text>
+            <Text style={[styles.modalSubtext, { fontWeight: '600', color: T.dangerText }]}>
+              Recent Evidentiary Logs and Case Log counters will reset to 0 items. This action cannot be undone.
+            </Text>
+
+            <View style={styles.modalActionsRow}>
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.modalBtnCancel]}
+                onPress={() => setClearModalVisible(false)}
+                disabled={clearBusy}
+                accessibilityRole="button"
+              >
+                <Text style={styles.modalBtnCancelText}>CANCEL</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.modalBtnDanger]}
+                onPress={() => void handleClearAllData()}
+                disabled={clearBusy}
+                accessibilityRole="button"
+              >
+                <Text style={styles.modalBtnDangerText}>
+                  {clearBusy ? 'CLEARING…' : 'CONFIRM & CLEAR'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
 
       {/* ============ ABOUT SHEET (light bottom sheet) ============ */}
@@ -821,6 +911,77 @@ const createStyles = (theme: Theme) => {
     borderRadius: 6,
     padding: 12,
     marginTop: 6,
+  },
+
+  scrimCentered: {
+    flex: 1,
+    backgroundColor: T.scrim,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 400,
+    backgroundColor: T.card,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: T.border,
+    padding: 22,
+    gap: 12,
+  },
+  modalIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: T.dangerSurface,
+    borderWidth: 1,
+    borderColor: T.dangerBorder,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 2,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: T.textPrimary,
+  },
+  modalSubtext: {
+    fontSize: 13,
+    color: T.textSecondary,
+    lineHeight: 19,
+  },
+  modalActionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 8,
+  },
+  modalBtn: {
+    flex: 1,
+    minHeight: 46,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalBtnCancel: {
+    backgroundColor: T.cardSubtle,
+    borderWidth: 1,
+    borderColor: T.border,
+  },
+  modalBtnCancelText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: T.textPrimary,
+    letterSpacing: 0.5,
+  },
+  modalBtnDanger: {
+    backgroundColor: T.dangerText,
+  },
+  modalBtnDangerText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    letterSpacing: 0.5,
   },
   });
 };

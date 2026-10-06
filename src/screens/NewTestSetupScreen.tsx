@@ -131,6 +131,7 @@ export const NewTestSetupScreen: React.FC = () => {
       kitLotNo: '31–09–2097',
     });
 
+    useSessionStore.getState().setBurst(null);
     navigation.navigate('Capture');
   };
 

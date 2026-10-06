@@ -29,7 +29,8 @@ import type { RootStackParamList } from '../navigation/AppNavigator';
 
 import { Icon } from '../components/ui/Icon';
 import { LightTabBar } from '../components/ui/evidentiary/LightTabBar';
-import { useLedgerStore } from '../state/ledger-store';
+import { useLedgerStore, isGenuineRecord } from '../state/ledger-store';
+import { useSessionStore } from '../state/session-store';
 import { useSyncStore } from '../state/sync-store';
 import { useThemedStyles } from '../theme/theme-context';
 
@@ -51,29 +52,35 @@ export const HomeScreen: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterTab, setFilterTab] = useState<FilterTab>('ALL');
 
+  // Filter out any synthetic demonstration fixtures
+  const genuineRecords = useMemo(() => {
+    return records.filter(isGenuineRecord);
+  }, [records]);
+
   // Counts for summary metrics computed from genuine store
   const todayCount = useMemo(() => {
     const todayStr = new Date().toISOString().slice(0, 10);
-    const count = records.filter((r) => r.created_at.slice(0, 10) === todayStr).length;
+    const count = genuineRecords.filter((r) => r.created_at.slice(0, 10) === todayStr).length;
     return String(count).padStart(2, '0');
-  }, [records]);
+  }, [genuineRecords]);
 
   const sealedCount = useMemo(() => {
-    const count = records.filter((r) => r.syncStatus === 'synced' || r.deviceAttestation).length;
+    const count = genuineRecords.filter((r) => r.syncStatus === 'synced' || r.deviceAttestation).length;
     return String(count).padStart(2, '0');
-  }, [records]);
+  }, [genuineRecords]);
 
   const queueCount = useMemo(() => {
-    const count = records.filter((r) => r.syncStatus === 'queued').length;
+    const count = genuineRecords.filter((r) => r.syncStatus === 'queued').length;
     return String(count).padStart(2, '0');
-  }, [records]);
+  }, [genuineRecords]);
 
   // Genuine evidentiary logs directly from local store
   const displayLogs = useMemo(() => {
-    return [...records].reverse().slice(0, 10);
-  }, [records]);
+    return [...genuineRecords].reverse().slice(0, 10);
+  }, [genuineRecords]);
 
   const handleNewFieldTest = () => {
+    useSessionStore.getState().reset();
     navigation.navigate('NewTestSetup');
   };
 
@@ -194,7 +201,7 @@ export const HomeScreen: React.FC = () => {
             </View>
             <View style={styles.quickCardTexts}>
               <Text style={styles.quickCardTitle}>Case Log</Text>
-              <Text style={styles.quickCardSubtitle}>{records.length} ITEMS</Text>
+              <Text style={styles.quickCardSubtitle}>{genuineRecords.length} ITEMS</Text>
             </View>
           </TouchableOpacity>
 

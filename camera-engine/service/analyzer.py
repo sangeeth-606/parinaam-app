@@ -1206,8 +1206,8 @@ def analyze_image_bytes(
             "diagnostics": {"processing_time_ms": _json_number((time.perf_counter() - started) * 1000)},
         }
 
-    # Primary reaction well is the final well in the series (Well 3)
-    reaction_well = well_results[-1]
+    # Primary reaction well is the top well in the series (Well 1)
+    reaction_well = well_results[0]
     raw_color = reaction_well["raw_color"]
     normalized_color = reaction_well["normalized_color"]
     classification = reaction_well["classification"]
