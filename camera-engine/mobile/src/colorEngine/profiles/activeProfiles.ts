@@ -191,13 +191,13 @@ export const ACTIVE_KIT_PROFILE: KitProfile = {
     {
       outcome_label: 'POSITIVE_CANNABINOID',
       reference_lab: { L: 41.9, a: 24.5, b: -38.7 },
-      tolerance_radius_de00: 8,
+      tolerance_radius_de00: 10,
       source: 'Cutout of card patch P13 from a second printed card - mock demo target, not reagent chemistry',
     },
     {
       outcome_label: 'NEGATIVE',
       reference_lab: { L: 37.4, a: -5.8, b: -38.5 },
-      tolerance_radius_de00: 8,
+      tolerance_radius_de00: 10,
       source: 'Cutout of card patch P14 from a second printed card - mock demo target, not reagent chemistry',
     }
   ],

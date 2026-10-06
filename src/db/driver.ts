@@ -52,31 +52,82 @@ type ExpoDb = {
 class ExpoAdapter implements DbAdapter {
   readonly kind = 'expo-sqlite' as const;
   readonly pathLabel: string;
-  private db: ExpoDb;
+  private db: ExpoDb | null;
+  private isClosed = false;
   private onDelete?: () => Promise<void>;
+
   constructor(db: ExpoDb, pathLabel: string, onDelete?: () => Promise<void>) {
     this.db = db;
     this.pathLabel = pathLabel;
     this.onDelete = onDelete;
   }
-  exec(sql: string) {
-    return this.db.execAsync(sql);
+
+  private clean(params: unknown[]): unknown[] {
+    return params.map((p) => (p === undefined ? null : p));
   }
+
+  async exec(sql: string) {
+    if (this.isClosed || !this.db) return undefined;
+    try {
+      return await this.db.execAsync(sql);
+    } catch (e) {
+      if (this.isClosed) return undefined;
+      throw e;
+    }
+  }
+
   async run(sql: string, ...params: unknown[]) {
-    const r = await this.db.runAsync(sql, ...params);
-    return { lastInsertRowid: r.lastInsertRowId, changes: r.changes };
+    if (this.isClosed || !this.db) return { lastInsertRowid: 0, changes: 0 };
+    try {
+      const r = await this.db.runAsync(sql, ...this.clean(params));
+      return { lastInsertRowid: r.lastInsertRowId, changes: r.changes };
+    } catch (e) {
+      if (this.isClosed) return { lastInsertRowid: 0, changes: 0 };
+      throw e;
+    }
   }
-  get<T>(sql: string, ...params: unknown[]) {
-    return this.db.getFirstAsync<T>(sql, ...params);
+
+  async get<T>(sql: string, ...params: unknown[]) {
+    if (this.isClosed || !this.db) return null;
+    try {
+      return await this.db.getFirstAsync<T>(sql, ...this.clean(params));
+    } catch (e) {
+      if (this.isClosed) return null;
+      throw e;
+    }
   }
-  all<T>(sql: string, ...params: unknown[]) {
-    return this.db.getAllAsync<T>(sql, ...params);
+
+  async all<T>(sql: string, ...params: unknown[]) {
+    if (this.isClosed || !this.db) return [];
+    try {
+      return await this.db.getAllAsync<T>(sql, ...this.clean(params));
+    } catch (e) {
+      if (this.isClosed) return [];
+      throw e;
+    }
   }
-  close() {
-    return this.db.closeAsync();
+
+  async close() {
+    this.isClosed = true;
+    if (this.db) {
+      try {
+        await this.db.closeAsync();
+      } catch {
+        /* best effort */
+      }
+      this.db = null;
+    }
   }
-  destroy() {
-    return this.onDelete ? this.onDelete() : Promise.resolve();
+
+  async destroy() {
+    this.isClosed = true;
+    if (this.onDelete) {
+      try {
+        await this.onDelete();
+      } catch {
+        /* best effort */
+      }
+    }
   }
   toSqliteDatabase() {
     const raw = this.db as unknown as {

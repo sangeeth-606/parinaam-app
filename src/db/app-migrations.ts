@@ -94,12 +94,13 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 
 CREATE TABLE IF NOT EXISTS sync_queue (
-  id              INTEGER PRIMARY KEY AUTOINCREMENT,
-  record_uuid     TEXT NOT NULL UNIQUE,
-  idempotency_key TEXT NOT NULL UNIQUE,
-  attempts        INTEGER NOT NULL DEFAULT 0,
-  next_attempt_at TEXT,
-  last_error      TEXT
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  record_uuid      TEXT NOT NULL UNIQUE,
+  idempotency_key  TEXT NOT NULL UNIQUE,
+  attempts         INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at  TEXT,
+  last_error       TEXT,
+  dead_lettered_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS synced_record (
@@ -294,6 +295,11 @@ export interface AppMigrationAdapter {
 
 export async function applyVersionedAppMigrations(adapter: AppMigrationAdapter): Promise<void> {
   await adapter.exec(MIGRATION_APP_V1);
+  try {
+    await adapter.exec('ALTER TABLE sync_queue ADD COLUMN dead_lettered_at TEXT;');
+  } catch {
+    /* column already exists */
+  }
   await adapter.run(
     'INSERT OR IGNORE INTO app_schema_migrations (version, applied_at) VALUES (?, ?)',
     1,

@@ -129,6 +129,7 @@ interface LedgerState {
   /** Integrity DEMONSTRATION only — corrupts the in-session view. Restore = resetDemo. */
   simulateTamper: (index: number) => Promise<ChainVerificationResult>;
   resetDemo: () => Promise<void>;
+  clearAllRecords: () => Promise<void>;
   markSynced: (uuids: string[]) => void;
   markDeadLettered: (uuids: string[], reason?: string) => void;
 }
@@ -142,6 +143,30 @@ function chainItems(records: LedgerRecord[]): HashChainRecordItem[] {
     prev_hash: r.prevHash,
     chain_hash: r.chainHash,
   }));
+}
+
+const PREINSTALLED_FIXTURE_UUIDS = new Set([
+  'a3f19c20-7d41-4b02-9e58-1c6d2f70ab11',
+  'a3f19c20-7d41-4b02-9e58-1c6d2f70ab12',
+  'a3f19c20-7d41-4b02-9e58-1c6d2f70ab13',
+  'a3f19c20-7d41-4b02-9e58-1c6d2f70ab14',
+  'a3f19c20-7d41-4b02-9e58-1c6d2f70ab15',
+  'd41b6620-8f03-4a2b-90ce-5b2f7a9133dd',
+  'c92e77f0-15ba-4d84-a2c6-3e08f1d547aa',
+  'e07c9a34-2d1f-46b8-8a70-0c5e39bd61f2',
+  'f5e32110-3a12-4c89-b789-7e12f45a0001',
+  'f5e32110-3a12-4c89-b789-7e12f45a0002',
+  'f5e32110-3a12-4c89-b789-7e12f45a0003',
+  'f5e32110-3a12-4c89-b789-7e12f45a0004',
+  'b78a9c40-1e54-4f90-8801-44aa00bb1101',
+  'b78a9c40-1e54-4f90-8801-44aa00bb1102',
+  'b78a9c40-1e54-4f90-8801-44aa00bb1103',
+]);
+
+export function isGenuineRecord(r: LedgerRecord): boolean {
+  if (r.syncStatus === 'demo-seed') return false;
+  if (PREINSTALLED_FIXTURE_UUIDS.has(r.record_uuid)) return false;
+  return true;
 }
 
 /** Hydrate the shared deterministic demo chain without re-sealing it. */
@@ -178,7 +203,7 @@ export const useLedgerStore = create<LedgerState>((set, get) => ({
         }
       } else if (!shouldSeedFixtures) {
         // Ensure genuine production ledger on device contains zero mock fixtures
-        records = records.filter((r) => !r.isDemo && r.syncStatus !== 'demo-seed');
+        records = records.filter(isGenuineRecord);
       }
     } catch (err) {
       // Persistence failed outright: keep working in-session, report loudly (never hide).
@@ -323,6 +348,24 @@ export const useLedgerStore = create<LedgerState>((set, get) => ({
       /* file already gone / memory path */
     }
     await get().seed();
+  },
+
+  clearAllRecords: async () => {
+    // Complete local purge: drops tables, deletes SQLite file, and re-initializes an empty ledger.
+    set({ records: [], seeded: false, verification: null, demoCorrupted: false });
+    try {
+      await resetLedgerFile();
+    } catch {
+      /* file already gone / memory path */
+    }
+    const init = await initLedgerDb();
+    set({
+      records: [],
+      seeded: true,
+      verification: null,
+      demoCorrupted: false,
+      persistence: init.meta,
+    });
   },
 
   markSynced: (uuids) => {

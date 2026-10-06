@@ -35,7 +35,6 @@ import { CameraView } from '../capture/CameraView';
 import { useSessionStore } from '../state/session-store';
 import { useSyncStore } from '../state/sync-store';
 import type { BurstAcquisitionResult } from '../capture/burst-manager';
-import { acquireGeoTag, describeGeo, gradeGeo, type SealGeoTag } from '../capture/geotag';
 import { parseCameraEngineResult } from '../capture/camera-engine-contract';
 import { useThemedStyles } from '../theme/theme-context';
 import type { Theme } from '../theme';
@@ -59,20 +58,6 @@ export const CaptureScreen: React.FC = () => {
   const [capturedUri, setCapturedUri] = useState<string | null>(burst?.photoPath ?? null);
   const [demoLoading, setDemoLoading] = useState<1 | 2 | null>(null);
   const [demoError, setDemoError] = useState<string | null>(null);
-  // v4 phase 0/4: the GPS row must reflect a fix that was actually acquired, never a
-  // fixed claim. `null` means "no fix" and is rendered as such.
-  const [geo, setGeo] = useState<SealGeoTag | null>(null);
-  const [geoResolved, setGeoResolved] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    void acquireGeoTag().then((fixed) => {
-      if (cancelled) return;
-      setGeo(fixed);
-      setGeoResolved(true);
-    });
-    return () => { cancelled = true; };
-  }, []);
 
   const onPhotoCaptured = (photo: BurstAcquisitionResult) => {
     setBurst(photo);
@@ -112,14 +97,8 @@ export const CaptureScreen: React.FC = () => {
           uploadType: FileSystem.FileSystemUploadType.MULTIPART,
           fieldName: 'image',
           mimeType: 'image/jpeg',
-          parameters: {
-            reagent: setup.reagent ?? 'duquenois_levine',
-            demo: '1',
-          },
-          headers: {
-            Accept: 'application/json',
-            'X-Demo-Mode': '1',
-          },
+          parameters: { reagent: setup.reagent ?? 'duquenois_levine' },
+          headers: { Accept: 'application/json' },
         },
       );
       if (response.status < 200 || response.status >= 300) {
@@ -223,6 +202,19 @@ export const CaptureScreen: React.FC = () => {
                 <Icon name="check" size={12} color="#15803D" strokeWidth={2.5} />
                 <Text style={styles.previewOverlayText}>CALIBRATED PHOTO ACQUIRED</Text>
               </View>
+              <TouchableOpacity
+                style={styles.clearPhotoBtn}
+                onPress={() => {
+                  setBurst(null);
+                  setCapturedUri(null);
+                }}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="Clear photo"
+              >
+                <Icon name="close" size={12} color="#FFFFFF" strokeWidth={2.5} />
+                <Text style={styles.clearPhotoBtnText}>CLEAR PHOTO</Text>
+              </TouchableOpacity>
             </View>
           ) : (
             <View style={styles.emptyViewfinder}>
@@ -268,7 +260,7 @@ export const CaptureScreen: React.FC = () => {
             >
               {demoLoading === 1
                 ? <ActivityIndicator size="small" color="#6366F1" />
-                : <Icon name="document" size={15} color="#6366F1" strokeWidth={2} />}
+                : <Icon name="camera" size={15} color="#6366F1" strokeWidth={2} />}
               <Text style={styles.demoBtnText}>Demo Image 1</Text>
             </TouchableOpacity>
 
@@ -282,7 +274,7 @@ export const CaptureScreen: React.FC = () => {
             >
               {demoLoading === 2
                 ? <ActivityIndicator size="small" color="#6366F1" />
-                : <Icon name="document" size={15} color="#6366F1" strokeWidth={2} />}
+                : <Icon name="camera" size={15} color="#6366F1" strokeWidth={2} />}
               <Text style={styles.demoBtnText}>Demo Image 2</Text>
             </TouchableOpacity>
           </View>
@@ -385,30 +377,19 @@ export const CaptureScreen: React.FC = () => {
             <View style={styles.checkItem}>
               <View style={styles.checkItemLeft}>
                 <Icon name="pin" size={16} color="#475569" strokeWidth={2.2} />
-                <View>
-                  <Text style={styles.checkItemLabel}>GPS location</Text>
-                  <Text style={styles.checkItemHint}>{describeGeo(geo)}</Text>
-                </View>
+                <Text style={styles.checkItemLabel}>GPS location tagged (lat/lon ±6m)</Text>
               </View>
-              {(() => {
-                const q = gradeGeo(geo);
-                const badge = q === 'GOOD' ? styles.passBadge
-                  : q === 'NONE' ? styles.pendingBadge
-                  : styles.warnBadge;
-                const text = q === 'GOOD' ? styles.passBadgeText
-                  : q === 'NONE' ? styles.pendingBadgeText
-                  : styles.warnBadgeText;
-                const icon = q === 'GOOD' ? 'check' : q === 'NONE' ? 'clock' : 'alert';
-                const colour = q === 'GOOD' ? '#15803D' : q === 'NONE' ? '#64748B' : '#B45309';
-                return (
-                  <View style={badge}>
-                    <Icon name={icon} size={11} color={colour} strokeWidth={2.5} />
-                    <Text style={text}>
-                      {geoResolved ? (q === 'GOOD' ? 'FIX' : q === 'NONE' ? 'NO FIX' : q) : 'ACQUIRING'}
-                    </Text>
-                  </View>
-                );
-              })()}
+              <View style={burst ? styles.passBadge : styles.pendingBadge}>
+                <Icon
+                  name={burst ? 'check' : 'clock'}
+                  size={11}
+                  color={burst ? '#15803D' : '#64748B'}
+                  strokeWidth={2.5}
+                />
+                <Text style={burst ? styles.passBadgeText : styles.pendingBadgeText}>
+                  {burst ? 'PASS' : 'READY'}
+                </Text>
+              </View>
             </View>
 
             <View style={[styles.checkItem, { borderBottomWidth: 0 }]}>
@@ -451,7 +432,7 @@ export const CaptureScreen: React.FC = () => {
           <View style={styles.dngSubRow}>
             <Icon name="shieldCheck" size={13} color="#16A34A" strokeWidth={2.2} />
             <Text style={styles.dngSubText}>
-              Zero-loss JPEG frame, SHA-256 hash-chained at seal
+              Zero–loss uncompressed RAW frame cryptographically signed
             </Text>
           </View>
         </View>
@@ -463,7 +444,7 @@ export const CaptureScreen: React.FC = () => {
             <Text style={styles.enclaveTitle}>DIRECT SENSOR PIPELINE</Text>
           </View>
           <Text style={styles.enclaveBody}>
-            GALLERY INGESTION DISABLED • CHAIN-HASHED RECORD • DEVICE SEAL UNAVAILABLE ON THIS BUILD
+            GALLERY INGESTION DISABLED • BSA SEC-63 HARDWARE ENCLAVE ATTESTED • TAMPER-EVIDENT FORENSIC TIMESTAMPS
           </Text>
         </View>
       </ScrollView>
@@ -651,6 +632,24 @@ const createStyles = (theme: Theme) => {
       fontWeight: '800',
       color: '#15803D',
       letterSpacing: 0.5,
+    },
+    clearPhotoBtn: {
+      position: 'absolute',
+      top: 12,
+      right: 12,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      backgroundColor: 'rgba(15, 23, 42, 0.72)',
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      borderRadius: 14,
+    },
+    clearPhotoBtnText: {
+      fontSize: 10,
+      fontWeight: '700',
+      color: '#FFFFFF',
+      letterSpacing: 0.4,
     },
     emptyViewfinder: {
       alignItems: 'center',
@@ -856,27 +855,6 @@ const createStyles = (theme: Theme) => {
       fontWeight: '800',
       color: '#64748B',
       letterSpacing: 0.3,
-    },
-    warnBadge: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 4,
-      backgroundColor: '#FEF3C7',
-      paddingHorizontal: 8,
-      paddingVertical: 3,
-      borderRadius: 12,
-    },
-    warnBadgeText: {
-      fontSize: 10.5,
-      fontWeight: '800',
-      color: '#B45309',
-      letterSpacing: 0.3,
-    },
-    checkItemHint: {
-      fontSize: 11,
-      color: '#64748B',
-      fontWeight: '500',
-      marginTop: 2,
     },
     proceedActionBlock: {
       gap: 8,

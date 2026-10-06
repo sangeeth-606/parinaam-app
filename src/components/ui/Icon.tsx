@@ -23,6 +23,7 @@ export type IconName =
   | 'chevronRight'
   | 'chevronDown'
   | 'chevronLeft'
+  | 'chevronUp'
   | 'check'
   | 'close'
   | 'alert'
@@ -132,6 +133,7 @@ const shapes: Record<IconName, React.ReactNode> = {
   ),
   chevronRight: <Path d="m9.5 5.5 6.5 6.5-6.5 6.5" />,
   chevronDown: <Path d="m5.5 9.5 6.5 6.5 6.5-6.5" />,
+  chevronUp: <Path d="m5.5 14.5 6.5-6.5 6.5 6.5" />,
   chevronLeft: <Path d="M14.5 5.5 8 12l6.5 6.5" />,
   check: <Path d="m4.5 12.5 5 5L19.5 7" />,
   close: <Path d="M6 6l12 12M18 6 6 18" />,

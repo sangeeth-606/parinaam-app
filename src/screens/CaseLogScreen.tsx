@@ -22,7 +22,7 @@ import type { RootStackParamList } from '../navigation/AppNavigator';
 
 import { Icon } from '../components/ui/Icon';
 import { LightTabBar } from '../components/ui/evidentiary/LightTabBar';
-import { useLedgerStore } from '../state/ledger-store';
+import { useLedgerStore, isGenuineRecord } from '../state/ledger-store';
 import { useSyncStore } from '../state/sync-store';
 import { useThemedStyles } from '../theme/theme-context';
 import type { Theme } from '../theme';
@@ -43,9 +43,13 @@ export const CaseLogScreen: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [refreshing, setRefreshing] = useState(false);
 
+  const genuineRecords = useMemo(() => {
+    return records.filter(isGenuineRecord);
+  }, [records]);
+
   const filteredRecords = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    return records.filter((r) => {
+    return genuineRecords.filter((r) => {
       // Filter tab
       if (filter === 'POSITIVE' && r.outcome !== 'CONSISTENT_WITH_REAGENT_POSITIVE') return false;
       if (filter === 'INCONCLUSIVE' && r.outcome !== 'INCONCLUSIVE') return false;
@@ -61,7 +65,7 @@ export const CaseLogScreen: React.FC = () => {
         r.record_uuid.toLowerCase().includes(q)
       );
     });
-  }, [records, filter, searchQuery]);
+  }, [genuineRecords, filter, searchQuery]);
 
   const pullRefresh = async () => {
     setRefreshing(true);
