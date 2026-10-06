@@ -110,36 +110,40 @@ export function synthesizeKinetics(
 /* ----------------------------- misc ----------------------------- */
 
 export function makeRecordUuid(): string {
-  try {
-    const g = globalThis as {
-      crypto?: { randomUUID?: () => string; getRandomValues?: (b: Uint8Array) => Uint8Array };
-    };
-    if (typeof g.crypto?.randomUUID === 'function') {
-      const u = g.crypto.randomUUID();
-      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(u)) {
-        return u.toLowerCase();
-      }
+  const g = globalThis as {
+    crypto?: { randomUUID?: () => string; getRandomValues?: (b: Uint8Array) => Uint8Array };
+  };
+  if (typeof g.crypto?.randomUUID === 'function') {
+    const u = g.crypto.randomUUID();
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(u)) {
+      return u.toLowerCase();
     }
-    const b = new Uint8Array(16);
-    if (typeof g.crypto?.getRandomValues === 'function') {
-      g.crypto.getRandomValues(b);
-    } else {
-      for (let i = 0; i < 16; i++) {
-        b[i] = Math.floor(Math.random() * 256);
-      }
-    }
-    b[6] = (b[6] & 0x0f) | 0x40; // RFC 4122 version 4
-    b[8] = (b[8] & 0x3f) | 0x80; // RFC 4122 variant
-    const hex = Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
-    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`.toLowerCase();
-  } catch {
-    const hex = Array.from({ length: 16 }, () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('');
-    const h = hex.split('');
-    h[12] = '4';
-    h[16] = ['8', '9', 'a', 'b'][Math.floor(Math.random() * 4)];
-    const s = h.join('');
-    return `${s.slice(0, 8)}-${s.slice(8, 12)}-${s.slice(12, 16)}-${s.slice(16, 20)}-${s.slice(20, 32)}`.toLowerCase();
   }
+
+  let bytes: Uint8Array | null = null;
+  if (typeof g.crypto?.getRandomValues === 'function') {
+    bytes = new Uint8Array(16);
+    g.crypto.getRandomValues(bytes);
+  } else {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const nodeCrypto = require('node:crypto') as { randomBytes?: (size: number) => Buffer };
+      if (typeof nodeCrypto.randomBytes === 'function') {
+        bytes = new Uint8Array(nodeCrypto.randomBytes(16));
+      }
+    } catch {
+      bytes = null;
+    }
+  }
+
+  if (!bytes) {
+    throw new Error('Secure randomness is unavailable; cannot generate record UUID.');
+  }
+
+  bytes[6] = (bytes[6] & 0x0f) | 0x40; // RFC 4122 version 4
+  bytes[8] = (bytes[8] & 0x3f) | 0x80; // RFC 4122 variant
+  const hex = Array.from(bytes, (x) => x.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`.toLowerCase();
 }
 
 export function round2(v: number): number {
